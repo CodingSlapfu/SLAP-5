@@ -1,13 +1,12 @@
 /* SPDX-License-Identifier: MPL-2.0 */
 /* Copyright (C) 2026 Ziao */
-import { decodeNote, encodeNote, validateProject, within } from './project.mjs';
+import { decodeNote, drumNotes, encodeNote, eventLanes, validateProject, within } from './project.mjs';
 
 const $ = id => document.getElementById(id);
 const colors = ['#1ce2ff', '#ab70ff', '#ff59b0', '#ffb43a', '#3ef289'];
 const ctx2d = $('roll').getContext('2d');
 const piano = ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'];
 const drums = ['Kick', 'Snare', 'Hat', 'Rim', 'Clap', 'Cymbal'];
-const drumNotes = [36, 38, 42, 37, 39, 49];
 const drumKits = ['Studio Kit', 'Brush Kit', 'FM Kit', 'Industrial'];
 const drumRow = pitch => {
   const row = drumNotes.indexOf(pitch);
@@ -15,13 +14,19 @@ const drumRow = pitch => {
 };
 const left = 69, width = 40, top = 27, height = 23;
 let context, worklet, project, stateBefore = [], stateAfter = [];
-let track = 0, step = 0, playing = false, drag, patches = [], displayedKit = false;
+let track = 0, step = 0, lane = 0, playing = false, drag, patches = [], displayedKit = false;
 
 function send(command, fields = {}) {
   worklet.port.postMessage({ type: 'app', command, ...fields });
 }
 
+const projectKey = 'slap-5-project';
 function sync() {
+  try {
+    localStorage.setItem(projectKey, JSON.stringify(project));
+  } catch {
+    $('status').textContent = 'Local project storage is unavailable. Export to keep a copy.';
+  }
   send('project', { project });
   draw();
 }
@@ -66,10 +71,15 @@ function draw() {
   $('undo').disabled = !stateBefore.length;
   $('redo').disabled = !stateAfter.length;
   $('tracks').querySelectorAll('button').forEach((b, i) => b.setAttribute('aria-selected', String(i === track)));
-  const word = current.steps[step];
+  $('drum-controls').hidden = track !== 4;
+  const activeLane = lane ? lane - 1 : 0;
+  $('drum-lane').value = activeLane;
+  $('drum-mute').checked = !!(project.drumFilters & (1 << activeLane));
+  $('drum-solo').checked = !!(project.drumFilters & (1 << (activeLane + 8)));
+  const word = eventLanes(current)[lane][step];
   const note = decodeNote(word);
   $('position').textContent = word ? `Step ${step + 1} · ${noteLabel(note.pitch)}` : `Step ${step + 1}`;
-  for (const [id, value] of Object.entries({ velocity: note.velocity, gate: note.gate, prob: note.probability })) {
+  for (const [id, value] of Object.entries({ velocity: note.velocity, gate: note.gate, prob: note.probability, timing: note.timing })) {
     $(id).value = word ? value : '';
     $(id).disabled = !word;
   }
@@ -90,9 +100,10 @@ function draw() {
     g.fillRect(x, top, s === step ? 2 : 1, rows * height);
     g.fillStyle = '#c4c9d6';
     g.fillText(s + 1, x + 5, top / 2);
-    const cell = current.steps[s];
-    if (!cell || s === drag?.from) continue;
-    paintNote(s, decodeNote(cell));
+    eventLanes(current).forEach((events, j) => {
+      const cell = events[s];
+      if (cell && !(s === drag?.from && j === drag.lane)) paintNote(s, decodeNote(cell));
+    });
   }
   if (drag) paintNote(drag.to, drag.note);
 }
@@ -124,15 +135,20 @@ $('roll').addEventListener('pointerdown', e => {
   const point = hit(e);
   if (!point) return;
   step = point.cell;
-  const word = selected().steps[step], note = decodeNote(word);
+  const event = eventLanes(selected());
+  const matches = (word, pitch) => word && (track === 4 ? drumRow(decodeNote(word).pitch) === drumRow(pitch) : decodeNote(word).pitch === pitch);
+  const hitLane = event.findIndex(row => matches(row[step], point.pitch));
+  lane = hitLane >= 0 ? hitLane : track === 4 ? drumRow(point.pitch) + 1 : event.findIndex(row => !row[step]);
+  if (lane < 0) { lane = 0; $('status').textContent = 'Both note slots are occupied at this step.'; draw(); return; }
+  const word = event[lane][step], note = decodeNote(word);
   if (word && (track === 4 ? drumRow(note.pitch) === drumRow(point.pitch) : note.pitch === point.pitch)) {
     const end = step * width + 2 + Math.max(10, Math.min(width * 1.33, note.gate * width / 192));
     const resize = point.x > end - 7 && point.x < end + 2;
-    drag = { from: step, to: step, note, initial: note.gate, resize, start: point.x };
+    drag = { from: step, to: step, lane, note, initial: note.gate, resize, start: point.x };
     $('roll').setPointerCapture(e.pointerId);
     draw();
   } else {
-    edit(p => { p.tracks[track].steps[step] = encodeNote(point.pitch, 100, 140, 100); });
+    edit(p => { eventLanes(p.tracks[track])[lane][step] = encodeNote(point.pitch, 100, 140, 100); });
     send('audition', { track, pitch: point.pitch });
   }
 });
@@ -150,12 +166,21 @@ $('roll').addEventListener('pointermove', e => {
 });
 $('roll').addEventListener('pointerup', () => {
   if (!drag) return;
-  const { from, to, note } = drag;
+  const { from, to, lane: oldLane, note } = drag;
   drag = undefined;
   step = to;
+  const events = eventLanes(selected());
+  const destination = track === 4 ? drumRow(note.pitch) + 1 :
+    events.findIndex((row, index) => !row[to] || (index === oldLane && from === to));
+  if (destination < 0 || (events[destination][to] && !(destination === oldLane && from === to))) {
+    $('status').textContent = 'The destination already contains a note.';
+    draw();
+    return;
+  }
+  lane = destination;
   edit(p => {
-    p.tracks[track].steps[from] = 0;
-    p.tracks[track].steps[to] = encodeNote(note.pitch, note.velocity, note.gate, note.probability);
+    eventLanes(p.tracks[track])[oldLane][from] = 0;
+    eventLanes(p.tracks[track])[destination][to] = encodeNote(note.pitch, note.velocity, note.gate, note.probability, note.timing);
   });
 });
 $('roll').addEventListener('pointercancel', () => { drag = undefined; draw(); });
@@ -175,7 +200,7 @@ for (let i = 0; i < 5; i++) {
   button.style.setProperty('--track', colors[i]);
   button.addEventListener('click', () => {
     if (!project) return;
-    track = i; step = 0; draw();
+    track = i; step = 0; lane = 0; draw();
     $('view').scrollTop = i === 4 ? 0 : 10 * height;
   });
   $('tracks').append(button);
@@ -189,11 +214,11 @@ for (const [id, shift, min, max] of [['length', 0, 1, 64], ['pan', 8, 0, 255], [
     p.tracks[track].mix = (p.tracks[track].mix & ~(255 << shift) | v << shift) >>> 0;
   });
 }
-for (const [id, key, max] of [['velocity', 'velocity', 127], ['gate', 'gate', 255], ['prob', 'probability', 100]]) {
-  numberInput(id, id === 'prob' ? 0 : 1, max, (p, v) => {
-    const note = decodeNote(p.tracks[track].steps[step]);
+for (const [id, key, max] of [['velocity', 'velocity', 127], ['gate', 'gate', 255], ['prob', 'probability', 100], ['timing', 'timing', 3]]) {
+  numberInput(id, id === 'prob' || id === 'timing' ? 0 : 1, max, (p, v) => {
+    const note = decodeNote(eventLanes(p.tracks[track])[lane][step]);
     note[key] = v;
-    p.tracks[track].steps[step] = encodeNote(note.pitch, note.velocity, note.gate, note.probability);
+    eventLanes(p.tracks[track])[lane][step] = encodeNote(note.pitch, note.velocity, note.gate, note.probability, note.timing);
   });
 }
 $('patch').addEventListener('change', () => {
@@ -203,7 +228,17 @@ $('patch').addEventListener('change', () => {
 $('mute').addEventListener('change', () => edit(p => {
   p.tracks[track].mix = (p.tracks[track].mix & 0xffffff) | (Number($('mute').checked) << 24);
 }));
-$('clear').addEventListener('click', () => edit(p => { p.tracks[track].steps[step] = 0; }));
+$('drum-lane').addEventListener('change', () => {
+  lane = Number($('drum-lane').value) + 1;
+  draw();
+});
+for (const [id, shift] of [['drum-mute', 0], ['drum-solo', 8]]) {
+  $(id).addEventListener('change', () => edit(p => {
+    const bit = 1 << (Number($('drum-lane').value) + shift);
+    p.drumFilters = $(id).checked ? p.drumFilters | bit : p.drumFilters & ~bit;
+  }));
+}
+$('clear').addEventListener('click', () => edit(p => { eventLanes(p.tracks[track])[lane][step] = 0; }));
 $('undo').addEventListener('click', () => {
   if (!stateBefore.length) return;
   stateAfter.push(project); project = stateBefore.pop(); step = 0; sync();
@@ -228,6 +263,7 @@ $('import').addEventListener('change', async () => {
   try {
     if (file.size > 200000) throw new Error('Project file is too large.');
     const next = validateProject(JSON.parse(await file.text()));
+    step = 0; lane = 0;
     edit(p => Object.assign(p, next));
     $('status').textContent = 'Project imported.';
   } catch (error) {
@@ -248,6 +284,13 @@ $('start').addEventListener('click', async () => {
       if (data.type === 'ready') send('read');
       if (data.type !== 'studio-project') return;
       project = validateProject(data.project);
+      try {
+        const saved = localStorage.getItem(projectKey);
+        if (saved) project = validateProject(JSON.parse(saved));
+      } catch {
+        $('status').textContent = 'The saved project could not be restored.';
+      }
+      send('project', { project });
       patches = data.names;
       for (const id of ['play', 'export', 'import']) $(id).disabled = false;
       $('start').textContent = 'Audio enabled';

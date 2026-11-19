@@ -38,7 +38,7 @@ host: 5674 ms simulated, 714 blits, render 0.5% of real time (host CPU)
   ok page == 0
   ok page == 6
   ok page == 0
-host: 5020 ms simulated, 630 blits, render 0.3% of real time (host CPU)
+host: 5020 ms simulated, 630 blits, render 0.5% of real time (host CPU)
   ok tempo == 131
   ok patch == 76
   ok page == 7
@@ -60,3 +60,12 @@ host: 9234 ms simulated, 1158 blits, render 0.2% of real time (host CPU)
   ok arp_note == 60
   ok arp_events == 3
 host: 1333 ms simulated, 168 blits, render 0.3% of real time (host CPU)
+  ok pitch == 36
+  ok lane == 1
+  ok pitch == 60
+  ok pitch == 36
+  ok events == 5
+  ok store_writes == 1
+  ok pitch == -1
+  ok pitch == 60
+host: 5938 ms simulated, 744 blits, render 0.3% of real time (host CPU)

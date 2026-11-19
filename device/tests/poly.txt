@@ -1,0 +1,39 @@
+wait 650
+tap SEQ
+expect pitch 36
+press SEL
+turn SELECT 1
+release SEL
+expect lane 1
+key 7 down
+key 7 up
+expect pitch 60
+press SEL
+turn SELECT -1
+release SEL
+expect pitch 36
+tap PLAY
+wait 40
+expect events 5
+tap PLAY
+tap SAVE
+key 0 down
+wait 4100
+key 0 up
+expect store_writes 1
+tap HOME
+tap SEQ
+press SEL
+turn SELECT 1
+release SEL
+key 7 down
+key 7 up
+expect pitch -1
+tap SAVE
+tap SEL
+tap HOME
+tap SEQ
+press SEL
+turn SELECT 1
+release SEL
+expect pitch 60

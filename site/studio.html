@@ -41,6 +41,10 @@
         <label>Velocity<input id="velocity" type="number" min="1" max="127" disabled></label>
         <label>Gate<input id="gate" type="number" min="1" max="255" disabled></label>
         <label>Hit %<input id="prob" type="number" min="0" max="100" disabled></label>
+        <label>Offset <input id="timing" type="number" min="0" max="3" disabled></label>
+        <span id="drum-controls" hidden><label>Drum lane <select id="drum-lane"><option value="0">Kick</option><option value="1">Snare</option><option value="2">Hat</option><option value="3">Rim</option><option value="4">Clap</option><option value="5">Cymbal</option></select></label>
+          <label>Mute <input id="drum-mute" type="checkbox"></label>
+          <label>Solo <input id="drum-solo" type="checkbox"></label></span>
         <button id="clear" disabled>Delete note</button>
       </div>
     </section>

@@ -6,7 +6,7 @@
 
 enum { TRACKS = 5, STEPS = 64, VOICES = 16, RATE = 44100 };
 enum { HOME, SEQ, GLOBAL, PATCH, ENV, FX, VISUAL, SAVE, HARMONY, LFO, ARP };
-enum { NOTES = 0x7f, ACTIVE = 0x80, DRUMS = 4 };
+enum { NOTES = 0x7f, ACTIVE = 0x80, DRUMS = 4, DRUM_LANES = 6 };
 
 typedef struct {
     volatile uint32_t steps[STEPS]; /* pitch, active flag, velocity, length, probability */
@@ -19,12 +19,17 @@ typedef struct {
     float attack, decay, sustain, release;
     float lfo_phase, lfo_inc, lfo_fade, lfo_gain, lfo_hold;
     uint32_t delay;
-    uint8_t lfo_wave, origin, kit;
+    uint8_t lfo_wave, origin, kit, drum_family;
     uint32_t remaining, age;
     uint8_t track, pitch, manual, releasing, struck;
 } Voice;
 
 static Track tracks[TRACKS];
+static volatile uint32_t extra_note[DRUMS][STEPS];
+static volatile uint32_t drum_lane[DRUM_LANES][STEPS];
+static const uint8_t lane_pitch[DRUM_LANES] = {36,38,42,37,39,49};
+static volatile uint32_t drum_filters;
+static volatile uint32_t scheduled_events;
 static Voice voices[VOICES];
 static PLAT_POOL SlapSynth synths[VOICES];
 static volatile uint32_t tempo = 112, swing, playing, positions, sequence_epoch;
@@ -42,7 +47,7 @@ static float master_gain, energy_smooth[TRACKS];
 static volatile uint32_t track_energy[TRACKS];
 static struct {
     uint32_t buttons, keys, frame_at, boot_at, booting;
-    int page, track, step, octave, fx_page, visual, slot;
+    int page, track, step, octave, fx_page, visual, slot, lane;
     uint32_t save_at;
     int save_armed;
     const char *notice;
@@ -159,19 +164,20 @@ static void trigger_voice(unsigned track, unsigned pitch, unsigned velocity, uin
                          patch->color, patch->motion, random_word());
     } else {
         voice->kit = (uint8_t)tracks[track].patch;
+        voice->drum_family = (uint8_t)drum_family(pitch);
         voice->attack = 0.013f;
         voice->sustain = 1.0f;
         voice->release = 0.00065f;
     }
 }
 
-static void trigger(unsigned track, unsigned pitch, unsigned velocity, uint32_t duration, int manual)
+static void trigger_delayed(unsigned track, unsigned pitch, unsigned velocity, uint32_t duration, int manual, unsigned offset)
 {
     uint32_t harmony = tracks[track].harmony;
     unsigned root = harmony & 255u, scale = (harmony >> 8) & 255u;
     unsigned chord = (harmony >> 16) & 255u, strum = harmony >> 24;
     if (track == DRUMS || (!scale && !chord)) {
-        trigger_voice(track, pitch, velocity, duration, manual, pitch, 0);
+        trigger_voice(track, pitch, velocity, duration, manual, pitch, offset);
         return;
     }
     unsigned tonic = note_in_scale(pitch, root, scale);
@@ -190,9 +196,34 @@ static void trigger(unsigned track, unsigned pitch, unsigned velocity, uint32_t 
         if (pitches[i] == previous) continue;
         unsigned delay = strum && count > 1 ? RATE * (99u + strum) / 1000u * i / (count - 1u) : 0u;
         trigger_voice(track, pitches[i], velocity * (i ? 75u : 100u) / 100u,
-                      duration, manual, pitch, delay);
+                      duration, manual, pitch, offset + delay);
         previous = pitches[i];
     }
+}
+
+static void trigger(unsigned track, unsigned pitch, unsigned velocity, uint32_t duration, int manual)
+{
+    trigger_delayed(track, pitch, velocity, duration, manual, 0);
+}
+
+static unsigned timing_of(uint32_t word)
+{
+    return ((word >> 15) & 1u) | ((word >> 30) & 2u);
+}
+
+static uint32_t timing_bits(unsigned offset)
+{
+    return ((offset & 1u) << 15) | ((offset & 2u) << 30);
+}
+
+static void schedule_event(unsigned track, uint32_t word)
+{
+    unsigned probability = (word >> 24) & 127u;
+    if (!(word & ACTIVE) || probability <= random_word() % 100u) return;
+    unsigned gate = until_step * ((word >> 16) & 255u) / 192u;
+    unsigned delay = until_step * timing_of(word) / 8u;
+    trigger_delayed(track, word & NOTES, (word >> 8) & 127u, gate, 0, delay);
+    ++scheduled_events;
 }
 
 static void release_note(unsigned track, unsigned pitch)
@@ -289,6 +320,12 @@ static void arp_render_clock(void)
     ++arp_pulse;
 }
 
+static unsigned muted_drums(void)
+{
+    unsigned filter = drum_filters, solo = (filter >> 8) & 63u;
+    return solo ? 63u & ~solo : filter & 63u;
+}
+
 static void next_step(const uint32_t *mix)
 {
     unsigned base = RATE * 15u / tempo;
@@ -297,10 +334,17 @@ static void next_step(const uint32_t *mix)
     step_duration = until_step;
     positions = step_number++;
     for (unsigned t = 0; t < TRACKS; ++t) {
-        uint32_t word = tracks[t].steps[positions % (mix[t] & 255u)];
-        if ((word & ACTIVE) && (word >> 24) > random_word() % 100u)
-            trigger(t, word & NOTES, (word >> 8) & 127u,
-                    until_step * ((word >> 16) & 255u) / 192u, 0);
+        unsigned step = positions % (mix[t] & 255u);
+        uint32_t word = tracks[t].steps[step];
+        if (t < DRUMS) {
+            schedule_event(t, word);
+            schedule_event(t, extra_note[t][step]);
+        } else {
+            unsigned muted = muted_drums();
+            if (!(muted & (1u << drum_family(word & NOTES)))) schedule_event(t, word);
+            for (unsigned lane = 0; lane < DRUM_LANES; ++lane)
+                if (!(muted & (1u << lane))) schedule_event(t, drum_lane[lane][step]);
+        }
     }
 }
 
@@ -339,7 +383,7 @@ static float render_voice(Voice *v)
         static const float tone[] = {0.0045f, 0.0028f, 0.0052f, 0.0072f};
         static const float pitch_mul[] = {1.0f, 0.81f, 1.33f, 1.85f};
         float hiss = (float)(random_word() & 65535u) / 32768.0f - 1.0f;
-        unsigned family = drum_family(v->pitch);
+        unsigned family = v->drum_family;
         unsigned kit = v->kit;
         if (family == 0) {
             v->bend *= 0.9988f;
@@ -408,6 +452,7 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
     }
     read_notes();
     slap_fx_begin(tempo);
+    const unsigned muted = muted_drums();
     float target = master_q12 * (1.0f / 4096.0f);
     for (uint32_t i = 0; i < frames; ++i) {
         if (playing && until_step == 0) next_step(mix);
@@ -417,7 +462,9 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
         for (unsigned j = 0; j < VOICES; ++j) {
             Voice *v = &voices[j];
             if (!v->age) continue;
-            dry[v->track] += render_voice(v);
+            float sample = render_voice(v);
+            if (v->track != DRUMS || !(muted & (1u << v->drum_family)))
+                dry[v->track] += sample;
         }
         float l = 0.0f, r = 0.0f;
         for (unsigned t = 0; t < TRACKS; ++t) {
@@ -460,21 +507,29 @@ typedef struct {
         uint32_t mix, patch, envelope, harmony, lfo;
         uint32_t steps[STEPS], fx[SLAP_FX_PAGES];
     } track[TRACKS];
+    uint32_t extra[DRUMS][STEPS];
+    uint8_t drums[DRUM_LANES][STEPS][3];
+    uint32_t filters;
 } SongRecord;
+
+typedef char SongRecordFitsFlash[(sizeof(SongRecord) <= 3840) ? 1 : -1];
 
 static SongRecord song_io;
 static const uint8_t save_keys[16] = PLAT_WHITE_KEYS;
 
 static int step_valid(uint32_t word)
 {
-    return !word || ((word & ACTIVE) && ((word >> 8) & 127u) && !(word & 0x8000u) &&
-                      ((word >> 16) & 255u) && (word >> 24) <= 100);
+    return !word || ((word & ACTIVE) && ((word >> 8) & 127u) &&
+                      ((word >> 16) & 255u) && ((word >> 24) & 127u) <= 100);
 }
 
 static int read_song(unsigned slot)
 {
-    if (plat_store_load(OBJ_SONG1 + slot, &song_io, sizeof(song_io)) != (int)sizeof(song_io) ||
-        song_io.magic != SONG_MAGIC || song_io.version != 2 ||
+    int bytes = plat_store_load(OBJ_SONG1 + slot, &song_io, sizeof(song_io));
+    int v2bytes = (int)((uint8_t *)&song_io.extra - (uint8_t *)&song_io);
+    if (song_io.magic != SONG_MAGIC ||
+        !((song_io.version == 2 && bytes == v2bytes) ||
+          (song_io.version == 3 && bytes == (int)sizeof(song_io))) ||
         song_io.bpm < 40 || song_io.bpm > 240 || song_io.swing > 70) return 0;
     for (unsigned t = 0; t < TRACKS; ++t) {
         uint32_t mix = song_io.track[t].mix;
@@ -488,6 +543,19 @@ static int read_song(unsigned slot)
             if (!step_valid(song_io.track[t].steps[i])) return 0;
         for (unsigned i = 0; i < SLAP_FX_PAGES; ++i)
             if (!slap_fx_config_valid(i, song_io.track[t].fx[i])) return 0;
+    }
+    if (song_io.version == 3) {
+        if (song_io.filters & ~0x3f3fu) return 0;
+        for (unsigned t = 0; t < DRUMS; ++t)
+            for (unsigned i = 0; i < STEPS; ++i)
+                if (!step_valid(song_io.extra[t][i])) return 0;
+        for (unsigned lane = 0; lane < DRUM_LANES; ++lane) {
+            for (unsigned i = 0; i < STEPS; ++i) {
+                const uint8_t *d = song_io.drums[lane][i];
+                uint32_t data = (uint32_t)d[0] << 8 | (uint32_t)d[1] << 16 | (uint32_t)d[2] << 24;
+                if (data && !step_valid(data | ACTIVE | lane_pitch[lane])) return 0;
+            }
+        }
     }
     return 1;
 }
@@ -508,6 +576,18 @@ static void load_song(unsigned slot)
         for (unsigned i = 0; i < SLAP_FX_PAGES; ++i)
             slap_fx_restore(t, i, song_io.track[t].fx[i]);
     }
+    for (unsigned t = 0; t < DRUMS; ++t)
+        for (unsigned i = 0; i < STEPS; ++i)
+            extra_note[t][i] = song_io.version == 3 ? song_io.extra[t][i] : 0u;
+    for (unsigned lane = 0; lane < DRUM_LANES; ++lane) {
+        for (unsigned i = 0; i < STEPS; ++i) {
+            const uint8_t *d = song_io.drums[lane][i];
+            uint32_t data = song_io.version == 3 ?
+                (uint32_t)d[0] << 8 | (uint32_t)d[1] << 16 | (uint32_t)d[2] << 24 : 0;
+            drum_lane[lane][i] = data ? data | ACTIVE | lane_pitch[lane] : 0;
+        }
+    }
+    drum_filters = song_io.version == 3 ? song_io.filters : 0;
     slap_ui.step = 0;
     ++sequence_epoch;
     slap_ui.notice = "LOADED";
@@ -516,7 +596,7 @@ static void load_song(unsigned slot)
 static void write_song(unsigned slot)
 {
     song_io.magic = SONG_MAGIC;
-    song_io.version = 2;
+    song_io.version = 3;
     song_io.bpm = tempo;
     song_io.swing = swing;
     for (unsigned t = 0; t < TRACKS; ++t) {
@@ -530,6 +610,16 @@ static void write_song(unsigned slot)
         for (unsigned i = 0; i < SLAP_FX_PAGES; ++i)
             song_io.track[t].fx[i] = slap_fx_config(t, i);
     }
+    for (unsigned t = 0; t < DRUMS; ++t)
+        for (unsigned i = 0; i < STEPS; ++i) song_io.extra[t][i] = extra_note[t][i];
+    for (unsigned lane = 0; lane < DRUM_LANES; ++lane) {
+        for (unsigned i = 0; i < STEPS; ++i) {
+            uint32_t word = drum_lane[lane][i];
+            for (unsigned byte = 0; byte < 3; ++byte)
+                song_io.drums[lane][i][byte] = (uint8_t)(word >> ((byte + 1u) * 8u));
+        }
+    }
+    song_io.filters = drum_filters;
     int result = plat_store_save(OBJ_SONG1 + slot, &song_io, sizeof(song_io));
     slap_ui.notice = result == 0 && read_song(slot) ? "SAVED" : "SAVE FAILED";
 }
@@ -565,6 +655,17 @@ static void save_input(uint32_t buttons, uint32_t pressed, uint32_t keys, uint32
     keys_audio = 0;
 }
 
+static volatile uint32_t *event_cell(unsigned track, unsigned step, unsigned lane)
+{
+    if (!lane) return &tracks[track].steps[step];
+    return track == DRUMS ? &drum_lane[lane - 1u][step] : &extra_note[track][step];
+}
+
+static unsigned lane_count(unsigned track)
+{
+    return track == DRUMS ? DRUM_LANES + 1u : 2u;
+}
+
 void app_input_only(void)
 {
     uint32_t buttons = plat_buttons(), keys = plat_keys();
@@ -572,7 +673,15 @@ void app_input_only(void)
     if (pressed & (1u << B_PLAY)) { playing ^= 1u; ++sequence_epoch; }
     if (pressed & (1u << B_HOME))
         slap_ui.page = slap_ui.page == HOME ? VISUAL : HOME;
-    if (pressed & (1u << B_SEQ)) slap_ui.page = SEQ;
+    if (pressed & (1u << B_SEQ)) { slap_ui.page = SEQ; slap_ui.lane = 0; }
+    if (slap_ui.page == SEQ && (buttons & (1u << B_SEL))) {
+        if (slap_ui.track == DRUMS && slap_ui.lane &&
+            (pressed & ((1u << B_ARP) | (1u << B_REC)))) {
+            unsigned bit = 1u << (slap_ui.lane - 1u);
+            if (pressed & (1u << B_ARP)) drum_filters ^= bit;
+            if (pressed & (1u << B_REC)) drum_filters ^= bit << 8;
+        }
+    }
     if (pressed & (1u << B_GLO)) slap_ui.page = GLOBAL;
     if (pressed & (1u << B_SAVE)) {
         slap_ui.page = SAVE;
@@ -599,7 +708,9 @@ void app_input_only(void)
         slap_ui.buttons = buttons;
         return;
     }
-    if (slap_ui.page == SEQ)
+    if (slap_ui.page == SEQ && (buttons & (1u << B_SEL)))
+        slap_ui.lane = clamp(slap_ui.lane + delta, 0, (int)lane_count(slap_ui.track)-1);
+    else if (slap_ui.page == SEQ)
         slap_ui.step = clamp(slap_ui.step + delta, 0, (int)(tracks[slap_ui.track].mix & 255u) - 1);
     else if (slap_ui.page == VISUAL)
         slap_ui.visual = clamp(slap_ui.visual + delta, 0, 8);
@@ -623,19 +734,23 @@ void app_input_only(void)
         for (unsigned k = 0; k < 4; ++k)
             slap_fx_change(slap_ui.track, slap_ui.fx_page, k, knob[k]);
     } else if (slap_ui.page == SEQ) {
-        volatile uint32_t *cell = &tracks[slap_ui.track].steps[slap_ui.step];
+        volatile uint32_t *cell = event_cell(slap_ui.track, slap_ui.step, slap_ui.lane);
+        int fixed = slap_ui.track == DRUMS && slap_ui.lane;
+        int editing_timing = buttons & (1u << B_SEL);
         uint32_t word = *cell;
         if (notes) {
             unsigned k = 0;
             while (!(notes & (1u << k))) ++k;
-            unsigned pitch = 29u + k + (unsigned)slap_ui.octave * 12u;
+            unsigned pitch = fixed ? lane_pitch[slap_ui.lane - 1] : 29u + k + (unsigned)slap_ui.octave * 12u;
             word = (word & 255u) == (pitch | ACTIVE) ? 0u : cell_word(pitch, 100, 140, 100);
         }
         if (word & ACTIVE) {
-            word = cell_word((unsigned)clamp((int)(word & NOTES) + knob[0], 0, 127),
+            unsigned timing = (unsigned)clamp((int)timing_of(word) + (editing_timing ? knob[3] : 0), 0, 3);
+            word = cell_word((unsigned)clamp((int)(word & NOTES) + (fixed ? 0 : knob[0]), 0, 127),
                 (unsigned)clamp((int)((word >> 8) & 127u) + knob[1] * 3, 1, 127),
                 (unsigned)clamp((int)((word >> 16) & 255u) + knob[2] * 5, 1, 255),
-                (unsigned)clamp((int)(word >> 24) + knob[3] * 5, 0, 100));
+                (unsigned)clamp((int)((word >> 24) & 127u) + (editing_timing ? 0 : knob[3] * 5), 0, 100)) |
+                timing_bits(timing);
         }
         *cell = word;
     } else if (slap_ui.page == ARP) {
@@ -729,7 +844,11 @@ static void draw_panel(void)
     cv_blit(0, 0);
     cv_begin(240, 32, background);
     const SlapPatch *patch = &slap_patches[tracks[selected].patch];
-    const char *name = slap_ui.page == SAVE ? "SONG SLOTS" : slap_ui.page == FX ? slap_fx_pages[slap_ui.fx_page] :
+    static const char *const drum_names[] = {"KICK","SNARE","HAT","RIM","CLAP","CYMBAL"};
+    const char *lane_name = selected == DRUMS ?
+        (slap_ui.lane ? drum_names[slap_ui.lane-1] : "DRUM NOTES") :
+        (slap_ui.lane ? "NOTE B" : "NOTE A");
+    const char *name = slap_ui.page == SEQ ? lane_name : slap_ui.page == SAVE ? "SONG SLOTS" : slap_ui.page == FX ? slap_fx_pages[slap_ui.fx_page] :
                        selected == DRUMS ? drum_kits[tracks[DRUMS].patch & 3u] : patch->name;
     const felucca_font_t *name_font = text_w(&FONT_M, name) > 150 ? &FONT_B : &FONT_M;
     cv_text(8, 1, name_font, name, C_WHITE);
@@ -840,22 +959,26 @@ static void draw_panel(void)
                 cv_rect(x, 0, 12, 36, index % 4 == 0 ? RGB(31,39,57) : RGB(19,25,39));
                 if (!scroll && index == play_step && playing) cv_rect(x, 0, 2, 36, C_WHITE);
                 if (slap_ui.page == SEQ && index == (unsigned)slap_ui.step) cv_rect(x + 9, 0, 3, 36, c);
-                int y = 100 - (int)((word & NOTES) % 24u) * 4 - strip * 36;
-                int width = 2 + (int)((word >> 16) & 255u) * 13 / 192;
-                if (word & ACTIVE) cv_rect(x + 2, y, width, 5, c);
+                for (unsigned lane = 0; lane < lane_count(selected); ++lane) {
+                    word = *event_cell(selected, index, lane);
+                    if (!(word & ACTIVE)) continue;
+                    int y = 100 - (int)((word & NOTES) % 24u) * 4 - strip * 36;
+                    int width = 2 + (int)((word >> 16) & 255u) * 13 / 192;
+                    cv_rect(x + 2 + (int)timing_of(word), y, width, 5, c);
+                }
             }
             if (scroll) cv_rect(50, 0, 1, 36, C_WHITE);
         }
         cv_blit(0, 80 + strip * 36);
     }
     cv_begin(240, 48, background);
-    uint32_t word = tracks[selected].steps[slap_ui.step];
+    uint32_t word = *event_cell(selected, slap_ui.step, slap_ui.page == SEQ ? slap_ui.lane : 0);
     unsigned values[] = { (settings >> 8) & 255u, length, ((settings >> 16) & 255u) * 100u / 255u, swing };
     if (slap_ui.page == SEQ) {
         values[0] = word & NOTES;
         values[1] = (word >> 8) & 127u;
         values[2] = (word >> 16) & 255u;
-        values[3] = word >> 24;
+        values[3] = slap_ui.buttons & (1u << B_SEL) ? timing_of(word) : (word >> 24) & 127u;
     }
     if (slap_ui.page == ENV)
         for (unsigned k = 0; k < 4; ++k) values[k] = (env >> (k*8u)) & 255u;
@@ -863,7 +986,7 @@ static void draw_panel(void)
         int x = 8 + (int)k * 58;
         const char *label = slap_ui.page == FX ? slap_fx_labels[slap_ui.fx_page][k] :
                             slap_ui.page == ARP ? arp_labels[k] : slap_ui.page == LFO ? lfo_labels[k] : slap_ui.page == HARMONY ? harmony_labels[k] :
-                            slap_ui.page == SEQ ? edit_labels[k] : slap_ui.page == ENV ? env_labels[k] : labels[k];
+                            slap_ui.page == SEQ ? (k == 3 && (slap_ui.buttons & (1u << B_SEL)) ? "OFFSET" : edit_labels[k]) : slap_ui.page == ENV ? env_labels[k] : labels[k];
         if (!label) continue;
         cv_text(x, 2, &FONT_XS, label, c);
         if (slap_ui.page == ARP) {
@@ -953,6 +1076,8 @@ int app_expect(const char *name, int *result)
     if (name_matches(name, "track")) *result = slap_ui.track + 1;
     else if (name_matches(name, "tempo")) *result = (int)tempo;
     else if (name_matches(name, "playing")) *result = (int)playing;
+    else if (name_matches(name, "lane")) *result = slap_ui.lane;
+    else if (name_matches(name, "events")) *result = (int)scheduled_events;
     else if (name_matches(name, "step")) *result = (int)positions;
     else if (name_matches(name, "arp_events")) *result = (int)arp_cursor;
     else if (name_matches(name, "arp_note")) *result = (int)arp_history[(arp_cursor - 1u) & 15u];
@@ -962,7 +1087,7 @@ int app_expect(const char *name, int *result)
     else if (name_matches(name, "patch")) *result = (int)tracks[slap_ui.track].patch;
     else if (name_matches(name, "length")) *result = tracks[slap_ui.track].mix & 255u;
     else if (name_matches(name, "pitch")) {
-        uint32_t word = tracks[slap_ui.track].steps[slap_ui.step];
+        uint32_t word = *event_cell(slap_ui.track, slap_ui.step, slap_ui.lane);
         *result = word & ACTIVE ? (int)(word & NOTES) : -1;
     }
     else if (name_matches(name, "page")) *result = slap_ui.page;
@@ -983,6 +1108,26 @@ STUDIO_EXPORT void studio_transport(uint32_t run)
 STUDIO_EXPORT uint32_t studio_step(uint32_t track, uint32_t step)
 {
     return track < TRACKS && step < STEPS ? tracks[track].steps[step] : 0;
+}
+
+STUDIO_EXPORT uint32_t studio_event(uint32_t track, uint32_t step, uint32_t lane)
+{
+    if (track >= TRACKS || step >= STEPS || lane >= lane_count(track)) return 0;
+    return *event_cell(track, step, lane);
+}
+
+STUDIO_EXPORT void studio_set_event(uint32_t track, uint32_t step, uint32_t lane, uint32_t word)
+{
+    if (track >= TRACKS || step >= STEPS || lane >= lane_count(track) || !step_valid(word)) return;
+    if (word && track == DRUMS && lane && (word & NOTES) != lane_pitch[lane-1u]) return;
+    *event_cell(track, step, lane) = word;
+}
+
+STUDIO_EXPORT uint32_t studio_drum_filters(void) { return drum_filters; }
+
+STUDIO_EXPORT void studio_set_drum_filters(uint32_t mask)
+{
+    if (!(mask & ~0x3f3fu)) drum_filters = mask;
 }
 
 STUDIO_EXPORT uint32_t studio_mix(uint32_t track)

@@ -9,7 +9,9 @@ import { pack7, unpack7 } from '../protocol/fm1ota.js';
 
 const raw = new Uint8Array(await readFile(process.argv[2]));
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
-const release = validateRelease({ version: '0.1.0', product: 'FM-1_75000100',
+const version = process.argv[3] ?? '0.1.0';
+const product = 'FM-1_75' + version.split('.').map(v => v.padStart(2, '0')).join('');
+const release = validateRelease({ version, product,
   sha256: sha(raw), bytes: raw.length, sources: ['FM-1_015'] });
 const valid = await verifyPackage(release, raw);
 const bad = raw.slice();

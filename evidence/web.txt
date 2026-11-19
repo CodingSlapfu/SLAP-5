@@ -7,6 +7,6 @@ font L: BarlowSemiCondensed-Bold.ttf 31px h 32, digit adv 16, 19776 B
 font set barlow: 60782 B (approx)
 words: 3 own + 51 common -> /workspace/scratch/108667299f69/SLAP-5/device/web/words/95a41ce197.json (1059 B)
 emu: no fm1-reader at /workspace/scratch/108667299f69/SLAP-5/vendor/fm1-reader/web: the screen is read as plain text, without its voice (set FM1_READER)
-emu      /workspace/scratch/108667299f69/SLAP-5/device/build/emu  (94233 B wasm)
+emu      /workspace/scratch/108667299f69/SLAP-5/device/build/emu  (100150 B wasm)
 WebAssembly boot, PLAY input and unclipped stereo audio passed (peak 0.0374).
 SLAP STUDIO project round-trip, validation and patch audition passed through the compiled DSP.

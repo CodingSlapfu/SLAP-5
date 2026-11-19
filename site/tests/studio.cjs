@@ -35,11 +35,15 @@ async function test() {
     const filename = await download.path();
     const project = JSON.parse(await fs.readFile(filename, 'utf8'));
     assert.equal(project.tracks.length, 5);
-    assert.equal((project.tracks[4].steps[5] >>> 8) & 127, 88);
+    assert.equal((project.tracks[4].extra[2][5] >>> 8) & 127, 88);
     await page.locator('#import').setInputFiles({ name: 'song.json', mimeType: 'application/json',
       buffer: Buffer.from(JSON.stringify({ ...project, bpm: 138 })) });
     await page.waitForFunction(() => document.getElementById('bpm').value === '138');
     await page.locator('#play').click();
+    await page.reload();
+    await page.locator('#start').click();
+    await page.waitForFunction(() => !document.getElementById('play').disabled);
+    assert.equal(await page.locator('#bpm').inputValue(), '138');
     assert.deepEqual(errors, []);
     console.log('Chromium loaded DSP, 128 patches, transport, drum edits, undo/redo and project round-trip.');
   } finally {
