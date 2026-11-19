@@ -5,7 +5,7 @@
 #include "effects.h"
 
 enum { TRACKS = 5, STEPS = 64, VOICES = 16, RATE = 44100 };
-enum { HOME, SEQ, GLOBAL, PATCH, ENV, FX, VISUAL, SAVE, HARMONY, LFO };
+enum { HOME, SEQ, GLOBAL, PATCH, ENV, FX, VISUAL, SAVE, HARMONY, LFO, ARP };
 enum { NOTES = 0x7f, ACTIVE = 0x80, DRUMS = 4 };
 
 typedef struct {
@@ -34,6 +34,10 @@ static uint32_t until_step, step_duration, step_number, running_epoch;
 static volatile uint32_t step_progress;
 static uint32_t startup_sample;
 static float startup_phase;
+static volatile uint32_t arp_setup[DRUMS];
+static volatile uint8_t arp_history[16];
+static volatile uint32_t arp_cursor;
+static uint32_t arp_pulse, arp_wait, arp_last_track = TRACKS, arp_stamp, arp_arrival[NKEYS];
 static float master_gain, energy_smooth[TRACKS];
 static volatile uint32_t track_energy[TRACKS];
 static struct {
@@ -68,6 +72,10 @@ void app_init(void)
     startup_sample = 0;
     startup_phase = 0.0f;
     slap_fx_init();
+    for (unsigned t = 0; t < DRUMS; ++t)
+        arp_setup[t] = 2u << 8 | 1u << 16 | 64u << 24;
+    arp_cursor = arp_wait = arp_pulse = 0;
+    for (unsigned i = 0; i < 16; ++i) arp_history[i] = 255;
     for (unsigned t = 0; t < DRUMS; ++t) tracks[t].lfo = 31u << 8;
     static const uint8_t bass[] = {36, 36, 39, 43, 34, 34, 39, 41};
     static const uint8_t lead[] = {72, 67, 70, 75, 74, 67, 65, 70};
@@ -205,7 +213,9 @@ static void read_notes(void)
                 unsigned track = input_track;
                 key_pitches[k] = pitch;
                 key_tracks[k] = track;
-                trigger(track, pitch, 100, 0, 1);
+                arp_arrival[k] = ++arp_stamp;
+                if (track == DRUMS || !(arp_setup[track] & 255u))
+                    trigger(track, pitch, 100, 0, 1);
                 plat_midi_send(0x09u | (0x90u | track) << 8 | pitch << 16 | 100u << 24, TO_USB);
             } else {
                 release_note(key_tracks[k], key_pitches[k]);
@@ -226,6 +236,57 @@ static void read_notes(void)
         else if ((status & 0xf0u) == 0x80u || (status & 0xf0u) == 0x90u)
             release_note(track, pitch);
     }
+}
+
+static void arp_render_clock(void)
+{
+    static const uint8_t ratios[] = {4, 8, 16, 32, 12, 24};
+    unsigned track = input_track;
+    uint32_t config = track < DRUMS ? arp_setup[track] : 0u;
+    unsigned mode = config & 255u;
+    if (!mode || !old_keys || arp_last_track != track) {
+        arp_wait = arp_pulse = 0;
+        arp_last_track = track;
+        if (!mode || !old_keys) return;
+    }
+    if (arp_wait) { --arp_wait; return; }
+    unsigned keys[NKEYS], count = 0;
+    for (unsigned k = 0; k < NKEYS; ++k) {
+        if (!(old_keys & (1u << k)) || key_tracks[k] != track) continue;
+        unsigned at = count++;
+        if (mode == 6) {
+            while (at && arp_arrival[keys[at - 1]] > arp_arrival[k]) {
+                keys[at] = keys[at - 1];
+                --at;
+            }
+        }
+        keys[at] = k;
+    }
+    unsigned period = RATE * 240u / (tempo * ratios[(config >> 8) & 255u]);
+    arp_wait = period - 1u;
+    if (!count) return;
+    unsigned total = count * ((config >> 16) & 255u);
+    unsigned index = arp_pulse % total;
+    if (mode == 2) index = total - index - 1;
+    if (mode == 3 && total > 1) {
+        index = arp_pulse % (2u * total - 2u);
+        if (index >= total) index = 2u * total - 2u - index;
+    }
+    if (mode == 4) index = random_word() % total;
+    if (mode == 5) index = (arp_pulse % (total / count)) * count;
+    uint32_t harmony = tracks[track].harmony;
+    unsigned gate = period * (4u + (config >> 24)) / 104u;
+    unsigned first = 0;
+    for (unsigned i = 0; i < (mode == 5 ? count : 1u); ++i) {
+        unsigned n = index + i;
+        unsigned pitch = (unsigned)clamp((int)key_pitches[keys[n % count]] + (int)(n / count) * 12, 0, 127);
+        pitch = note_in_scale(pitch, harmony & 255u, (harmony >> 8) & 255u);
+        if (!i) first = pitch;
+        trigger_voice(track, pitch, 100, gate, 0, pitch, 0);
+    }
+    arp_history[arp_cursor & 15u] = (uint8_t)first;
+    ++arp_cursor;
+    ++arp_pulse;
 }
 
 static void next_step(const uint32_t *mix)
@@ -341,7 +402,7 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
     uint32_t epoch = sequence_epoch;
     if (running_epoch != epoch) {
         running_epoch = epoch;
-        until_step = step_number = 0;
+        until_step = step_number = arp_wait = arp_pulse = 0;
         for (unsigned i = 0; i < VOICES; ++i)
             if (!voices[i].manual) voices[i].releasing = 1;
     }
@@ -351,6 +412,7 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
     for (uint32_t i = 0; i < frames; ++i) {
         if (playing && until_step == 0) next_step(mix);
         if (until_step) --until_step;
+        arp_render_clock();
         float dry[TRACKS] = {0};
         for (unsigned j = 0; j < VOICES; ++j) {
             Voice *v = &voices[j];
@@ -518,6 +580,7 @@ void app_input_only(void)
         slap_ui.notice = 0;
     }
     if (pressed & (1u << B_FX)) slap_ui.page = FX;
+    if (pressed & (1u << B_ARP) && slap_ui.track < DRUMS) slap_ui.page = ARP;
     if (pressed & (1u << B_SEL) && slap_ui.page == HOME && slap_ui.track < DRUMS) slap_ui.page = HARMONY;
     if (pressed & (1u << B_LFO) && slap_ui.track < DRUMS) slap_ui.page = LFO;
     if (pressed & (1u << B_EDIT) && slap_ui.track < DRUMS) slap_ui.page = PATCH;
@@ -575,6 +638,15 @@ void app_input_only(void)
                 (unsigned)clamp((int)(word >> 24) + knob[3] * 5, 0, 100));
         }
         *cell = word;
+    } else if (slap_ui.page == ARP) {
+        static const uint8_t min[] = {0, 0, 1, 0}, max[] = {6, 5, 4, 100};
+        uint32_t word = arp_setup[slap_ui.track];
+        for (unsigned k = 0; k < 4; ++k) {
+            unsigned shift = k*8u;
+            unsigned value = (unsigned)clamp((int)((word >> shift) & 255u) + knob[k], min[k], max[k]);
+            word = (word & ~(255u << shift)) | value << shift;
+        }
+        arp_setup[slap_ui.track] = word;
     } else if (slap_ui.page == HARMONY || slap_ui.page == LFO) {
         const int harmony_max[] = {HARMONY_KEYS-1,HARMONY_SCALES-1,HARMONY_CHORDS-1,101};
         const int lfo_max[] = {5,127,127,127};
@@ -625,7 +697,10 @@ static void decimal(char *out, unsigned value)
 
 static void draw_panel(void)
 {
-    static const char *const page_names[] = {"SLAP-5", "SEQUENCE", "GLOBAL", "PATCH", "ENV", "FX", "VISUAL", "SAVE", "HARMONY", "LFO"};
+    static const char *const page_names[] = {"SLAP-5", "SEQUENCE", "GLOBAL", "PATCH", "ENV", "FX", "VISUAL", "SAVE", "HARMONY", "LFO", "ARP"};
+    static const char *const arp_labels[] = {"MODE", "RATE", "OCT", "GATE"};
+    static const char *const arp_modes[] = {"OFF","UP","DOWN","UP/DN","RANDOM","CHORD","PLAYED"};
+    static const char *const arp_rates[] = {"1/4","1/8","1/16","1/32","1/8T","1/16T"};
     static const char *const lfo_labels[] = {"WAVE", "RATE", "PHS", "FADE"};
     static const char *const harmony_labels[] = {"KEY", "SCALE", "CHORD", "STRUM"};
     static const char *const env_labels[] = {"ATTACK", "DECAY", "SUSTAIN", "RELEASE"};
@@ -717,6 +792,15 @@ static void draw_panel(void)
                     cv_rect(8 + (int)i * 3, y - strip * 36, 3, 3, c);
                 }
             }
+        } else if (slap_ui.page == ARP) {
+            unsigned cursor = arp_cursor;
+            for (unsigned i = 0; i < 16; ++i) {
+                int x = 8 + (int)i*14;
+                unsigned pitch = arp_history[(cursor + i) & 15u];
+                cv_rect(x, 0, 12, 36, RGB(22,32,50));
+                if (pitch < 128u)
+                    cv_rect(x, 98 - (int)(pitch % 24u)*4 - strip*36, 11, 5, c);
+            }
         } else if (slap_ui.page == LFO) {
             unsigned wave = modulation & 255u;
             float phase = ((modulation >> 16) & 255u) / 128.0f;
@@ -778,11 +862,18 @@ static void draw_panel(void)
     for (unsigned k = 0; k < 4; ++k) {
         int x = 8 + (int)k * 58;
         const char *label = slap_ui.page == FX ? slap_fx_labels[slap_ui.fx_page][k] :
-                            slap_ui.page == LFO ? lfo_labels[k] : slap_ui.page == HARMONY ? harmony_labels[k] :
+                            slap_ui.page == ARP ? arp_labels[k] : slap_ui.page == LFO ? lfo_labels[k] : slap_ui.page == HARMONY ? harmony_labels[k] :
                             slap_ui.page == SEQ ? edit_labels[k] : slap_ui.page == ENV ? env_labels[k] : labels[k];
         if (!label) continue;
         cv_text(x, 2, &FONT_XS, label, c);
-        if (slap_ui.page == LFO || slap_ui.page == HARMONY) {
+        if (slap_ui.page == ARP) {
+            unsigned value = (arp_setup[selected] >> (8u*k)) & 255u;
+            if (k < 2u) {
+                cv_text(x, 15, &FONT_XS, k == 0 ? arp_modes[value] : arp_rates[value], C_WHITE);
+                continue;
+            }
+            values[k] = value;
+        } else if (slap_ui.page == LFO || slap_ui.page == HARMONY) {
             unsigned v = (modulation >> (8u*k)) & 255u;
             const char *tag = slap_ui.page == LFO ? (k == 0 ? lfo_waves[v] : 0) :
                 k == 0 ? harmony_keys[v] : k == 1 ? harmony_scales[v] : k == 2 ? harmony_chords[v] : !v ? "OFF" : 0;
@@ -863,6 +954,8 @@ int app_expect(const char *name, int *result)
     else if (name_matches(name, "tempo")) *result = (int)tempo;
     else if (name_matches(name, "playing")) *result = (int)playing;
     else if (name_matches(name, "step")) *result = (int)positions;
+    else if (name_matches(name, "arp_events")) *result = (int)arp_cursor;
+    else if (name_matches(name, "arp_note")) *result = (int)arp_history[(arp_cursor - 1u) & 15u];
     else if (name_matches(name, "slot")) *result = slap_ui.slot + 1;
     else if (name_matches(name, "fx_page")) *result = slap_ui.fx_page + 1;
     else if (name_matches(name, "fx_k1")) *result = slap_fx_value(slap_ui.track, slap_ui.fx_page, 0);

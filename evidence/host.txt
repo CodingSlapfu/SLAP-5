@@ -24,7 +24,7 @@ host     /workspace/scratch/108667299f69/SLAP-5/device/build/host/slap-5_host
   ok playing == 0
   ok playing == 1
   ok step == 0 (<2)
-host: 5674 ms simulated, 714 blits, render 0.4% of real time (host CPU)
+host: 5674 ms simulated, 714 blits, render 0.5% of real time (host CPU)
   ok patch == 67
   ok page == 3
   ok patch == 64
@@ -51,3 +51,12 @@ host: 5020 ms simulated, 630 blits, render 0.3% of real time (host CPU)
   ok patch == 76
   ok store_writes == 1
 host: 9234 ms simulated, 1158 blits, render 0.2% of real time (host CPU)
+  ok page == 10
+  ok arp_events == 1
+  ok arp_note == 60
+  ok arp_events == 2
+  ok arp_note == 64
+  ok arp_events == 3
+  ok arp_note == 60
+  ok arp_events == 3
+host: 1333 ms simulated, 168 blits, render 0.3% of real time (host CPU)

@@ -1,8 +1,8 @@
 {
   "identity": "FM-1_75000100",
   "packageBytes": 611488,
-  "packageSha256": "7d660e4499e2bfc5dfe38c84c400612b4e0f0776582a7c0566d53d151f2db7ba",
-  "appBytes": 128536,
+  "packageSha256": "bd46f7ba19b3fa7250e692e51c0f44dacd7eda12b740f7d6214e01c4777c2b52",
+  "appBytes": 129636,
   "appSlotBytes": 581564,
   "loaderBytes": 8332,
   "flashImageBytes": 602112,
