@@ -20,3 +20,10 @@ float slap_fx_sample(unsigned track, float dry);
 int slap_fx_response(unsigned track, unsigned point);
 int slap_fx_trace(unsigned track, unsigned point);
 unsigned slap_fx_slicer_cell(unsigned track, unsigned step);
+
+#if !defined(PLAT_WEB)
+enum { SLAP_FX_BATCH = 64, SLAP_FX_WORKER_TRACKS = 2 };
+unsigned slap_fx_work(unsigned track);
+void slap_fx_checkpoint(unsigned slot, unsigned track, unsigned frames);
+void slap_fx_rollback(unsigned slot);
+#endif

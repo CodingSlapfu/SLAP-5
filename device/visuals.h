@@ -68,6 +68,7 @@ static void visualizer_draw(unsigned kind, unsigned time)
     float meter[2] = {0};
     float levels[SPECTRUM_BANDS];
     static float holds[SPECTRUM_BANDS];
+    static unsigned orbit_time, orbit_phase[8], orbit_speed[8];
     if (kind == 5)
         for (unsigned c = 0; c < 2; ++c)
             meter[c] = fm_clampf((fm_log2f(fm_maxf(visual_rms[c], 0.000001f)) + 18.0f) / 15.0f, 0.0f, 1.0f);
@@ -75,8 +76,23 @@ static void visualizer_draw(unsigned kind, unsigned time)
         levels[b] = fm_clampf((fm_log2f(fm_maxf(visual_band[b], 0.000001f)) + 18.0f) / 13.0f, 0.0f, 1.0f);
         holds[b] = fm_maxf(levels[b], holds[b] - 0.023f);
     }
+    if (kind == 3) {
+        static const uint8_t bands[] = {0, 1, 2, 3, 4, 5, 6, 0};
+        static const uint8_t rates[] = {24, 17, 13, 10, 6, 4, 3, 2};
+        unsigned elapsed = time - orbit_time;
+        // Resume from the old position after leaving the visualizer.
+        if (elapsed > 25u) elapsed = 0;
+        orbit_time = time;
+        for (unsigned i = 0; i < 8; ++i) {
+            unsigned response = i == 7 ? (unsigned)energy[4] * 6u :
+                (unsigned)(levels[bands[i]] * 240.0f);
+            unsigned target = rates[i] * (16u + response);
+            orbit_speed[i] = (5u * orbit_speed[i] + target) / 6u;
+            orbit_phase[i] += elapsed * orbit_speed[i];
+        }
+    }
     for (int sy = 0; sy < 240; sy += 40) {
-        cv_begin(240, 40, RGB(4, 7, 14));
+        cv_begin(240, 40, C_BLACK);
         switch (kind) {
         case 0:
             for (int y = 38; y < 230; y += 7) {
@@ -108,7 +124,6 @@ static void visualizer_draw(unsigned kind, unsigned time)
             break;
         case 3: {
             static const uint8_t sizes[] = {2,4,5,3,12,9,6,6};
-            static const uint8_t rates[] = {24,17,13,10,6,4,3,2};
             static const uint16_t planet[] = { RGB(160,151,137), RGB(229,185,109),
                 RGB(51,151,224), RGB(210,78,44), RGB(218,158,113), RGB(222,188,116),
                 RGB(116,216,221), RGB(46,80,222) };
@@ -130,7 +145,7 @@ static void visualizer_draw(unsigned kind, unsigned time)
                 int r = 21 + (int)i*12;
                 for (unsigned k=0; k<1024; k+=57)
                     cv_rect(120+visual_wave(k+256,r),128+visual_wave(k,r*3/4)-sy,1,1,RGB(46+mids,62+mids,85+mids));
-                unsigned phase = time*rates[i]/160u+i*113u;
+                unsigned phase = (orbit_phase[i] >> 12) + i * 113u;
                 int x = 120+visual_wave(phase+256,r), y = 128+visual_wave(phase,r*3/4);
                 if (i == 5) cv_line(x-13,y+4-sy,x+13,y-4-sy,RGB(237,202,142));
                 visual_disc(x,y,sizes[i],sy,planet[i]);
@@ -138,15 +153,23 @@ static void visualizer_draw(unsigned kind, unsigned time)
             }
             break;
         }
-        case 4:
-            for (int y = sy; y < sy + 40; y += 5)
+        case 4: {
+            int bass = (int)(levels[0] * 48.0f);
+            int highs = (int)(levels[6] * 42.0f);
+            for (int y = sy; y < sy + 40; y += 5) {
+                int sweep = visual_wave((unsigned)y * 11u - time * 7u, 24 + bass);
                 for (int x = 0; x < 240; x += 6) {
-                    unsigned t = (unsigned)(x/48);
-                    int a = 69 + visual_wave((unsigned)(x*5+y*4) + time*4u,36+energy[t]) +
-                                 visual_wave((unsigned)(y*8) - time*3u,31);
-                    cv_rect(x,y-sy,5,3,RGB(clamp(a,0,170),clamp(a+(int)t*15,0,160),clamp(a*2,20,230)));
+                    unsigned t = (unsigned)x / 48u;
+                    int wave = visual_wave((unsigned)(x*7 + y*5 + sweep) + time*9u,
+                                           31 + energy[t] + bass);
+                    int chroma = visual_wave((unsigned)(x*3 - y*9) - time*6u, 30 + highs);
+                    int glow = 52 + wave + sweep;
+                    cv_rect(x, y-sy, 5, 3, RGB(clamp(glow + chroma, 0, 255),
+                            clamp(glow + highs - chroma, 0, 220), clamp(glow*2, 0, 255)));
                 }
+            }
             break;
+        }
         case 5:
             for (unsigned channel = 0; channel < 2; ++channel) {
                 int y = 43 + (int)channel * 93;
@@ -187,12 +210,11 @@ static void visualizer_draw(unsigned kind, unsigned time)
                     visual_disc(x,y,2+energy[t]/10,sy,track_color[t]);
                 }
             }
-            cv_rect(46,107-sy,148,35,RGB(8,16,28));
             slap_wordmark(120, 110-sy);
             break;
         }
         if (!sy) {
-            cv_rect(0,0,240,33,RGB(4,7,14));
+            cv_rect(0,0,240,33,C_BLACK);
             cv_text(9,6,&FONT_B,names[kind],C_WHITE);
         }
         cv_blit(0, sy);
@@ -202,7 +224,7 @@ static void visualizer_draw(unsigned kind, unsigned time)
 static void draw_boot(unsigned elapsed)
 {
     for (int sy = 0; sy < 240; sy += 40) {
-        cv_begin(240,40,RGB(4,7,14));
+        cv_begin(240,40,C_BLACK);
         for (unsigned i = 0; i < TRACKS; ++i) {
             int end = clamp((int)elapsed / 12 - (int)i*20, 0, 210);
             int y = 63 + (int)i*27;
@@ -216,7 +238,6 @@ static void draw_boot(unsigned elapsed)
             }
         }
         if (elapsed > 3200) {
-            cv_rect(10,94-sy,220,52,RGB(4,7,14));
             int settle = clamp(18 - ((int)elapsed - 3200) / 28, 0, 18);
             slap_wordmark(120, 102+settle-sy);
         }

@@ -39,6 +39,8 @@ typedef struct {
     float coef, damp, low, band, high, dp[4], ch[4], rv[4], dr[4];
     float depth, mix, amount, tone, speed, filter_scale, phase_step;
     uint32_t time, mode, insert, clock_step, gate_sample, block_index;
+    uint32_t gate_boundary;
+    unsigned gate_step;
     uint32_t delay_pos, chorus_pos, room_pos, delay_div, crush_count;
     uint32_t revision, bpm, room_short, room_long;
     uint16_t pattern;
@@ -49,6 +51,71 @@ static volatile uint32_t settings_revision[SLAP_FX_TRACKS];
 static PLAT_POOL int16_t echo_line[SLAP_FX_TRACKS][TRACK_DELAY];
 static PLAT_POOL int16_t chorus_line[SLAP_FX_TRACKS][CHORUS];
 static PLAT_POOL int16_t room_line[SLAP_FX_TRACKS][ROOM];
+
+#if !defined(PLAT_WEB)
+typedef struct {
+    Fx state;
+    unsigned track, delay_count, chorus_count, room_count;
+    int16_t delay[SLAP_FX_BATCH / 4], chorus[SLAP_FX_BATCH], room[SLAP_FX_BATCH];
+    int8_t trace[SLAP_FX_PLOT];
+} FxCheckpoint;
+
+static PLAT_POOL FxCheckpoint checkpoints[SLAP_FX_WORKER_TRACKS];
+
+unsigned slap_fx_work(unsigned track)
+{
+    const Fx *f = &fx[track];
+    return (f->filter_scale > 0.0f) * 2u + (f->dr[0] > 0.0f) * 3u +
+           (f->ch[0] > 0.0f) * 3u + (f->insert != 0) * 3u +
+           (f->mode != 0) * 2u + (f->rv[0] > 0.0f) * 4u + (f->dp[0] > 0.0f) * 2u;
+}
+
+// Copy only the circular-buffer entries the worker can overwrite in this block.
+static void fx_ring_copy(int16_t *saved, int16_t *ring, unsigned length,
+                         unsigned pos, unsigned count, int restore)
+{
+    for (unsigned i = 0; i < count; ++i) {
+        if (restore) ring[pos] = saved[i];
+        else saved[i] = ring[pos];
+        if (++pos == length) pos = 0;
+    }
+}
+
+static void fx_checkpoint_rings(FxCheckpoint *checkpoint, int restore)
+{
+    unsigned t = checkpoint->track;
+    const Fx *f = &checkpoint->state;
+    fx_ring_copy(checkpoint->delay, echo_line[t], TRACK_DELAY, f->delay_pos,
+                 checkpoint->delay_count, restore);
+    fx_ring_copy(checkpoint->chorus, chorus_line[t], CHORUS, f->chorus_pos,
+                 checkpoint->chorus_count, restore);
+    fx_ring_copy(checkpoint->room, room_line[t], ROOM, f->room_pos,
+                 checkpoint->room_count, restore);
+}
+
+void slap_fx_checkpoint(unsigned slot, unsigned track, unsigned frames)
+{
+    FxCheckpoint *checkpoint = &checkpoints[slot];
+    const Fx *f = &fx[track];
+    checkpoint->track = track;
+    checkpoint->state = *f;
+    checkpoint->delay_count = f->dp[0] > 0.0f ? (frames + 3u - ((4u - f->delay_div) & 3u)) / 4u : 0u;
+    checkpoint->chorus_count = f->ch[0] > 0.0f || f->insert == 7 ? frames : 0u;
+    checkpoint->room_count = f->rv[0] > 0.0f ? frames : 0u;
+    for (unsigned i = 0; i < SLAP_FX_PLOT; ++i)
+        checkpoint->trace[i] = traces[track][i];
+    fx_checkpoint_rings(checkpoint, 0);
+}
+
+void slap_fx_rollback(unsigned slot)
+{
+    FxCheckpoint *checkpoint = &checkpoints[slot];
+    fx[checkpoint->track] = checkpoint->state;
+    for (unsigned i = 0; i < SLAP_FX_PLOT; ++i)
+        traces[checkpoint->track][i] = checkpoint->trace[i];
+    fx_checkpoint_rings(checkpoint, 1);
+}
+#endif
 
 static uint32_t bytes(unsigned a, unsigned b, unsigned c, unsigned d)
 {
@@ -129,7 +196,12 @@ void slap_fx_begin(unsigned bpm)
         f->coef = 0.025f + 0.34f * (0.15f + f->low + f->band * .55f + f->high * .33f) / 2.1f;
         f->mode = slice & 255u;
         f->pattern = slicer_patterns[(slice >> 8) & 255u];
-        f->clock_step = 44100u * 60u / bpm * slice_lengths[(slice >> 16) & 255u] / 16u;
+        unsigned clock_step = 44100u * 60u / bpm * slice_lengths[(slice >> 16) & 255u] / 16u;
+        if (f->clock_step != clock_step) {
+            f->clock_step = clock_step;
+            f->gate_step = (f->gate_sample / clock_step) & 15u;
+            f->gate_boundary = (f->gate_step + 1u) * clock_step;
+        }
         f->depth = unit(slice >> 24);
         f->insert = insert & 255u;
         f->amount = unit((insert >> 8) & 255u);
@@ -236,10 +308,17 @@ float slap_fx_sample(unsigned track, float dry)
         }
     }
     if (f->mode) {
-        unsigned slice_step = (f->gate_sample / f->clock_step) & 15u;
         unsigned in_slice = f->gate_sample & 255u;
-        if (++f->gate_sample >= f->clock_step * 16u) f->gate_sample = 0;
-        int open = (f->pattern >> (15u - slice_step)) & 1u;
+        int open = (f->pattern >> (15u - f->gate_step)) & 1u;
+        ++f->gate_sample;
+        if (f->gate_sample >= f->clock_step * 16u) {
+            f->gate_sample = 0;
+            f->gate_step = 0;
+            f->gate_boundary = f->clock_step;
+        } else if (f->gate_sample == f->gate_boundary) {
+            ++f->gate_step;
+            f->gate_boundary += f->clock_step;
+        }
         f->gate += ((open ? 1.0f : 1.0f - f->depth) - f->gate) * 0.032f;
         if (f->mode == 2) {
             if (open) f->slice[in_slice] = pack(x);

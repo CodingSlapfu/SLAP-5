@@ -84,7 +84,7 @@ static uint32_t arp_pulse, arp_wait, arp_last_track = TRACKS, arp_stamp, arp_arr
 static float master_gain, energy_smooth[TRACKS];
 static volatile uint32_t track_energy[TRACKS];
 #if FM1B_CPU2 && defined(PLAT_HOST) && !defined(PLAT_WEB)
-static int host_discard_worker_result;
+static int host_discard_worker_result, host_discard_fx_result;
 #endif
 enum { SPECTRUM_BANDS = 7, VISUAL_COUNT = 8 };
 static volatile float visual_rms[2], visual_peak[2], visual_band[SPECTRUM_BANDS];
@@ -164,6 +164,7 @@ void app_init(void)
 #if FM1B_CPU2 && !defined(PLAT_WEB)
 #ifdef PLAT_HOST
     host_discard_worker_result = getenv("SLAP_TEST_DISCARD_WORKER") != 0;
+    host_discard_fx_result = getenv("SLAP_TEST_DISCARD_FX") != 0;
     plat_cpu2_set(getenv("SLAP_TEST_SINGLE_CORE") == 0);
 #else
     plat_cpu2_set(1);
@@ -691,6 +692,7 @@ static float render_voice_signal(Voice *v, SlapSynth *s)
         float texture = v->drum_noise + air * (0.18f + 0.7f * v->drum_snap);
         unsigned family = v->drum_family;
         unsigned kit = drum_kits[v->kit].circuit;
+        unsigned layers = drum_kits[v->kit].layers;
         float decay;
         if (family == 0) {
             v->bend *= 0.9988f;
@@ -700,6 +702,14 @@ static float render_voice_signal(Voice *v, SlapSynth *s)
             wave = body * (1.0f - 0.24f * v->drum_body) +
                 0.24f * v->drum_body * slap_sine(v->phase * 2.0f) * v->bend +
                 0.24f * v->drum_snap * air * v->bend * v->bend;
+            if (layers & DRUM_SUB) {
+                // Saturated long sine body, with a rounded attack from the sweep.
+                float sub = body * (1.45f - 0.45f * body * body);
+                wave = 0.76f * sub + 0.24f * wave;
+                decay = 0.99976f;
+            }
+            if (layers & DRUM_BEATER)
+                wave += 0.20f * air * v->bend * v->bend * v->bend;
         } else if (family == 1 || family == 3) {
             inc = tone[kit] * (family == 3 ? 3.17f : 1.0f);
             v->bend *= 0.9972f;
@@ -709,18 +719,35 @@ static float render_voice_signal(Voice *v, SlapSynth *s)
             float noise_mix = kit == 1 ? 0.91f : family == 3 ? 0.34f : 0.68f;
             noise_mix *= 1.0f - 0.28f * v->drum_body;
             wave = noise_mix * texture + (1.0f - noise_mix) * skin * v->bend;
+            if (layers & DRUM_MEMBRANE) {
+                float head = slap_sine(v->phase * 2.13f) + 0.38f * slap_sine(v->phase * 3.91f);
+                wave = 0.65f * wave + 0.25f * head * v->bend;
+            }
+            if (layers & DRUM_BRUSH)
+                wave = 0.52f * wave + 0.48f * v->drum_noise * (1.0f + slap_sine(v->phase));
         } else if (family == 4) {
             decay = 0.99902f;
             v->bend *= 0.999f;
             inc = 0.008f * pitch_mul[kit];
             float burst_width = 0.07f + 0.23f * v->drum_snap;
             wave = texture * (v->phase < burst_width ? 0.95f : 0.16f + 0.24f * v->drum_body);
+            if (layers & DRUM_CLUSTER) {
+                // Three decaying hand-clap transients ahead of the diffuse tail.
+                float cluster = v->phase < 0.12f || (v->phase > 0.31f && v->phase < 0.43f) ||
+                                (v->phase > 0.70f && v->phase < 0.79f) ? v->bend : 0.0f;
+                wave = texture * (0.23f + 0.73f * cluster);
+            }
         } else {
             inc = 0.052f * pitch_mul[kit];
             decay = family == 5 ? 0.99968f : kit == 1 ? 0.998f : 0.9969f;
             float metal = slap_sine(v->phase) * slap_sine(v->phase*3.79f);
             wave = (0.72f - 0.26f * v->drum_body) * air +
                 (0.09f + 0.46f * v->drum_body) * metal;
+            if (layers & DRUM_PLATE) {
+                // Inharmonic beating modes give these hats and cymbals a pitched edge.
+                float plate = slap_sine(v->phase * 2.71f) * slap_sine(v->phase * 5.42f);
+                wave = 0.57f * wave + 0.37f * plate;
+            }
         }
         if (v->kit >= 4u) {
             inc *= v->drum_tune;
@@ -747,7 +774,7 @@ static float render_voice(Voice *v, SlapSynth *s)
 }
 
 #if FM1B_CPU2 && !defined(PLAT_WEB)
-enum { VOICE_BATCH = 64, MIN_VOICE_BATCH = 32 };
+enum { VOICE_BATCH = SLAP_FX_BATCH, MIN_VOICE_BATCH = 32 };
 static struct {
     Voice voice[VOICES];
     unsigned slot[VOICES];
@@ -756,6 +783,10 @@ static struct {
     uint32_t ticks;
 } drum_worker __attribute__((aligned(32)));
 static float voice_bus[VOICE_BATCH][TRACKS];
+static float fx_bus[TRACKS][VOICE_BATCH] __attribute__((aligned(32)));
+static unsigned fx_worker_tracks[SLAP_FX_WORKER_TRACKS], fx_worker_count;
+static volatile uint32_t fx_worker_jobs, fx_worker_fallbacks, fx_worker_ticks;
+static uint32_t fx_job_ticks;
 static volatile uint32_t worker_jobs, worker_fallbacks, worker_ticks, worker_wait_ticks;
 
 static void render_drum_bus(uint32_t frames)
@@ -775,7 +806,7 @@ static void render_drum_bus(uint32_t frames)
     drum_worker.ticks = plat_ticks24() - started;
 }
 
-static unsigned render_voice_batch(unsigned frames, unsigned muted,
+static unsigned render_voice_batch(unsigned frames, unsigned muted, unsigned allow_fx,
                                    uint32_t callback_start, uint32_t budget)
 {
     if (frames < MIN_VOICE_BATCH || !plat_cpu2_on() ||
@@ -791,17 +822,21 @@ static unsigned render_voice_batch(unsigned frames, unsigned muted,
             drum_worker.voice[index] = voices[j];
         } else ++melodic;
     }
-    if (!melodic || !drum_worker.count || !plat_cpu2_run(render_drum_bus, frames)) return 0;
+    unsigned split = melodic && drum_worker.count && plat_cpu2_run(render_drum_bus, frames);
+    if (!split && !allow_fx) return 0;
 
     for (unsigned i = 0; i < frames; ++i) {
-        for (unsigned t = 0; t < DRUMS; ++t) voice_bus[i][t] = 0.0f;
+        for (unsigned t = 0; t < TRACKS; ++t) voice_bus[i][t] = 0.0f;
         for (unsigned j = 0; j < VOICES; ++j) {
             Voice *voice = &voices[j];
-            if (voice->age && voice->track < DRUMS)
-                voice_bus[i][voice->track] += render_voice(voice, &synths[j]);
+            if (!voice->age || (split && voice->track == DRUMS)) continue;
+            float sample = render_voice(voice, &synths[j]);
+            if (voice->track != DRUMS || !(muted & (1u << voice->drum_family)))
+                voice_bus[i][voice->track] += sample;
         }
     }
 
+    if (!split) return frames;
     uint32_t wait_start = plat_ticks24();
     int busy;
     while ((busy = plat_cpu2_busy()) &&
@@ -828,6 +863,82 @@ static unsigned render_voice_batch(unsigned frames, unsigned muted,
         voice_bus[i][DRUMS] = drum_worker.output[i];
     return frames;
 }
+
+static unsigned select_fx_worker_tracks(void)
+{
+    unsigned cost[TRACKS], total = 0;
+    for (unsigned t = 0; t < TRACKS; ++t) {
+        cost[t] = slap_fx_work(t);
+        total += cost[t];
+    }
+    unsigned best = 0, difference = total;
+    // Keep track zero on Core 0 as the sole owner of the FX display clock.
+    for (unsigned a = 1; a < TRACKS; ++a) {
+        if (!cost[a]) continue;
+        for (unsigned b = a; b < TRACKS; ++b) {
+            unsigned remote = cost[a] + (a == b ? 0 : cost[b]);
+            if (remote < 2u || total - remote < 2u) continue;
+            unsigned delta = remote > total - remote ? 2u * remote - total : total - 2u * remote;
+            if (delta < difference) {
+                difference = delta;
+                best = (1u << a) | (1u << b);
+            }
+        }
+    }
+    return best;
+}
+
+static void render_track_fx(unsigned track, unsigned frames)
+{
+    for (unsigned i = 0; i < frames; ++i)
+        fx_bus[track][i] = slap_fx_sample(track, voice_bus[i][track]);
+}
+
+static void render_worker_fx(uint32_t frames)
+{
+    uint32_t start = plat_ticks24();
+    for (unsigned slot = 0; slot < fx_worker_count; ++slot)
+        render_track_fx(fx_worker_tracks[slot], frames);
+    fx_job_ticks = plat_ticks24() - start;
+}
+
+static unsigned render_fx_batch(unsigned frames, unsigned mask, uint32_t start, uint32_t budget)
+{
+    if (!mask || !plat_cpu2_on() || plat_ticks24() - start >= budget * 3u / 4u) return 0;
+    fx_worker_count = 0;
+    for (unsigned t = 1; t < TRACKS; ++t) {
+        if (!(mask & (1u << t))) continue;
+        unsigned slot = fx_worker_count++;
+        fx_worker_tracks[slot] = t;
+        slap_fx_checkpoint(slot, t, frames);
+    }
+    if (!plat_cpu2_run(render_worker_fx, frames)) return 0;
+    for (unsigned t = 0; t < TRACKS; ++t)
+        if (!(mask & (1u << t))) render_track_fx(t, frames);
+
+    uint32_t wait_start = plat_ticks24();
+    int busy;
+    while ((busy = plat_cpu2_busy()) &&
+           plat_ticks24() - wait_start < 60u * 24u &&
+           plat_ticks24() - start < budget * 3u / 4u) {}
+    worker_wait_ticks += plat_ticks24() - wait_start;
+#ifdef PLAT_HOST
+    busy |= host_discard_fx_result && fx_worker_jobs == 128u;
+#endif
+    if (busy || plat_cpu2_wait() != 0) {
+        // Stop the worker before restoring any state or reusing its output bus.
+        plat_cpu2_set(0);
+        ++fx_worker_fallbacks;
+        for (unsigned slot = 0; slot < fx_worker_count; ++slot)
+            slap_fx_rollback(slot);
+        render_worker_fx(frames);
+    } else {
+        ++fx_worker_jobs;
+        fx_worker_ticks += fx_job_ticks;
+    }
+    return frames;
+}
+
 #endif
 
 /* Two rising tones with independent smooth envelopes, mixed just above silence. */
@@ -884,7 +995,8 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
     float meter_sum[2] = {0}, meter_peak[2] = {0};
     float target = master_q12 * (1.0f / 4096.0f);
 #if FM1B_CPU2 && !defined(PLAT_WEB)
-    unsigned batch_start = 0, batch_end = 0, next_batch = 0;
+    unsigned batch_start = 0, batch_end = 0, fx_batch_end = 0, next_batch = 0;
+    unsigned fx_mask = measure_fx || !plat_cpu2_on() ? 0 : select_fx_worker_tracks();
     uint32_t callback_budget = (24000000u / RATE) * frames;
 #endif
     for (uint32_t i = 0; i < frames; ++i) {
@@ -919,7 +1031,10 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
             // A held arpeggio can create a voice before the next sequencer step.
             if (old_keys && input_track < DRUMS && (arp_setup[input_track] & 255u)) amount = 0;
             batch_start = i;
-            batch_end = i + render_voice_batch(amount, muted, audio_started, callback_budget);
+            batch_end = i + render_voice_batch(amount, muted, fx_mask, audio_started, callback_budget);
+            fx_batch_end = i;
+            if (batch_end > i)
+                fx_batch_end += render_fx_batch(batch_end - i, fx_mask, audio_started, callback_budget);
             next_batch = batch_end > i ? batch_end : i + VOICE_BATCH;
         }
         if (i < batch_end)
@@ -937,7 +1052,12 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
         for (unsigned t = 0; t < TRACKS; ++t) {
             unsigned sample_cost = measure_fx && i == 0u;
             uint32_t started = sample_cost ? plat_ticks24() : 0u;
-            float processed = slap_fx_sample(t, dry[t]);
+            float processed;
+#if FM1B_CPU2 && !defined(PLAT_WEB)
+            if (i < fx_batch_end) processed = fx_bus[t][i - batch_start];
+            else
+#endif
+            processed = slap_fx_sample(t, dry[t]);
             if (sample_cost) {
                 uint32_t ticks = plat_ticks24() - started;
                 fx_cost_ticks[t] = (7u * fx_cost_ticks[t] + ticks + 4u) / 8u;
@@ -1667,7 +1787,7 @@ static void draw_panel(void)
     unsigned scroll = slap_ui.page == HOME && playing;
     unsigned substep = step_progress;
     unsigned bank = (slap_ui.page == SEQ ? (unsigned)slap_ui.step : play_step) / 16u * 16u;
-    uint16_t c = track_color[selected], background = RGB(5,8,15);
+    uint16_t c = track_color[selected], background = C_BLACK;
     cv_begin(240, 48, background);
     if (slap_ui.page == HOME) cv_text(8, 1, &FONT_M, "SLAP-5", C_WHITE);
     else cv_text(8, 1, &FONT_M, page_names[slap_ui.page], c);
@@ -1797,10 +1917,12 @@ static void draw_panel(void)
         } else if (slap_ui.page == GLOBAL) {
 #if FM1B_CPU2 && !defined(PLAT_WEB)
             cv_text(8, 2, &FONT_XS, "C1 JOBS", c);
-            decimal(number, worker_jobs > 9999 ? 9999 : worker_jobs);
+            uint32_t total_jobs = worker_jobs + fx_worker_jobs;
+            decimal(number, total_jobs > 9999 ? 9999 : total_jobs);
             cv_text(55, 2, &FONT_XS, number, C_WHITE);
             cv_text(89, 2, &FONT_XS, "FALLBACKS", c);
-            decimal(number, worker_fallbacks > 9999 ? 9999 : worker_fallbacks);
+            uint32_t total_fallbacks = worker_fallbacks + fx_worker_fallbacks;
+            decimal(number, total_fallbacks > 9999 ? 9999 : total_fallbacks);
             cv_text(157, 2, &FONT_XS, number, C_WHITE);
 #else
             cv_text(8, 2, &FONT_XS, "K1 TEMPO  /  K2 SWING", C_WHITE);
@@ -1839,8 +1961,10 @@ static void draw_panel(void)
         (slap_ui.lane ? "NOTE B" : "NOTE A");
     const char *name = slap_ui.page == SEQ ? lane_name : slap_ui.page == SAVE ? "SONG SLOTS" : slap_ui.page == FX ? slap_fx_pages[slap_ui.fx_page] :
                        selected == DRUMS ? drum_kits[tracks[DRUMS].patch].name : patch->name;
-    const felucca_font_t *name_font = text_w(&FONT_M, name) > 150 ? &FONT_B : &FONT_M;
+    unsigned drum_sequence = selected == DRUMS && slap_ui.page == SEQ;
+    const felucca_font_t *name_font = drum_sequence || text_w(&FONT_M, name) > 150 ? &FONT_B : &FONT_M;
     cv_text(8, 1, name_font, name, C_WHITE);
+    if (drum_sequence) cv_text(8, 17, &FONT_XS, "SEQ: GEN DRUMS", c);
     decimal(number, position / 16u % 999u + 1u);
     cv_text(163, 5, &FONT_XS, "BAR", c);
     cv_text(190, 5, &FONT_XS, number, C_WHITE);
@@ -1905,9 +2029,10 @@ static void draw_panel(void)
     }
     if (slap_ui.page == GEN_DRUMS) {
         cv_begin(240, 40, background);
-        cv_text(8, 3, &FONT_M, drum_style[gen_style].name, c);
+        cv_text(8, 3, &FONT_B, drum_style[gen_style].name, c);
         cv_text(8, 27, &FONT_XS, gen_confirm ? "SEL AGAIN TO REPLACE" :
                 playing ? "STOP TO GENERATE" : gen_enabled ? "SEL GENERATE   /   ARP OFF" : "GEN OFF   /   ARP ON", C_WHITE);
+        cv_text(178, 6, &FONT_XS, "SEQ BACK", c);
         cv_blit(0, 80);
         for (unsigned strip = 0; strip < 2; ++strip) {
             cv_begin(240, 36, background);
@@ -2086,7 +2211,9 @@ void app_frame(void)
 {
     app_input_only();
     uint32_t now = plat_ms();
-    if (now - slap_ui.frame_at >= 45u) {
+    unsigned frame_interval = slap_ui.page == VISUAL && dsp_budget_ticks &&
+                              dsp_avg_ticks > dsp_budget_ticks * 3u / 4u ? 85u : 45u;
+    if (now - slap_ui.frame_at >= frame_interval) {
         slap_ui.frame_at = now;
         if (slap_ui.booting && now - slap_ui.boot_at < BOOT_MS)
             draw_boot(now - slap_ui.boot_at);
@@ -2138,6 +2265,8 @@ int app_expect(const char *name, int *result)
 #if FM1B_CPU2 && !defined(PLAT_WEB)
     else if (name_matches(name, "worker_jobs")) *result = (int)worker_jobs;
     else if (name_matches(name, "worker_fallbacks")) *result = (int)worker_fallbacks;
+    else if (name_matches(name, "fx_worker_jobs")) *result = (int)fx_worker_jobs;
+    else if (name_matches(name, "fx_worker_fallbacks")) *result = (int)fx_worker_fallbacks;
 #endif
     else if (name_matches(name, "gen_count")) *result = (int)gen_count;
     else if (name_matches(name, "rec_running")) *result = (int)rec_running;

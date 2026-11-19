@@ -8,10 +8,10 @@ SLAP-5 is an original five-track groovebox for the M-VAVE FM-1. Copyright (C) 20
 
 | Control | Function |
 | --- | --- |
-| HOME | Return to the track sequencer. Press again to open the nine visualizers. |
+| HOME | Return to the track sequencer. Press again to open the eight visualizers. |
 | SELECT | Choose a track on HOME, a step in SEQ, a patch in EDIT, a page in FX or a slot in SAVE. |
 | ALGO | Set BPM. |
-| PRESET | Select one of 128 factory patches for melodic tracks, or one of four drum kits on track 5. |
+| PRESET | Select one of 128 factory patches for melodic tracks, or one of 32 drum kits on track 5. |
 | HOME knobs | Pan, steps (1–64), level, swing. |
 | SEQ knobs | Pitch, velocity, note gate, hit probability. Press a key to insert or toggle the current note. |
 | FX | Main, filter, slicer, insert, processor, reverb, tempo delay, chorus and drive. |
@@ -22,6 +22,13 @@ SLAP-5 is an original five-track groovebox for the M-VAVE FM-1. Copyright (C) 20
 | PLAY / OCT± | Transport and keyboard octave. |
 
 USB MIDI channels 1–5 address the five tracks. Each melodic step supports two independently editable notes. The drum sequencer has six fixed lanes and preserves legacy drum notes. In SEQ, hold SEL and turn SELECT to choose a lane or turn knob 4 for delay in eighths of a step. For the selected fixed drum lane, SEL+ARP toggles mute and SEL+REC toggles solo. The harmony engine can spread a chord across voices. The display uses SLAP BLOCK lettering on the logo. The opening animation plays two brief startup tones. During playback HOME scrolls note blocks past a fixed playhead.
+
+To generate a drum pattern on the FM-1, select track 5 from HOME and press SEQ.
+The drum sequencer shows **SEQ: GEN DRUMS**. Press SEQ again to open the
+generator. With transport stopped, set STYLE, HIT %, GROOVE and VAR % with
+knobs 1–4 and press SEL to generate. If prompted, press SEL again to replace
+edited notes. Press SEQ to return to the editable pattern. In SLAP STUDIO,
+select **5 · Drums** and use the generator controls next to the drum sequencer.
 
 ## Build and verify
 
