@@ -1,0 +1,42 @@
+name: Publish SLAP-5 0.1.12 engineering TESTING
+on:
+  push:
+    branches: [slap-5-0.1.12-dsp-backup]
+    paths: ['.github/workflows/engineering-release-0112.yml']
+permissions:
+  actions: read
+  contents: write
+concurrency:
+  group: slap-5-0.1.12-release
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    env:
+      SOURCE: 4027d816cdeceee171cc3bd72dd7c7669b835628
+      TESTED: a1dfdaecae73bf8b585aebc6d56ba85f35b6b4f8
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify Chromium gate and release bytes
+        run: |
+          set -eu
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/44628603559" |
+            jq -e --arg tested "$TESTED" '.head_sha == $tested and .conclusion == "success"'
+          git diff --exit-code "$TESTED" HEAD -- device site vendor engineering
+          git diff --exit-code "$SOURCE" "$TESTED" -- device site vendor
+          mkdir "$RUNNER_TEMP/slap-release"
+          tar -xJf engineering/SLAP-5-0.1.12-candidate.tar.xz -C "$RUNNER_TEMP/slap-release"
+          cd "$RUNNER_TEMP/slap-release"
+          sha256sum -c SHA256SUMS
+          echo 'fde204437fcbb6fa1bd855e0e78cad8eae0ea69aded2db0100cb6233b148b297  SLAP-5-0.1.12.fwsc' | sha256sum -c
+      - name: Publish candidate
+        run: |
+          set -eu
+          tag=v0.1.12-testing
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release already exists."
+            exit 0
+          fi
+          gh release create "$tag" --target "$SOURCE" --prerelease             --title "SLAP-5 0.1.12 engineering TESTING"             --notes-file evidence/release-0.1.12.md             "$RUNNER_TEMP/slap-release/SLAP-5-0.1.12.fwsc"             "$RUNNER_TEMP/slap-release/SLAP-5-0.1.12-application.bin"             "$RUNNER_TEMP/slap-release/SLAP-5-0.1.12-loader.bin"             "$RUNNER_TEMP/slap-release/SHA256SUMS"
