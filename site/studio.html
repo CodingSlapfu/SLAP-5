@@ -17,6 +17,7 @@
       <button id="play" disabled>Play</button>
       <label>BPM<input id="bpm" type="number" min="40" max="240" value="112"></label>
       <label>Swing<input id="swing" type="number" min="0" max="70" value="0"></label>
+      <label>Metronome<select id="metro"><option value="0">Off</option><option value="1">Rec</option><option value="2">On</option></select></label>
       <button id="undo" disabled>Undo</button>
       <button id="redo" disabled>Redo</button>
       <button id="export" disabled>Export</button>
@@ -33,6 +34,14 @@
           <label>Level<input id="level" type="number" min="0" max="255"></label>
           <label>Mute<input id="mute" type="checkbox"></label>
         </div>
+      </div>
+      <div class="settings">
+        <label>Track FX<select id="fx-page">
+          <option value="1">Filter</option><option value="2">Slicer</option><option value="3">Insert</option>
+          <option value="4">Processor</option><option value="5">Reverb</option><option value="6">Delay</option>
+          <option value="7">Chorus</option><option value="8">Drive</option>
+        </select></label>
+        <div id="fx-knobs" class="settings"></div>
       </div>
       <p id="hint">Enable audio to load the FM-1 sequencer and factory patches.</p>
       <div id="view" tabindex="0" aria-label="Step grid"><canvas id="roll"></canvas></div>

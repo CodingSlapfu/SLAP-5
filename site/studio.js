@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MPL-2.0 */
 /* Copyright (C) 2026 Ziao */
-import { decodeNote, drumNotes, encodeNote, eventLanes, validateProject, within } from './project.mjs';
+import { decodeNote, drumNotes, encodeNote, eventLanes, fxLimit, fxPanels, validateProject, within } from './project.mjs';
 
 const $ = id => document.getElementById(id);
 const colors = ['#1ce2ff', '#ab70ff', '#ff59b0', '#ffb43a', '#3ef289'];
@@ -68,6 +68,26 @@ function draw() {
   $('mute').checked = current.mix >>> 24;
   $('bpm').value = project.bpm;
   $('swing').value = project.swing;
+  $('metro').value = project.metronome;
+  const page = Number($('fx-page').value);
+  $('fx-knobs').replaceChildren(...fxPanels[page].map((name, knob) => {
+    const label = document.createElement('label');
+    const control = document.createElement('input');
+    const shift = 8 * knob;
+    control.type = 'number';
+    control.min = 0;
+    control.max = fxLimit(page, knob);
+    control.value = current.fx[page] >>> shift & 255;
+    control.addEventListener('change', () => {
+      const value = control.valueAsNumber;
+      if (within(value, 0, Number(control.max))) edit(p => {
+        p.tracks[track].fx[page] = (p.tracks[track].fx[page] & ~(255 << shift) | value << shift) >>> 0;
+      });
+      else draw();
+    });
+    label.append(name, control);
+    return label;
+  }));
   $('undo').disabled = !stateBefore.length;
   $('redo').disabled = !stateAfter.length;
   $('tracks').querySelectorAll('button').forEach((b, i) => b.setAttribute('aria-selected', String(i === track)));
@@ -208,6 +228,10 @@ for (let i = 0; i < 5; i++) {
 
 numberInput('bpm', 40, 240, (p, v) => { p.bpm = v; });
 numberInput('swing', 0, 70, (p, v) => { p.swing = v; });
+$('metro').addEventListener('change', () => {
+  if (project) edit(p => { p.metronome = Number($('metro').value); });
+});
+$('fx-page').addEventListener('change', draw);
 for (const [id, shift, min, max] of [['length', 0, 1, 64], ['pan', 8, 0, 255], ['level', 16, 0, 255]]) {
   numberInput(id, min, max, (p, v) => {
     if (id === 'length') step = Math.min(step, v - 1);

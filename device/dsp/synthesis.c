@@ -256,7 +256,7 @@ float slap_synth_sample(SlapSynth *s)
     case 24:
         next_x = x + d*(3.07f+1.03f*c);
         next_y = y + d*(6.47f+1.71f*m);
-        out = 0.38f*sine(p)+(0.18f+0.13f*sine(t))*sine(x)+0.18f*sine(y+x*0.04f);
+        out = 0.38f*sine(p)+(0.18f+0.13f*sine(t))*sine(x)+0.18f*sine(y+0.0064f*sine(x));
         break;
     default: out = sine(p); break;
     }

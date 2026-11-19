@@ -55,3 +55,11 @@ tap SEQ
 expect pitch 61
 expect note_offset >0
 expect note_gate >1
+press REC
+wait 2050
+release REC
+tap ARP
+expect length 16
+tap SEQ
+expect pitch 61
+expect note_offset 0

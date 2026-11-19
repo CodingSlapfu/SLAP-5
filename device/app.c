@@ -19,6 +19,7 @@ typedef struct {
     float attack, decay, sustain, release, drum_tune, drum_tail;
     float lfo_phase, lfo_inc, lfo_fade, lfo_gain, lfo_hold;
     float last_sample, steal_tail;
+    float drum_noise, drum_color, drum_body, drum_snap;
     uint32_t delay, rng;
     uint8_t lfo_wave, origin, kit, drum_family;
     uint32_t remaining, age;
@@ -48,6 +49,8 @@ static struct {
 } held_record[VOICES];
 static uint8_t monitored_next_step[TRACKS];
 static volatile uint32_t metronome;
+static uint32_t saved_metronome, metronome_changed_at;
+enum { SETTINGS_TAG = 0x534c4d31u, SETTINGS_SETTLE_MS = 500u };
 static unsigned click_remaining, click_accent, click_phase;
 enum { CLICK_SAMPLES = RATE / 40 };
 enum { BOOT_MS = 6000 };
@@ -132,6 +135,12 @@ static void load_patch(unsigned track, unsigned number)
 
 void app_init(void)
 {
+    uint32_t settings[2];
+    saved_metronome = 0;
+    if (plat_store_load(OBJ_SETTINGS, settings, sizeof settings) == (int)sizeof settings &&
+        settings[0] == SETTINGS_TAG && settings[1] <= 2u)
+        saved_metronome = settings[1];
+    metronome = saved_metronome;
     startup_sample = 0;
     startup_phase = 0.0f;
     slap_fx_init();
@@ -241,6 +250,9 @@ static void trigger_voice(unsigned track, unsigned pitch, unsigned velocity, uin
             voice->drum_family == 4 ? kit->clap_rate : kit->metal_pitch;
         voice->drum_tune = tune * 0.01f;
         voice->drum_tail = 100.0f / kit->decay;
+        voice->drum_color = 0.04f + kit->noise_color * 0.0065f;
+        voice->drum_body = kit->resonance * (1.0f / 127.0f);
+        voice->drum_snap = kit->transient * (1.0f / 127.0f);
         voice->attack = 0.013f;
         voice->sustain = 1.0f;
         voice->release = 0.00065f;
@@ -322,15 +334,53 @@ static void finish_record_note(unsigned slot, uint32_t now)
     held_record[slot].cell = 0;
 }
 
+static volatile uint32_t *event_cell(unsigned track, unsigned step, unsigned lane);
+static unsigned lane_count(unsigned track);
+
+static struct {
+    uint32_t cells[DRUM_LANES + 1][STEPS];
+    unsigned track, length, ready;
+    uint32_t after;
+} take_undo;
+
+static uint32_t take_pattern_hash(unsigned track)
+{
+    uint32_t hash = tracks[track].mix & 255u;
+    for (unsigned lane = 0; lane < lane_count(track); ++lane)
+        for (unsigned step = 0; step < STEPS; ++step)
+            hash = (hash ^ *event_cell(track, step, lane)) * 16777619u;
+    return hash;
+}
+
+static void undo_recording(void)
+{
+    if (playing || recording || rec_running || !take_undo.ready) return;
+    unsigned track = take_undo.track;
+    take_undo.ready = 0;
+    if (take_pattern_hash(track) != take_undo.after) return;
+    for (unsigned lane = 0; lane < lane_count(track); ++lane)
+        for (unsigned step = 0; step < STEPS; ++step)
+            *event_cell(track, step, lane) = take_undo.cells[lane][step];
+    track_setting(track, 0, take_undo.length);
+}
+
 static void end_recording(uint32_t now)
 {
     for (unsigned slot = 0; slot < VOICES; ++slot) finish_record_note(slot, now);
+    take_undo.after = take_pattern_hash(rec_track);
+    take_undo.ready = 1;
     rec_running = rec_countdown = 0;
 }
 
 static void begin_recording(void)
 {
     unsigned track = rec_track;
+    take_undo.ready = 0;
+    take_undo.track = track;
+    take_undo.length = tracks[track].mix & 255u;
+    for (unsigned lane = 0; lane < lane_count(track); ++lane)
+        for (unsigned step = 0; step < STEPS; ++step)
+            take_undo.cells[lane][step] = *event_cell(track, step, lane);
     if (rec_overwrite) {
         for (unsigned step = 0; step < rec_length; ++step) {
             tracks[track].steps[step] = 0;
@@ -569,6 +619,9 @@ static float render_voice_signal(Voice *v, SlapSynth *s)
         static const float tone[] = {0.0045f, 0.0028f, 0.0052f, 0.0072f};
         static const float pitch_mul[] = {1.0f, 0.81f, 1.33f, 1.85f};
         float hiss = (float)(next_random(&v->rng) & 65535u) / 32768.0f - 1.0f;
+        v->drum_noise += (hiss - v->drum_noise) * v->drum_color;
+        float air = hiss - v->drum_noise;
+        float texture = v->drum_noise + air * (0.18f + 0.7f * v->drum_snap);
         unsigned family = v->drum_family;
         unsigned kit = drum_kits[v->kit].circuit;
         float decay;
@@ -576,7 +629,10 @@ static float render_voice_signal(Voice *v, SlapSynth *s)
             v->bend *= 0.9988f;
             inc = 0.00108f + tone[kit] * v->bend;
             decay = 0.99966f - kit * 0.00008f;
-            wave = slap_sine(v->phase) + (kit == 3 ? 0.19f * hiss * v->bend : 0.0f);
+            float body = slap_sine(v->phase);
+            wave = body * (1.0f - 0.24f * v->drum_body) +
+                0.24f * v->drum_body * slap_sine(v->phase * 2.0f) * v->bend +
+                0.24f * v->drum_snap * air * v->bend * v->bend;
         } else if (family == 1 || family == 3) {
             inc = tone[kit] * (family == 3 ? 3.17f : 1.0f);
             v->bend *= 0.9972f;
@@ -584,17 +640,20 @@ static float render_voice_signal(Voice *v, SlapSynth *s)
             float skin = kit == 2 ? slap_sine(v->phase + 0.25f*v->bend*slap_sine(v->phase*3.371f))
                                   : slap_sine(v->phase);
             float noise_mix = kit == 1 ? 0.91f : family == 3 ? 0.34f : 0.68f;
-            wave = noise_mix * hiss + (1.0f - noise_mix) * skin * v->bend;
+            noise_mix *= 1.0f - 0.28f * v->drum_body;
+            wave = noise_mix * texture + (1.0f - noise_mix) * skin * v->bend;
         } else if (family == 4) {
             decay = 0.99902f;
             v->bend *= 0.999f;
             inc = 0.008f * pitch_mul[kit];
-            wave = hiss * (v->phase < 0.18f ? 0.95f : 0.23f);
+            float burst_width = 0.07f + 0.23f * v->drum_snap;
+            wave = texture * (v->phase < burst_width ? 0.95f : 0.16f + 0.24f * v->drum_body);
         } else {
             inc = 0.052f * pitch_mul[kit];
             decay = family == 5 ? 0.99968f : kit == 1 ? 0.998f : 0.9969f;
             float metal = slap_sine(v->phase) * slap_sine(v->phase*3.79f);
-            wave = 0.65f * hiss + (kit > 1 ? 0.4f : 0.13f) * metal;
+            wave = (0.72f - 0.26f * v->drum_body) * air +
+                (0.09f + 0.46f * v->drum_body) * metal;
         }
         if (v->kit >= 4u) {
             inc *= v->drum_tune;
@@ -1218,7 +1277,10 @@ void app_input_only(void)
         slap_ui.notice = 0;
     }
     if (pressed & (1u << B_FX)) slap_ui.page = FX;
-    if (pressed & (1u << B_ARP) && slap_ui.track < DRUMS && slap_ui.page != MIXER) slap_ui.page = ARP;
+    if (pressed & (1u << B_ARP)) {
+        if (slap_ui.page == RECORD) undo_recording();
+        else if (slap_ui.track < DRUMS && slap_ui.page != MIXER) slap_ui.page = ARP;
+    }
     if (pressed & (1u << B_SEL) && slap_ui.page == HOME && slap_ui.track < DRUMS) slap_ui.page = HARMONY;
     if (pressed & (1u << B_LFO)) slap_ui.page = LFO;
     if (pressed & (1u << B_EDIT)) slap_ui.page = PATCH;
@@ -1296,7 +1358,11 @@ void app_input_only(void)
     } else if (slap_ui.page == GLOBAL) {
         tempo = (unsigned)clamp((int)tempo + knob[0], 40, 240);
         swing = (unsigned)clamp((int)swing + knob[1] * 2, 0, 70);
-        metronome = (unsigned)clamp((int)metronome + knob[3], 0, 2);
+        unsigned mode = (unsigned)clamp((int)metronome + knob[3], 0, 2);
+        if (mode != metronome) {
+            metronome = mode;
+            metronome_changed_at = plat_ms();
+        }
     } else if (slap_ui.page == FX) {
         for (unsigned k = 0; k < 4; ++k)
             slap_fx_change(slap_ui.track, slap_ui.fx_page, k, knob[k]);
@@ -1365,6 +1431,15 @@ void app_input_only(void)
     slap_ui.keys = keys;
     slap_ui.buttons = buttons;
     plat_leds(buttons | (playing << B_PLAY) | (recording << B_REC), keys);
+    if (!playing && !recording && !keys && metronome != saved_metronome) {
+        uint32_t now = plat_ms();
+        if (now - metronome_changed_at >= SETTINGS_SETTLE_MS) {
+            uint32_t settings[] = {SETTINGS_TAG, metronome};
+            if (plat_store_save(OBJ_SETTINGS, settings, sizeof settings) == 0)
+                saved_metronome = settings[1];
+            metronome_changed_at = now;
+        }
+    }
 }
 
 static void decimal(char *out, unsigned value)
@@ -1540,6 +1615,8 @@ static void draw_panel(void)
                 cv_text(x, 15, &FONT_XS, values[k], C_WHITE);
             }
             cv_text(8, 30, &FONT_XS, metronome == 2 ? "METRO ON" : metronome == 1 ? "METRO REC" : "METRO OFF", c);
+            if (take_undo.ready && !playing && !recording)
+                cv_text(132, 30, &FONT_XS, "ARP UNDO TAKE", C_WHITE);
         }
         cv_blit(0, 196);
         return;
@@ -1956,6 +2033,24 @@ STUDIO_EXPORT void studio_set_clock(uint32_t bpm, uint32_t amount)
 STUDIO_EXPORT const char *studio_patch_name(uint32_t patch)
 {
     return patch < SLAP_PATCHES ? slap_patches[patch].name : "";
+}
+
+STUDIO_EXPORT uint32_t studio_fx(uint32_t track, uint32_t page)
+{
+    return track < TRACKS && page < SLAP_FX_PAGES ? slap_fx_config(track, page) : 0;
+}
+
+STUDIO_EXPORT void studio_set_fx(uint32_t track, uint32_t page, uint32_t word)
+{
+    if (track < TRACKS && page < SLAP_FX_PAGES && slap_fx_config_valid(page, word))
+        slap_fx_restore(track, page, word);
+}
+
+STUDIO_EXPORT uint32_t studio_metronome(void) { return metronome; }
+
+STUDIO_EXPORT void studio_set_metronome(uint32_t mode)
+{
+    if (mode <= 2u) metronome = mode;
 }
 
 STUDIO_EXPORT void studio_audition(uint32_t track, uint32_t pitch)

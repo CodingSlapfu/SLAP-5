@@ -45,6 +45,8 @@ assert.equal(frames[0].names.length, 128);
 assert.ok(frames[0].project.tracks.every(t => [...t.steps, ...t.extra.flat()].every(n => n === 0)));
 const next = structuredClone(validateProject(frames[0].project));
 next.bpm = 135;
+next.metronome = 1;
+next.tracks[2].fx[5] |= 93;
 next.tracks[0].patch = 95;
 next.tracks[0].steps[1] = encodeNote(51, 92, 160, 85);
 next.tracks[0].extra[0][1] = encodeNote(55, 83, 120, 100, 2);
@@ -62,3 +64,54 @@ render(800);
 await app.onMessage({ type: 'app', command: 'audition', track: 0, pitch: 53 });
 assert.ok(render(80) > 0.002);
 console.log('SLAP STUDIO project round-trip, validation and patch audition passed through the compiled DSP.');
+
+const blank = structuredClone(validateProject(frames[0].project));
+const peaks = [];
+for (let patch = 0; patch < 128; patch++) {
+  blank.tracks[0].patch = patch;
+  await app.onMessage({ type: 'app', command: 'project', project: blank });
+  await app.onMessage({ type: 'app', command: 'audition', track: 0, pitch: 60 });
+  const peak = render(170);
+  assert.ok(peak > 0.0002 && peak < 0.95, `patch ${patch}: unexpected peak ${peak}`);
+  peaks.push(peak);
+  render(220);
+}
+console.log(`128 patch auditions: peak range ${Math.min(...peaks).toFixed(4)}–${Math.max(...peaks).toFixed(4)}.`);
+
+blank.bpm = 200;
+for (let track = 0; track < 4; track++) {
+  const part = blank.tracks[track];
+  part.patch = [5, 39, 81, 127][track];
+  for (const page of [5, 6, 7, 8]) part.fx[page] |= 95;
+  for (let step = 0; step < 16; step++) {
+    part.steps[step] = encodeNote(39 + track * 7 + step % 4, 122, 240, 100);
+    part.extra[0][step] = encodeNote(46 + track * 7 + step % 5, 111, 192, 100, step % 4);
+  }
+}
+for (let lane = 0; lane < 6; lane++) {
+  const pitch = [36, 38, 42, 37, 39, 49][lane];
+  for (let step = lane % 4; step < 16; step += 4)
+    blank.tracks[4].extra[lane][step] = encodeNote(pitch, 118, 190, 100);
+}
+await app.onMessage({ type: 'app', command: 'project', project: blank });
+await app.onMessage({ type: 'app', command: 'transport', playing: true });
+const densePeak = render(1600);
+assert.ok(densePeak > 0.01 && densePeak < 0.95, `dense arrangement peak ${densePeak}`);
+console.log(`Dense five-track overlapping render: peak ${densePeak.toFixed(4)}.`);
+
+await app.onMessage({ type: 'app', command: 'transport', playing: false });
+render(900);
+const kitProject = structuredClone(validateProject(frames[0].project));
+const kitPeaks = [];
+for (let kit = 0; kit < 32; kit++) {
+  kitProject.tracks[4].patch = kit;
+  await app.onMessage({ type: 'app', command: 'project', project: kitProject });
+  for (const pitch of [36, 38, 42, 37, 39, 49]) {
+    await app.onMessage({ type: 'app', command: 'audition', track: 4, pitch });
+    const peak = render(120);
+    assert.ok(peak > 0.0001 && peak < 0.95, `kit ${kit}, drum ${pitch}: unexpected peak ${peak}`);
+    kitPeaks.push(peak);
+    render(210);
+  }
+}
+console.log(`32 kits, six drum lanes each: peak range ${Math.min(...kitPeaks).toFixed(4)}–${Math.max(...kitPeaks).toFixed(4)}.`);
