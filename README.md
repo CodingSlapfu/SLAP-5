@@ -20,7 +20,7 @@ SLAP-5 is an original five-track groovebox for the M-VAVE FM-1. Copyright (C) 20
 | SAVE | While stopped, hold the selected white key for four seconds to save. Press SEL to load. |
 | PLAY / OCT± | Transport and keyboard octave. |
 
-USB MIDI channels 1–5 address the five tracks. The groove uses one note event per track per step, and the harmony engine can spread a chord across voices. The display uses SLAP BLOCK lettering on the logo. The original opening animation is visual.
+USB MIDI channels 1–5 address the five tracks. The groove uses one note event per track per step, and the harmony engine can spread a chord across voices. The display uses SLAP BLOCK lettering on the logo. The opening animation plays two brief startup tones. During playback HOME scrolls note blocks past a fixed playhead.
 
 ## Build and verify
 
@@ -36,7 +36,7 @@ node device/tests/emulator.mjs
 python3 -m http.server 8764 --directory device/build/studio
 ```
 
-The site build requires Emscripten on PATH. Use `http://localhost:8764` to open the site, SLAP STUDIO, and the browser instrument emulator. SLAP STUDIO shares the C DSP through the same WASM AudioWorklet and provides track editing, audition, undo/redo and JSON import/export. The SLAP FLASH development page uses the FM-1 MIDI identity handshake and has no write button.
+The site build requires Emscripten on PATH. Use `http://localhost:8764` to open the site, SLAP STUDIO, and the browser instrument emulator. SLAP STUDIO shares the C DSP through the same WASM AudioWorklet and provides track editing, audition, undo/redo and JSON import/export. SLAP FLASH uses the FM-1 MIDI identity handshake and has a gated USB MIDI update path. No approved release manifest is bundled, so installation remains disabled. See [installer verification and recovery](evidence/installer-verification.md).
 
 An optional Chromium test is available at `site/tests/studio.cjs`. Run it with Playwright installed and the local site server running. This environment returned EPERM when Chromium tried to open its process-singleton socket. The compiled AudioWorklet and project protocol were exercised using Node. Physical USB/Web MIDI interactions remain untested.
 
@@ -46,8 +46,8 @@ For the native development build, set `JIELI_TOOLCHAIN` to the JieLi Linux toolc
 
 - Expand the sequencer to independent multi-hit drum lanes and polyphonic steps, ties, microtiming, recording and arrangement. Finish individual drum mute/solo and pattern variation.
 - Add LIVE FX performance controls, arpeggiation, Nature beds, comprehensive GLO diagnostics, Bluetooth and clock sync. Complete patch favorites, categories, parameter editing and the remaining studio device transfer and editing workflows.
-- Complete the startup sound and the scrolling sequencer. Listen through the synth and patch library, tune the drum kits and effects, and profile the heaviest DSP and visuals on an FM-1. Implement or demonstrate the dual-core strategy and safe fallback.
-- Verify the storage sectors, update compatibility, bootloader retention and recovery on supported devices. Complete SLAP FLASH transfer, compatibility and rollback paths, and browser integration testing.
+- Extend the scrolling sequencer and display typography across the remaining pages. Listen through the synth and patch library, tune the drum kits and effects, and profile the heaviest DSP and visuals on an FM-1. Implement or demonstrate the dual-core strategy and safe fallback.
+- Verify the storage sectors, update compatibility, bootloader retention and recovery on supported devices. Qualify the gated SLAP FLASH transfer and rollback paths on supported devices and complete browser integration testing.
 - Publish the TESTING release and complete HTTPS site together once the build passes the release gates. Publish version, identity, checksums, release and source links, and tested installation and recovery instructions.
 
 The SDK check verifies the reference file set only. Native static checks and host timing cannot establish physical-device acceptance.

@@ -10,10 +10,12 @@
   <header><a class="brand" href="./">SLAP<span> FLASH</span></a><a href="studio.html">SLAP STUDIO</a></header>
   <main>
     <h1>FM-1 firmware installer</h1>
-    <p class="intro">No SLAP-5 TESTING release is available. Device detection is available over USB in a browser with Web MIDI SysEx support.</p>
+    <p class="intro" id="availability">No SLAP-5 TESTING release is available. Device detection is available over USB in a browser with Web MIDI SysEx support.</p>
     <div class="toolbar">
       <button id="connect">Detect FM-1</button>
-      <p id="result" role="status"></p>
+      <p id="result" role="status" aria-live="polite"></p>
+      <label><input id="confirmed" type="checkbox"> I verified the supported flash and bootloader and saved a recovery backup.</label>
+      <button id="install" disabled>Install approved release</button>
     </div>
     <section class="editor copy">
       <h2>Before installing a future release</h2>

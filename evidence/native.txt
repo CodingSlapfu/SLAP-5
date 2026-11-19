@@ -9,15 +9,14 @@ font M: BarlowSemiCondensed-SemiBold.ttf 23px h 24, digit adv 12, 11832 B
 font L: BarlowSemiCondensed-Bold.ttf 31px h 32, digit adv 16, 19776 B
 font set barlow: 60782 B (approx)
 words: 3 own + 51 common -> /workspace/scratch/108667299f69/SLAP-5/device/web/words/95a41ce197.json (1059 B)
-loader: image 9636 B at 0x1c0a800, bss end 0x1c12210
-loader: ota.bin 8340 B
+loader: image 9644 B at 0x1c0a800, bss end 0x1c12210
+loader: ota.bin 8332 B
   ok    .ram_text: 975 insns, no calls
   ok    no 64-bit multiply inlined beside a load
   ok    no soft-double routines (single-precision FPU only)
-  ok    image 128008 B; RAM .data+.bss 33624 B of 98304; pool 210244 B of 344064
+  ok    image 128536 B; RAM .data+.bss 33640 B of 98304; pool 210244 B of 344064
   ok    register access: felucca-bsp only (device/, include/ and the app clean)
 parts    USB audio in, USB audio out  (not built in: Bluetooth MIDI, Bluetooth MIDI devices, WiFi, screen mirroring, backup and restore, the second core, USB MIDI host, velocity and pressure)
-app      /workspace/scratch/108667299f69/SLAP-5/device/build/slap-5.bin  128008 B
-loader   /workspace/scratch/108667299f69/SLAP-5/device/build/loader/ota.bin  8340 B
-package  /workspace/scratch/108667299f69/SLAP-5/device/build/slap-5.fwsc  611496 B, identity FM-1_7500
-Verified FM-1_7500 identity, UFW header, entry and part checksums, and app/loader entries.
+app      /workspace/scratch/108667299f69/SLAP-5/device/build/slap-5.bin  128536 B
+loader   /workspace/scratch/108667299f69/SLAP-5/device/build/loader/ota.bin  8332 B
+package  /workspace/scratch/108667299f69/SLAP-5/device/build/slap-5-0.1.0.fwsc  611488 B, identity FM-1_75000100

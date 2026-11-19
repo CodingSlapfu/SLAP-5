@@ -32,7 +32,9 @@ function render(blocks) {
   return peak;
 }
 
-assert.equal(render(260), 0);
+const startup = render(160);
+assert.ok(startup > 0.01 && startup < 0.06, `unexpected startup peak ${startup}`);
+assert.equal(render(100), 0);
 await app.onMessage({ type: 'buttons', mask: 1 << 10 });
 const peak = render(100);
 assert.ok(peak > 0.005 && peak < 0.95, `unexpected peak ${peak}`);

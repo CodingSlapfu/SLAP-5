@@ -30,7 +30,10 @@ static PLAT_POOL SlapSynth synths[VOICES];
 static volatile uint32_t tempo = 112, swing, playing, positions, sequence_epoch;
 static volatile uint32_t keys_audio, input_track, input_octave;
 static uint32_t old_keys, key_pitches[27], key_tracks[27], ages, noise = 13579;
-static uint32_t until_step, step_number, running_epoch;
+static uint32_t until_step, step_duration, step_number, running_epoch;
+static volatile uint32_t step_progress;
+static uint32_t startup_sample;
+static float startup_phase;
 static float master_gain, energy_smooth[TRACKS];
 static volatile uint32_t track_energy[TRACKS];
 static struct {
@@ -62,6 +65,8 @@ static void load_patch(unsigned track, unsigned number)
 
 void app_init(void)
 {
+    startup_sample = 0;
+    startup_phase = 0.0f;
     slap_fx_init();
     for (unsigned t = 0; t < DRUMS; ++t) tracks[t].lfo = 31u << 8;
     static const uint8_t bass[] = {36, 36, 39, 43, 34, 34, 39, 41};
@@ -228,6 +233,7 @@ static void next_step(const uint32_t *mix)
     unsigned base = RATE * 15u / tempo;
     unsigned offset = base * swing / 200u;
     until_step = step_number & 1u ? base - offset : base + offset;
+    step_duration = until_step;
     positions = step_number++;
     for (unsigned t = 0; t < TRACKS; ++t) {
         uint32_t word = tracks[t].steps[positions % (mix[t] & 255u)];
@@ -305,6 +311,22 @@ static float render_voice(Voice *v)
     return wave * v->env * v->velocity * v->fall * 0.15f;
 }
 
+/* Two rising tones with independent smooth envelopes, mixed just above silence. */
+static float startup_sound(void)
+{
+    enum { TOTAL = RATE * 42 / 100, SECOND = RATE * 15 / 100 };
+    uint32_t frame = startup_sample++;
+    unsigned local = frame >= SECOND ? frame - SECOND : frame;
+    unsigned duration = frame >= SECOND ? TOTAL - SECOND : SECOND;
+    float position = (float)local / duration;
+    float envelope = 16.0f * position * position * (1.0f-position) * (1.0f-position);
+    float frequency = frame >= SECOND ? 440.0f : 293.665f;
+    startup_phase += (frequency + 18.0f*position) / RATE;
+    if (startup_phase >= 1.0f) startup_phase -= 1.0f;
+    return 0.036f * envelope * (slap_sine(startup_phase) +
+           0.19f * slap_sine(startup_phase * 2.0f));
+}
+
 void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
 {
     uint32_t mix[TRACKS];
@@ -342,12 +364,20 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
             l += sample * left[t];
             r += sample * right[t];
         }
+        if (!playing && startup_sample < RATE * 42u / 100u) {
+            float tone = startup_sound();
+            l += tone;
+            r += tone;
+        } else if (playing) {
+            startup_sample = RATE;
+        }
         master_gain += (target - master_gain) * 0.003f;
         l /= 1.0f + fm_fabsf(l);
         r /= 1.0f + fm_fabsf(r);
         lr[i * 2] = (int32_t)(l * master_gain * 8300000.0f);
         lr[i * 2 + 1] = (int32_t)(r * master_gain * 8300000.0f);
     }
+    step_progress = playing && step_duration ? 14u - until_step * 14u / step_duration : 0u;
     for (unsigned t = 0; t < TRACKS; ++t) {
         track_energy[t] = (uint32_t)fm_minf(160.0f, energy_smooth[t] * 1850.0f);
     }
@@ -356,6 +386,7 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
 void app_panic(void)
 {
     playing = 0;
+    startup_sample = RATE;
     for (unsigned i = 0; i < VOICES; ++i) voices[i].age = 0;
     master_gain = 0.0f;
 }
@@ -605,6 +636,8 @@ static void draw_panel(void)
     uint32_t position = positions;
     uint32_t settings = tracks[selected].mix;
     unsigned length = settings & 255u, play_step = position % length;
+    unsigned scroll = slap_ui.page == HOME && playing;
+    unsigned substep = step_progress;
     unsigned bank = (slap_ui.page == SEQ ? (unsigned)slap_ui.step : play_step) / 16u * 16u;
     uint16_t c = track_color[selected], background = RGB(10,14,24);
     cv_begin(240, 48, background);
@@ -714,15 +747,20 @@ static void draw_panel(void)
                 else y = level + (x - release) * (101 - level) / (224 - release);
                 cv_rect(8 + x, y - strip * 36, 1, 3, c);
             }
-        } else for (unsigned s = 0; s < 16; ++s) {
-            if (bank + s >= length) break;
-            int x = 8 + (int)s * 14;
-            uint32_t word = tracks[selected].steps[bank + s];
-            cv_rect(x, 0, 12, 36, s % 4 == 0 ? RGB(31,39,57) : RGB(19,25,39));
-            if (bank + s == play_step && playing) cv_rect(x, 0, 2, 36, C_WHITE);
-            if (slap_ui.page == SEQ && bank + s == (unsigned)slap_ui.step) cv_rect(x + 9, 0, 3, 36, c);
-            int y = 100 - (int)((word & NOTES) % 24u) * 4 - strip * 36;
-            if (word & ACTIVE) cv_rect(x + 2, y, 7, 5, c);
+        } else {
+            for (unsigned s = 0; s < (scroll ? 19u : 16u); ++s) {
+                if (!scroll && bank + s >= length) break;
+                unsigned index = scroll ? (play_step + length * 3u - 3u + s) % length : bank + s;
+                int x = 8 + (int)s * 14 - (scroll ? (int)substep : 0);
+                uint32_t word = tracks[selected].steps[index];
+                cv_rect(x, 0, 12, 36, index % 4 == 0 ? RGB(31,39,57) : RGB(19,25,39));
+                if (!scroll && index == play_step && playing) cv_rect(x, 0, 2, 36, C_WHITE);
+                if (slap_ui.page == SEQ && index == (unsigned)slap_ui.step) cv_rect(x + 9, 0, 3, 36, c);
+                int y = 100 - (int)((word & NOTES) % 24u) * 4 - strip * 36;
+                int width = 2 + (int)((word >> 16) & 255u) * 13 / 192;
+                if (word & ACTIVE) cv_rect(x + 2, y, width, 5, c);
+            }
+            if (scroll) cv_rect(50, 0, 1, 36, C_WHITE);
         }
         cv_blit(0, 80 + strip * 36);
     }

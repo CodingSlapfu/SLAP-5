@@ -38,7 +38,7 @@ const ufwDec = (b, n) => { for (let i = 0, k = 0xFFFF; i < n; i++) { b[i] ^= k &
 
 // a damaged or wrong file, caught before anything is sent: the UFW header's CRC, its entry list's, and each part's
 // (bsp/tools/fm1pkg.py ufw() writes them). Throws an Error saying which; returns nothing when all match
-export function checkUfw(image) {
+export function checkUfw(image, { slap5 = false } = {}) {
   const rd16 = (b, o) => b[o] | (b[o + 1] << 8);
   const rd32 = (b, o) => (b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24)) >>> 0;
   if (image.length < 0x40) throw new Error("not an FM-1 package (too short)");
@@ -46,9 +46,30 @@ export function checkUfw(image) {
   if (crc16(h.subarray(2, 0x40)) !== rd16(h, 0)) throw new Error("not an FM-1 package (header checksum)");
   const n = rd16(h, 8), end = 0x40 + n * 0x50;
   if (!n || end > image.length || crc16(image.subarray(0x40, end)) !== rd16(h, 2)) throw new Error("the package's list of parts is damaged");
+  if (slap5 && (rd32(h, 4) !== image.length || n !== 2 ||
+               String.fromCharCode(...h.subarray(16, 22)) !== "AC791N"))
+    throw new Error("Unexpected SLAP-5 UFW header");
+  let previousEnd = end;
   for (let i = 0; i < n; i++) {
     const e = ufwDec(image.slice(0x40 + i * 0x50, 0x90 + i * 0x50), 0x50);
     const off = rd32(e, 8), len = rd32(e, 12);
+    if (slap5 && (off < previousEnd || off % 256 || !len ||
+        rd16(e, 2) !== i || rd16(e, 0) !== (i ? 100 : 0) ||
+        (!i && (off !== 0x400 || len !== 0x93000)) ||
+        (i && (off !== 0x93400 || len < 512 || len > 0x4e20 || off + len !== image.length))))
+      throw new Error("Unexpected SLAP-5 UFW partition layout");
+    if (slap5 && i) {
+      const loader = image.subarray(off, off + len);
+      const marker = String.fromCharCode(...loader.subarray(0x48, 0x88));
+      if (rd32(loader, 4) !== 0x20 || rd32(loader, 8) + 0x20 !== len ||
+          loader[12] !== 0x41 || rd32(loader, 0x28) !== 0x01c0a800 ||
+          rd32(loader, 0x24) > 0x14000 || !marker.includes("FELUCCA-LOADER-1") ||
+          crc16(loader.subarray(2, 0x20)) !== rd16(loader, 0) ||
+          crc16(loader.subarray(0x22, 0x40)) !== rd16(loader, 0x20) ||
+          crc16(loader.subarray(0x20)) !== rd16(loader, 2))
+        throw new Error("Unexpected SLAP-5 update loader");
+    }
+    previousEnd = off + len;
     if (off + len > image.length || crc16(image.subarray(off, off + len)) !== rd16(e, 4))
       throw new Error(`the package is damaged (part ${rd16(e, 0)} checksum)`);
   }

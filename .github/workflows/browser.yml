@@ -1,0 +1,33 @@
+name: SLAP STUDIO browser tests
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  studio:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: sudo apt-get update && sudo apt-get install -y python3-pil python3-fonttools
+      - run: npm install --no-save --package-lock=false playwright@1.51.1
+      - run: npx playwright install --with-deps chromium
+      - name: Build with Emscripten 3.1.64
+        run: |
+          git clone --depth 1 --branch 3.1.64 https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
+          "$RUNNER_TEMP/emsdk/emsdk" install 3.1.64
+          "$RUNNER_TEMP/emsdk/emsdk" activate 3.1.64
+          source "$RUNNER_TEMP/emsdk/emsdk_env.sh"
+          site/build.sh
+      - run: node device/tests/emulator.mjs
+      - run: |
+          python3 -m http.server 8764 --bind 127.0.0.1 --directory device/build/studio &
+          server=$!
+          trap 'kill "$server"' EXIT
+          for i in {1..20}; do
+            if curl --fail --silent http://127.0.0.1:8764/studio.html >/dev/null; then break; fi
+            sleep 1
+          done
+          node site/tests/studio.cjs

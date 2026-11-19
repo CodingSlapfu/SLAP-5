@@ -5,7 +5,7 @@ const { chromium } = require('playwright');
 
 async function test() {
   const browser = await chromium.launch({
-    executablePath: process.env.CHROMIUM || '/usr/bin/chromium',
+    executablePath: process.env.CHROMIUM,
     args: ['--autoplay-policy=no-user-gesture-required', '--no-sandbox']
   });
   try {

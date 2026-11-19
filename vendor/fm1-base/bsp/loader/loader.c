@@ -95,6 +95,10 @@ void ldr_main(void)
         ota_service();                              /* handshake */
         if (usb.ota_req) {
             usb.ota_req = 0;
+            /* Reject unqualified flash before the app-area updater can erase it. */
+            if (fl_jedec_ram() != 0x856014u) {
+                continue;
+            }
             if (ldr_session() == 0) {
                 fm1_delay_ms(200);                  /* the "success" reply leaves */
                 usb_detach();
