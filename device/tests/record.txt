@@ -1,0 +1,13 @@
+wait 650
+tap REC
+tap PLAY
+key 7 down
+key 7 up
+expect recorded 1
+tap PLAY
+tap SEQ
+turn SELECT 1
+expect pitch 60
+key 8 down
+key 8 up
+expect recorded 1

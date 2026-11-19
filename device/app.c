@@ -30,6 +30,7 @@ static volatile uint32_t drum_lane[DRUM_LANES][STEPS];
 static const uint8_t lane_pitch[DRUM_LANES] = {36,38,42,37,39,49};
 static volatile uint32_t drum_filters;
 static volatile uint32_t scheduled_events;
+static volatile uint32_t recording, recorded_events;
 static Voice voices[VOICES];
 static PLAT_POOL SlapSynth synths[VOICES];
 static volatile uint32_t tempo = 112, swing, playing, positions, sequence_epoch;
@@ -234,6 +235,27 @@ static void release_note(unsigned track, unsigned pitch)
             voices[i].releasing = 1;
 }
 
+/* Single audio-thread writer for live input. A filled two-note step is left intact. */
+static void record_input(unsigned track, unsigned pitch, unsigned velocity)
+{
+    if (!recording || !playing) return;
+    unsigned length = tracks[track].mix & 255u;
+    if (!length) return;
+    unsigned position = until_step ? positions + (until_step * 2u < step_duration) : step_number;
+    unsigned step = position % length;
+    volatile uint32_t *cell = &tracks[track].steps[step];
+    if (track == DRUMS) {
+        unsigned lane = drum_family(pitch);
+        cell = &drum_lane[lane][step];
+        pitch = lane_pitch[lane];
+    } else if ((*cell & ACTIVE) && (*cell & NOTES) != pitch) {
+        cell = &extra_note[track][step];
+        if ((*cell & ACTIVE) && (*cell & NOTES) != pitch) return;
+    }
+    *cell = cell_word(pitch, velocity, 144u, 100u);
+    ++recorded_events;
+}
+
 static void read_notes(void)
 {
     uint32_t keys = keys_audio;
@@ -246,6 +268,7 @@ static void read_notes(void)
                 key_pitches[k] = pitch;
                 key_tracks[k] = track;
                 arp_arrival[k] = ++arp_stamp;
+                record_input(track, pitch, 100);
                 if (track == DRUMS || !(arp_setup[track] & 255u))
                     trigger(track, pitch, 100, 0, 1);
                 plat_midi_send(0x09u | (0x90u | track) << 8 | pitch << 16 | 100u << 24, TO_USB);
@@ -263,9 +286,10 @@ static void read_notes(void)
         unsigned track = status & 15u;
         unsigned pitch = (packet >> 16) & 127u, velocity = (packet >> 24) & 127u;
         if (track >= TRACKS) continue;
-        if ((status & 0xf0u) == 0x90u && velocity)
+        if ((status & 0xf0u) == 0x90u && velocity) {
+            record_input(track, pitch, velocity);
             trigger(track, pitch, velocity, 0, 1);
-        else if ((status & 0xf0u) == 0x80u || (status & 0xf0u) == 0x90u)
+        } else if ((status & 0xf0u) == 0x80u || (status & 0xf0u) == 0x90u)
             release_note(track, pitch);
     }
 }
@@ -685,7 +709,13 @@ void app_input_only(void)
 {
     uint32_t buttons = plat_buttons(), keys = plat_keys();
     uint32_t pressed = buttons & ~slap_ui.buttons, notes = keys & ~slap_ui.keys;
-    if (pressed & (1u << B_PLAY)) { playing ^= 1u; ++sequence_epoch; }
+    if (pressed & (1u << B_PLAY)) {
+        playing ^= 1u;
+        if (!playing) recording = 0;
+        ++sequence_epoch;
+    }
+    if ((pressed & (1u << B_REC)) && !(buttons & (1u << B_SEL)))
+        recording ^= 1u;
     if (pressed & (1u << B_HOME))
         slap_ui.page = slap_ui.page == HOME ? VISUAL : HOME;
     if (pressed & (1u << B_SEQ)) { slap_ui.page = SEQ; slap_ui.lane = 0; }
@@ -812,7 +842,7 @@ void app_input_only(void)
     keys_audio = keys;
     slap_ui.keys = keys;
     slap_ui.buttons = buttons;
-    plat_leds(buttons | (playing << B_PLAY), keys);
+    plat_leds(buttons | (playing << B_PLAY) | (recording << B_REC), keys);
 }
 
 static void decimal(char *out, unsigned value)
@@ -870,7 +900,7 @@ static void draw_panel(void)
     decimal(number, position / 16u % 999u + 1u);
     cv_text(163, 5, &FONT_XS, "BAR", c);
     cv_text(190, 5, &FONT_XS, number, C_WHITE);
-    cv_text(163, 19, &FONT_XS, playing ? "PLAY" : "STOP", c);
+    cv_text(163, 19, &FONT_XS, playing && recording ? "REC" : recording ? "ARM" : playing ? "PLAY" : "STOP", c);
     decimal(number, (slap_ui.page == SEQ ? (unsigned)slap_ui.step : play_step) + 1u);
     cv_text(202, 19, &FONT_XS, number, C_WHITE);
     cv_blit(0, 48);
@@ -1090,6 +1120,7 @@ int app_expect(const char *name, int *result)
 {
     if (name_matches(name, "track")) *result = slap_ui.track + 1;
     else if (name_matches(name, "tempo")) *result = (int)tempo;
+    else if (name_matches(name, "recorded")) *result = (int)recorded_events;
     else if (name_matches(name, "playing")) *result = (int)playing;
     else if (name_matches(name, "lane")) *result = slap_ui.lane;
     else if (name_matches(name, "events")) *result = (int)scheduled_events;
