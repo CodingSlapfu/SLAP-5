@@ -44,3 +44,52 @@ assert.deepEqual(response.slice(14, -1), [...valid.subarray(1024, 1536)]);
 await assert.rejects(transport.serve({ ...link, read: async () => request(valid.length, 1) },
   valid, 0xf0000000, 1000), /bad request/);
 console.log('Checked packaged bytes, corruption, source and target identities, ambiguous ports, and simulated pull requests.');
+
+if (version === '0.1.3') {
+  const manifest = validateRelease(JSON.parse(await readFile(new URL('../release.json', import.meta.url))));
+  await verifyPackage(manifest, raw);
+  for (const source of ['FM-1_73000738', 'FM-1_75000102', 'FM-1_015'])
+    assert.ok(manifest.sources.includes(source));
+  assert.ok(!manifest.sources.includes('FM-1_016'));
+
+  async function simulate(source, { loader = 'ota-FM-1_900', disconnect = false, result = manifest.product } = {}) {
+    const out = { ...port };
+    const midi = { inputs: new Map([['fm1', port]]), outputs: new Map([['fm1', out]]) };
+    const updater = new SlapUpdater(midi);
+    const stages = [];
+    function device(identity, frames = [], lost = false) {
+      const model = identity.split('_')[0];
+      return { id: { text: identity, model }, link: {
+        get lost() { return lost; },
+        read: async () => frames.shift(), send: () => true, close() {}
+      } };
+    }
+    const running = device(source, [request(1024, 512), request(0xe0000000, 8)]);
+    const ota = device(loader, disconnect ? [] : [request(1536, 128), request(0xf0000000, 8)], disconnect);
+    const restarted = device(result);
+    let next;
+    updater.find = async () => next;
+    const operation = updater.stages(running, valid, manifest.product, (stage, count, bytes) => {
+      stages.push([stage, bytes]);
+      if (stage === 'loader' || stage === 'reboot') {
+        midi.outputs.clear();
+        assert.equal(updater.singlePort({ allowEmpty: true }), null);
+        next = stage === 'loader' ? ota : restarted;
+        setTimeout(() => midi.outputs.set('fm1', out), 5);
+      }
+    });
+    if (loader !== 'ota-FM-1_900') return assert.rejects(operation, /Unexpected update loader/);
+    if (disconnect) return assert.rejects(operation, /disconnected/);
+    if (result !== manifest.product) return assert.rejects(operation, /device reports/);
+    assert.equal(await operation, manifest.product);
+    assert.deepEqual(stages, [['start', undefined], ['verify', 512], ['loader', undefined],
+      ['write', 128], ['reboot', undefined], ['done', undefined]]);
+  }
+  await Promise.all([
+    simulate('FM-1_73000738'), simulate('FM-1_75000102'), simulate('FM-1_015'),
+    simulate('FM-1_73000738', { loader: 'ota-FM1C_014' }),
+    simulate('FM-1_73000738', { disconnect: true }),
+    simulate('FM-1_73000738', { result: 'FM-1_73000738' }),
+  ]);
+  console.log('Simulated full AQUORA, SLAP-5 and stock OTA staging, loader reconnect, writes, restart, and rejection paths.');
+}

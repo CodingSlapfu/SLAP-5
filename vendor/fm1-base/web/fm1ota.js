@@ -301,17 +301,19 @@ export class Updater {
   async stages(dev, image, product, step) {
     this.watch();
     step("start", dev.id.text);
-    dev.link.send(UPGRADE);
-    await sleep(2000);
-    const s1 = await this.serve(dev.link, image, 0xE0000000, 8000, (n, b) => step("verify", n, b));
-    dev.link.close();
-    if (!s1.finished) throw fail(s1.lost ? "lost" : "stopped", `the device ${s1.lost ? "was disconnected" : "stopped"} after ${s1.served} requests: nothing was written`);
+    let s1;
+    try {
+      if (!dev.link.send(UPGRADE)) throw fail("lost", "The running FM-1 disconnected before staging.");
+      await sleep(2000);
+      s1 = await this.serve(dev.link, image, 0xE0000000, 8000, (n, b) => step("verify", n, b));
+    } finally { dev.link.close(); }
+    if (!s1.finished) throw fail(s1.lost ? "lost" : "stopped", `The running firmware stopped staging after ${s1.served} requests. Check its display.`);
     step("loader");
     await sleep(3000);
     const ota = await this.waitFor(IS_OTA, 30000);
-    if (!ota) throw fail("noloader", "the update loader did not appear. Replug the USB cable and press Install again: the device stays in update mode until it is finished.");
+    if (!ota) throw fail("noloader", "the update loader did not appear. Check the unit’s display and use the recovery guide if it remains in update mode.");
     const s2 = await this.write(ota, image, step);
-    if (!s2.finished) throw fail(s2.lost ? "lost" : "stopped", `the loader ${s2.lost ? "was disconnected" : "stopped"} after ${s2.served} requests. Replug and press Install again to resume.`);
+    if (!s2.finished) throw fail(s2.lost ? "lost" : "stopped", `the loader ${s2.lost ? "was disconnected" : "stopped"} after ${s2.served} requests. Check the unit’s display and follow the recovery guide.`);
     step("reboot");
     await sleep(3000);
     const back = await this.waitFor((id) => !IS_OTA(id), 40000);
@@ -405,11 +407,11 @@ export class Updater {
 
   // step 2 with the loader found by find()/waitFor()
   async write(ota, image, step) {
-    ota.link.send(UPGRADE);
-    await sleep(2000);
-    const s2 = await this.serve(ota.link, image, 0xF0000000, 180000, (n, b) => step("write", n, b));
-    ota.link.close();
-    return s2;
+    try {
+      if (!ota.link.send(UPGRADE)) throw fail("lost", "The update loader disconnected before writing.");
+      await sleep(2000);
+      return await this.serve(ota.link, image, 0xF0000000, 180000, (n, b) => step("write", n, b));
+    } finally { ota.link.close(); }
   }
 
   // resume: the device is already in update mode (loader) -> true when the write finished. With the product, the

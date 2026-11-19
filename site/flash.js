@@ -13,7 +13,7 @@ let release, access, checked, running = false;
 
 async function loadRelease() {
   const response = await fetch('./release.json', { cache: 'no-store', redirect: 'error' });
-  if (response.status === 404) return;
+  if (response.status === 404) throw new Error('No browser release is available. Use M-Flasher below.');
   if (!response.ok) throw new Error('Could not load the release manifest.');
   release = validateRelease(await response.json());
   availability.textContent = `SLAP-5 ${release.version} TESTING · ${release.product}`;
@@ -41,8 +41,9 @@ connect.addEventListener('click', async () => {
     if (!navigator.requestMIDIAccess) throw new Error('Use an HTTPS browser with Web MIDI SysEx support.');
     access = await navigator.requestMIDIAccess({ sysex: true });
     const { id, port } = await identify();
+    confirmed.checked = false;
     checked = !id.open && release?.sources.includes(id.text) ? { identity: id.text, port } : undefined;
-    status.textContent = `Detected ${id.text}. ${checked ? 'Browser update approved for this firmware identity.' :
+    status.textContent = `Detected ${id.text}. ${checked ? 'Browser update supported by this firmware. Confirm your hardware to continue.' :
       'Use M-Flasher for this device.'}`;
     if (!checked) desktop.focus();
   } catch (error) {
@@ -83,7 +84,7 @@ install.addEventListener('click', async () => {
     });
   } catch (error) {
     status.textContent = error.message + (transferStarted ?
-      ' Keep the recovery guide open and check the unit’s screen before attempting recovery.' : ' Transfer did not start.');
+      ' Check the FM-1 display and follow the M-Flasher recovery guidance before retrying.' : ' Transfer did not start.');
   } finally {
     device?.link.close();
     running = false;

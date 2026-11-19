@@ -9,7 +9,7 @@ export function validateRelease(release) {
       typeof sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(sha256) ||
       !Number.isInteger(bytes) || bytes <= 0x93414 || bytes > 0x98234 ||
       !Array.isArray(sources) || !sources.length ||
-      sources.some(v => typeof v !== 'string' || !/^FM-1_(015|75[0-9]{6})$/.test(v)))
+      sources.some(v => typeof v !== 'string' || !/^FM-1_(015|73000738|75[0-9]{6})$/.test(v)))
     throw new Error('The release manifest is invalid.');
   return { version, product, sha256, bytes, sources, file: `SLAP-5-${version}.fwsc` };
 }
