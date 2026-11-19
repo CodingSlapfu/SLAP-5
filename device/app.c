@@ -36,7 +36,7 @@ static unsigned gen_enabled = 1, gen_confirm, gen_count;
 static uint32_t gen_seed = 0xd14a1175u;
 static volatile uint32_t drum_filters;
 static volatile uint32_t scheduled_events;
-static volatile uint32_t recording, recorded_events;
+static volatile uint32_t recording, recorded_events, rec_begin_events;
 static volatile uint32_t rec_running, rec_countdown;
 static unsigned rec_bars, rec_count_in, rec_unquantized, rec_replace;
 static unsigned rec_track, rec_length, rec_start_mode, rec_raw, rec_overwrite, rec_loop;
@@ -389,6 +389,7 @@ static void begin_recording(void)
         }
     }
     track_setting(track, 0, rec_length);
+    rec_begin_events = recorded_events;
     rec_running = 1;
 }
 
@@ -1567,11 +1568,26 @@ static void draw_panel(void)
                         cv_text(188, 8, &FONT_M, number, C_WHITE);
                     }
                 }
-                if (strip == 1) cv_rect(8, 16, (int)(play_step + 1u) * 224 / (int)length, 9, c);
+                if (strip == 1) {
+                    decimal(number, play_step / 16u + 1u);
+                    cv_text(8, 0, &FONT_XS, "BAR", c);
+                    cv_text(34, 0, &FONT_XS, number, C_WHITE);
+                    decimal(number, play_step % 16u + 1u);
+                    cv_text(77, 0, &FONT_XS, "STEP", c);
+                    cv_text(110, 0, &FONT_XS, number, C_WHITE);
+                    for (unsigned step = 0; step < 16; ++step) {
+                        int x = 8 + 14 * (int)step;
+                        cv_rect(x, 18, 12, 11, step <= play_step % 16u && playing ? c : RGB(30,43,68));
+                        if (step == play_step % 16u && playing) cv_rect(x, 18, 12, 2, C_WHITE);
+                    }
+                }
                 if (strip == 2) {
-                    cv_text(8, 8, &FONT_B, "CAPTURED", C_WHITE);
-                    decimal(number, recorded_events > 999 ? 999 : recorded_events);
-                    cv_text(174, 4, &FONT_M, number, c);
+                    cv_text(8, 0, &FONT_XS, "NOTES THIS TAKE", C_WHITE);
+                    unsigned count = recorded_events - rec_begin_events;
+                    decimal(number, count > 999 ? 999 : count);
+                    cv_text(174, 1, &FONT_B, number, c);
+                    cv_rect(8, 23, 224, 7, RGB(30,43,68));
+                    cv_rect(8, 23, (int)track_energy[selected] * 224 / 160, 7, c);
                 }
             }
             cv_blit(0, 88 + strip*36);
@@ -2033,6 +2049,22 @@ STUDIO_EXPORT void studio_set_clock(uint32_t bpm, uint32_t amount)
 STUDIO_EXPORT const char *studio_patch_name(uint32_t patch)
 {
     return patch < SLAP_PATCHES ? slap_patches[patch].name : "";
+}
+
+STUDIO_EXPORT uint32_t studio_generate_drums(uint32_t style, uint32_t hit,
+                                           uint32_t groove, uint32_t variation)
+{
+    if (playing || recording || style >= sizeof drum_style / sizeof drum_style[0] ||
+        hit > 100u || groove > 100u || variation > 100u) return 0;
+    gen_style = style;
+    gen_hit = hit;
+    gen_groove = groove;
+    gen_var = variation;
+    unsigned enabled = gen_enabled;
+    gen_enabled = gen_confirm = 1;
+    generate_drums();
+    gen_enabled = enabled;
+    return 1;
 }
 
 STUDIO_EXPORT uint32_t studio_fx(uint32_t track, uint32_t page)

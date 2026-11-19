@@ -40,6 +40,13 @@ globalThis.fm1App = {
           for (let s = 0; s < 64; s++) ex.studio_set_event(t, s, lane, extra?.[lane-1]?.[s] ?? 0);
         }
       });
+    } else if (m.command === 'gen-drums') {
+      const ok = ex.studio_generate_drums(m.style, m.hit, m.groove, m.variation);
+      port.postMessage({ type: 'studio-generated', id: m.id, drums: !ok ? null : {
+        steps: Array.from({ length: 64 }, (_, s) => ex.studio_event(4, s, 0) >>> 0),
+        extra: Array.from({ length: 6 }, (_, lane) =>
+          Array.from({ length: 64 }, (_, s) => ex.studio_event(4, s, lane + 1) >>> 0))
+      } });
     } else if (m.command === 'transport') {
       ex.studio_transport(m.playing ? 1 : 0);
     } else if (m.command === 'audition') {

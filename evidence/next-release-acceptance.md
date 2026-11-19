@@ -30,3 +30,11 @@ Advance each row only on behavioral or measurable evidence. Continue independent
 - **Release — IN PROGRESS.** Audited candidate `0.1.9` / `FM-1_75000109`, SHA-256 `d030cc213f4ea4b57d9aa4727ab96f9d592598a3a9ccca5b5078411c2ee1577f`. `engineering/SLAP-5-0.1.9-candidate.tar.xz` contains the exact native assets and checksums. Simulated package and transfer-request validation passed. This archive is a backup and remains outside release workflows. The live installer remains on v0.1.7.
 
 Resume from the commit containing this milestone. Continue with versioned extended takes and Studio parity, then finish typography, all-page color, sound review and profiling. Rebuild and rerun tests affected by changes. Publish only after the full gate; reserve physical restart, load and listening checks for owner acceptance of the qualified release.
+
+## Follow-up verification
+
+- The standalone synthesis suite rendered all 128 patches across 25 engines at three pitches, with finite audio, measurable energy and unique sample signatures. The standalone FX suite verified five simultaneous effect chains across all seven inserts.
+- The first milestone passed GitHub's Chromium Studio workflow (run 44616065257). On the local runner Chromium could not start because the process-singleton socket was denied with EPERM. Use the GitHub browser workflow for this runner limitation.
+- **B — IN PROGRESS.** RECORD now shows bar/step, a segmented beat grid, take-local note count and an audio activity meter. Existing quick record, settings hold and undo host scenarios passed. Longer takes, finer timing and complete layout remain.
+- **H — IN PROGRESS.** Studio's Track 5 generator calls the native DSP's 16-style generator through WASM, preserves ordinary lane editability, requires confirmation before replacement, and supports project undo. The WASM suite verifies all 16 styles produce distinct valid patterns and confirms playback blocks generation. Chromium coverage added for generator confirmation, replacement and FX isolation. Full recording parity remains.
+- All ten host fixtures and worker/fallback equality passed after the RECORD screen change. WASM and existing rollback OTA simulation passed. The 0.1.9 archive is the audited previous milestone backup. Build final packages from the current source after completing the remaining acceptance rows.

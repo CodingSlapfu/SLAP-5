@@ -8,6 +8,10 @@ const ctx2d = $('roll').getContext('2d');
 const piano = ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'];
 const drums = ['Kick', 'Snare', 'Hat', 'Rim', 'Clap', 'Cymbal'];
 const drumKits = ['Studio Kit', 'Brush Kit', 'Fm Kit', 'Industrial', 'Acoustic Studio', 'Brushed Jazz', 'Acid Jazz', 'House', 'Deep House', 'Ruff House', 'Hip-Hop', 'Boom Bap', 'Trap', '808 Style', '909 Style', 'Jungle', 'Drum And Bass', 'Dubstep', 'Synthwave', 'Techno', 'Idm', 'Experimental Fm', 'Lo-Fi', 'Ambient', 'Electro', 'Breaks', 'Downtempo', 'Electro Acoustic', 'Warehouse', 'Dust Room', 'Neon Perc', 'Glass Metal'];
+const drumStyles = ['IDM', 'Acid Jazz', 'Drum & Bass', 'Jungle', 'Dubstep', 'Synthwave', 'House', 'Deep House',
+  'Ruff House', 'Hip-Hop', 'Boom Bap', 'Trap', 'Breakbeat', 'Techno', 'Electro', 'Ambient / Downtempo'];
+$('gen-style').replaceChildren(...drumStyles.map((name, value) => new Option(name, value)));
+let generation, generationId = 0;
 const drumRow = pitch => {
   const row = drumNotes.indexOf(pitch);
   return row < 0 ? (pitch + 2) % 6 : row;
@@ -92,6 +96,8 @@ function draw() {
   $('redo').disabled = !stateAfter.length;
   $('tracks').querySelectorAll('button').forEach((b, i) => b.setAttribute('aria-selected', String(i === track)));
   $('drum-controls').hidden = track !== 4;
+  $('generator').hidden = track !== 4;
+  $('gen-apply').disabled = playing || !!generation;
   const activeLane = lane ? lane - 1 : 0;
   $('drum-lane').value = activeLane;
   $('drum-mute').checked = !!(project.drumFilters & (1 << activeLane));
@@ -226,6 +232,19 @@ for (let i = 0; i < 5; i++) {
   $('tracks').append(button);
 }
 
+$('gen-apply').addEventListener('click', () => {
+  if (!project || track !== 4 || playing || generation) return;
+  if (eventLanes(project.tracks[4]).some(events => events.some(Boolean)) &&
+      !window.confirm('Replace the current drum pattern? You can undo this.')) return;
+  const hit = $('gen-hit').valueAsNumber;
+  const groove = $('gen-groove').valueAsNumber;
+  const variation = $('gen-variation').valueAsNumber;
+  if (![hit, groove, variation].every(value => within(value, 0, 100))) return;
+  generation = { id: ++generationId, project };
+  send('gen-drums', { id: generation.id, style: Number($('gen-style').value), hit, groove, variation });
+  draw();
+});
+
 numberInput('bpm', 40, 240, (p, v) => { p.bpm = v; });
 numberInput('swing', 0, 70, (p, v) => { p.swing = v; });
 $('metro').addEventListener('change', () => {
@@ -275,6 +294,7 @@ $('play').addEventListener('click', () => {
   playing = !playing;
   send('transport', { playing });
   $('play').textContent = playing ? 'Stop' : 'Play';
+  $('gen-apply').disabled = playing || !!generation;
 });
 $('export').addEventListener('click', () => {
   const url = URL.createObjectURL(new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' }));
@@ -306,6 +326,14 @@ $('start').addEventListener('click', async () => {
     worklet = new AudioWorkletNode(context, 'fm1', { outputChannelCount: [2] });
     worklet.port.onmessage = ({ data }) => {
       if (data.type === 'ready') send('read');
+      if (data.type === 'studio-generated') {
+        if (!generation || data.id !== generation.id) return;
+        const valid = generation.project === project && !playing && data.drums;
+        generation = undefined;
+        if (valid) edit(next => { Object.assign(next.tracks[4], data.drums); });
+        else sync();
+        return;
+      }
       if (data.type !== 'studio-project') return;
       project = validateProject(data.project);
       try {

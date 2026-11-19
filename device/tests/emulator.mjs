@@ -6,7 +6,7 @@ let Processor;
 globalThis.currentTime = 0;
 const frames = [];
 globalThis.AudioWorkletProcessor = class {
-  port = { postMessage(message) { if (message.type === 'studio-project') frames.push(message); } };
+  port = { postMessage(message) { if (['studio-project', 'studio-generated'].includes(message.type)) frames.push(message); } };
 };
 globalThis.registerProcessor = (name, type) => { Processor = type; };
 
@@ -115,3 +115,19 @@ for (let kit = 0; kit < 32; kit++) {
   }
 }
 console.log(`32 kits, six drum lanes each: peak range ${Math.min(...kitPeaks).toFixed(4)}–${Math.max(...kitPeaks).toFixed(4)}.`);
+
+const signatures = new Set();
+for (let style = 0; style < 16; style++) {
+  await app.onMessage({ type: 'app', command: 'gen-drums', id: style, style, hit: 73, groove: 70, variation: 40 });
+  const generated = frames.at(-1);
+  assert.equal(generated.id, style);
+  assert.ok(generated.drums.extra.flat().some(Boolean));
+  kitProject.tracks[4] = { ...kitProject.tracks[4], ...generated.drums };
+  validateProject(kitProject);
+  signatures.add(JSON.stringify(generated.drums.extra));
+}
+assert.equal(signatures.size, 16);
+await app.onMessage({ type: 'app', command: 'transport', playing: true });
+await app.onMessage({ type: 'app', command: 'gen-drums', id: 16, style: 0, hit: 73, groove: 70, variation: 40 });
+assert.equal(frames.at(-1).drums, null);
+console.log('Studio generated 16 distinct editable drum patterns and rejected generation during playback.');

@@ -66,3 +66,5 @@ header nav { margin: 0; }
 .features h3 { margin: 0 0 7px; }
 .intro { margin: 12px 0; }
 @media (max-width: 620px) { .hero { grid-template-columns: 1fr; } .hero img { max-width: 250px; } }
+
+#generator[hidden] { display: none; }

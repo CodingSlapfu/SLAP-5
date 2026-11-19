@@ -43,6 +43,13 @@
         </select></label>
         <div id="fx-knobs" class="settings"></div>
       </div>
+      <div id="generator" class="settings" hidden>
+        <label>Style<select id="gen-style"></select></label>
+        <label>Hit %<input id="gen-hit" type="number" min="0" max="100" value="70"></label>
+        <label>Groove<input id="gen-groove" type="number" min="0" max="100" value="25"></label>
+        <label>Variation<input id="gen-variation" type="number" min="0" max="100" value="40"></label>
+        <button id="gen-apply" type="button">Generate drums</button>
+      </div>
       <p id="hint">Enable audio to load the FM-1 sequencer and factory patches.</p>
       <div id="view" tabindex="0" aria-label="Step grid"><canvas id="roll"></canvas></div>
       <div class="inspector">
