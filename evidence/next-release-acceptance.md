@@ -51,3 +51,12 @@ Resume from the commit containing this milestone. Continue with versioned extend
 
 - **Release and deployment — VERIFIED.** Release source `e8172330923058b7e4f8322d5d9e7a972ee29d0c`. GitHub Chromium run 44619668838 and release run 44619896505 succeeded. GitHub publishes the verified package as v0.1.11-testing. The matching Studio, emulator, fonts and installer deployed to the existing site. The live /flash page and manifest select `FM-1_75000111`; a fresh live firmware download matched the GitHub asset SHA-256.
 - v0.1.7 remains available for rollback. Hardware listening, actual callback timing and physical LCD acceptance remain owner checks. Use a spare bank for V5 recording tests so the prior release can still load the older banks.
+
+## v0.1.12 engineering TESTING publication
+
+- Source tag commit 4027d816cdeceee171cc3bd72dd7c7669b835628. Audited native backup a1dfdaecae73bf8b585aebc6d56ba85f35b6b4f8. The fetched backup matched the local archive and passed all three SHA-256 checks.
+- GitHub Actions Chromium run 44628603559 and publication run 44629111156 succeeded. Package FM-1_75000112 is 611,488 bytes with SHA-256 fde204437fcbb6fa1bd855e0e78cad8eae0ea69aded2db0100cb6233b148b297.
+- Site version 8 from source 131e4af9f02d10255133dcb87667cb56c55f7165 served the v0.1.12 manifest, direct installer and matching versioned emulator. The live installer FWSC and GitHub asset were byte-identical. The live WASM matched the staged versioned binary.
+- Native audit reported a 152,132-byte image, 48,132 / 98,304 bytes of .data+.bss and 268,928 / 344,064 bytes of pool RAM. Host scripted regressions, dual-core output parity and state rollback, effects, name uniqueness, Studio keyboard/recording/project/generator checks and simulated OTA passed.
+- A baseline-to-candidate host slicer comparison produced byte-identical samples over five simultaneous tracks and changing rates and BPM. A short single-thread host kernel timing probe had variable tails and did not establish a speedup. The native worker implementation and the tested fallbacks are detailed in dual-core-fx.md. Hardware timing, underruns, kit listening and final LCD acceptance remain open. Use the existing test procedure once on the published TESTING build.
+- [GitHub release](https://github.com/CodingSlapfu/SLAP-5/releases/tag/v0.1.12-testing) and [direct installer](https://slap-5.jminie66.chatgpt.site/flash). Both v0.1.11 and v0.1.7 rollback tags were verified.

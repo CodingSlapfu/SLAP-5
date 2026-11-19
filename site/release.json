@@ -1,7 +1,7 @@
 {
-  "version": "0.1.11",
-  "product": "FM-1_75000111",
-  "sha256": "ea1357f1b8a9030d2cea776506c461e7687ab3d0ec5b170ced5ab0d29d92074c",
+  "version": "0.1.12",
+  "product": "FM-1_75000112",
+  "sha256": "fde204437fcbb6fa1bd855e0e78cad8eae0ea69aded2db0100cb6233b148b297",
   "bytes": 611488,
   "sources": [
     "FM-1_73000738",
