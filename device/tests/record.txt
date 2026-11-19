@@ -9,6 +9,7 @@ tap SEL
 expect recording 1
 tap PLAY
 expect playing 1
+expect rec_running 0
 key 7 down
 wait 35
 key 7 up
@@ -19,8 +20,32 @@ wait 2200
 expect events 1
 tap PLAY
 tap SEQ
-turn SELECT 1
 expect pitch 60
+expect note_gate >1
+expect note_gate <144
 key 8 down
 key 8 up
 expect recorded 1
+tap REC
+turn K1 1
+turn K2 1
+turn K3 1
+turn K4 1
+tap REC
+expect metronome 0
+tap SEL
+tap PLAY
+expect rec_countdown 4
+expect rec_running 0
+wait 2150
+expect rec_running 1
+expect length 32
+key 8 down
+wait 35
+key 8 up
+expect recorded 2
+tap PLAY
+tap SEQ
+expect pitch 61
+expect note_offset >0
+expect note_gate >1

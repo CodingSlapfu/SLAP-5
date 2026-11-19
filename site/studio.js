@@ -7,7 +7,7 @@ const colors = ['#1ce2ff', '#ab70ff', '#ff59b0', '#ffb43a', '#3ef289'];
 const ctx2d = $('roll').getContext('2d');
 const piano = ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'];
 const drums = ['Kick', 'Snare', 'Hat', 'Rim', 'Clap', 'Cymbal'];
-const drumKits = ['Studio Kit', 'Brush Kit', 'FM Kit', 'Industrial'];
+const drumKits = ['Studio Kit', 'Brush Kit', 'Fm Kit', 'Industrial', 'Acoustic Studio', 'Brushed Jazz', 'Acid Jazz', 'House', 'Deep House', 'Ruff House', 'Hip-Hop', 'Boom Bap', 'Trap', '808 Style', '909 Style', 'Jungle', 'Drum And Bass', 'Dubstep', 'Synthwave', 'Techno', 'Idm', 'Experimental Fm', 'Lo-Fi', 'Ambient', 'Electro', 'Breaks', 'Downtempo', 'Electro Acoustic', 'Warehouse', 'Dust Room', 'Neon Perc', 'Glass Metal'];
 const drumRow = pitch => {
   const row = drumNotes.indexOf(pitch);
   return row < 0 ? (pitch + 2) % 6 : row;

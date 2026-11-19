@@ -11,9 +11,9 @@ cp vendor/fm1-base/web/fm1ota.js vendor/fm1-base/web/fm1ports.js vendor/fm1-base
 cp site/release.json "$out/"
 release_dir=$(mktemp -d)
 trap 'rm -rf "$release_dir"' EXIT
-tar -xJf engineering/SLAP-5-0.1.4-assets.tar.xz -C "$release_dir"
+tar -xJf engineering/SLAP-5-0.1.7-assets.tar.xz -C "$release_dir"
 (cd "$release_dir" && sha256sum -c SHA256SUMS)
-cp "$release_dir/SLAP-5-0.1.4.fwsc" "$out/"
+cp "$release_dir/SLAP-5-0.1.7.fwsc" "$out/"
 mkdir -p "$out/tests"
 cp site/tests/flash.mjs "$out/tests/"
 printf '{"type":"module"}\n' > "$out/package.json"

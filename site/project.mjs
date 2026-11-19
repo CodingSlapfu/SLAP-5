@@ -17,7 +17,7 @@ export function validateProject(project) {
     throw new Error('Invalid drum filters.');
   for (const [i, track] of project.tracks.entries()) {
     if (!track || !within(track.mix, 0, 0x1ffffff) || !within(track.mix & 255, 1, 64) ||
-        !within(track.patch, 0, i === 4 ? 3 : 127) || !Array.isArray(track.steps) || track.steps.length !== 64) {
+        !within(track.patch, 0, i === 4 ? 31 : 127) || !Array.isArray(track.steps) || track.steps.length !== 64) {
       throw new Error('Invalid track data.');
     }
     if (!legacy && (!Array.isArray(track.extra) || track.extra.length !== (i === 4 ? 6 : 1)))

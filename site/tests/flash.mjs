@@ -45,7 +45,7 @@ await assert.rejects(transport.serve({ ...link, read: async () => request(valid.
   valid, 0xf0000000, 1000), /bad request/);
 console.log('Checked packaged bytes, corruption, source and target identities, ambiguous ports, and simulated pull requests.');
 
-if (version === '0.1.4') {
+if (version === '0.1.4' || version === '0.1.7') {
   const manifest = validateRelease(JSON.parse(await readFile(new URL('../release.json', import.meta.url))));
   await verifyPackage(manifest, raw);
   for (const source of ['FM-1_73000738', 'FM-1_75000102', 'FM-1_015'])
@@ -86,7 +86,7 @@ if (version === '0.1.4') {
       ['write', 128], ['reboot', undefined], ['done', undefined]]);
   }
   await Promise.all([
-    simulate('FM-1_73000738'), simulate('FM-1_75000102'), simulate('FM-1_015'),
+    simulate('FM-1_73000738'), simulate('FM-1_75000102'), simulate('FM-1_75000104'), simulate('FM-1_015'),
     simulate('FM-1_73000738', { loader: 'ota-FM1C_014' }),
     simulate('FM-1_73000738', { disconnect: true }),
     simulate('FM-1_73000738', { result: 'FM-1_73000738' }),
