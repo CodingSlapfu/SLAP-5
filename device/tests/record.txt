@@ -1,9 +1,15 @@
 wait 6100
-tap REC
+press REC
+wait 2050
+release REC
 expect recording 0
 expect metronome 0
-tap REC
+tap GLO
+turn K4 1
 expect metronome 1
+press REC
+wait 2050
+release REC
 expect recording 0
 tap SEL
 expect recording 1
@@ -26,13 +32,13 @@ expect note_gate <144
 key 8 down
 key 8 up
 expect recorded 1
-tap REC
+press REC
+wait 2050
+release REC
 turn K1 1
 turn K2 1
 turn K3 1
 turn K4 1
-tap REC
-expect metronome 0
 tap SEL
 tap PLAY
 expect rec_countdown 4

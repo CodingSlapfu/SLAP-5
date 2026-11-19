@@ -16,7 +16,9 @@ turn SELECT 1
 expect track 2
 turn K1 -2
 expect level 162
-tap REC
+press REC
+wait 2050
+release REC
 expect page 12
 expect recording 0
 tap SEL

@@ -18,6 +18,7 @@ typedef struct {
     float phase, inc, env, velocity, fall, bend;
     float attack, decay, sustain, release, drum_tune, drum_tail;
     float lfo_phase, lfo_inc, lfo_fade, lfo_gain, lfo_hold;
+    float last_sample, steal_tail;
     uint32_t delay, rng;
     uint8_t lfo_wave, origin, kit, drum_family;
     uint32_t remaining, age;
@@ -37,7 +38,8 @@ static volatile uint32_t scheduled_events;
 static volatile uint32_t recording, recorded_events;
 static volatile uint32_t rec_running, rec_countdown;
 static unsigned rec_bars, rec_count_in, rec_unquantized, rec_replace;
-static unsigned rec_track, rec_length, rec_start_mode, rec_raw, rec_overwrite;
+static unsigned rec_track, rec_length, rec_start_mode, rec_raw, rec_overwrite, rec_loop;
+static unsigned rec_pressed_at, rec_gesture;
 static uint32_t record_clock;
 static struct {
     volatile uint32_t *cell;
@@ -201,13 +203,14 @@ static void trigger_voice(unsigned track, unsigned pitch, unsigned velocity, uin
             voice = &voices[i];
         }
     }
+    float tail = voice->age && voice->track == track ? voice->last_sample : 0.0f;
     if (voice->age) ++voice_steals;
     *voice = (Voice) {
         .inc = slap_pitch_increment(pitch),
         .velocity = (float)velocity / 127.0f, .fall = 1.0f, .bend = 1.0f,
         .remaining = duration, .age = ++ages,
         .track = (uint8_t)track, .pitch = (uint8_t)pitch, .manual = (uint8_t)manual,
-        .origin = (uint8_t)origin, .delay = delay
+        .origin = (uint8_t)origin, .delay = delay, .steal_tail = tail
     };
     if (track < DRUMS) {
         const SlapPatch *patch = &slap_patches[tracks[track].patch];
@@ -367,8 +370,8 @@ static void record_input(unsigned track, unsigned pitch, unsigned velocity)
             }
         } else if (until_step * 2u >= step_duration) position = positions;
     }
-    if (position >= rec_length) return;
-    unsigned step = position;
+    if (!rec_loop && position >= rec_length) return;
+    unsigned step = position % rec_length;
     unsigned source_pitch = pitch;
     unsigned lane = 0;
     volatile uint32_t *cell = &tracks[track].steps[step];
@@ -384,6 +387,7 @@ static void record_input(unsigned track, unsigned pitch, unsigned velocity)
             cell = second;
         }
     }
+    if (rec_loop && (*cell & ACTIVE)) return;
     record_note_off(track, source_pitch);
     for (unsigned slot = 0; slot < VOICES; ++slot)
         if (held_record[slot].cell == cell) held_record[slot].cell = 0;
@@ -434,6 +438,7 @@ static void read_notes(void)
         unsigned pitch = (packet >> 16) & 127u, velocity = (packet >> 24) & 127u;
         if (track >= TRACKS) continue;
         if ((status & 0xf0u) == 0x90u && velocity) {
+            release_note(track, pitch);
             record_input(track, pitch, velocity);
             trigger(track, pitch, velocity, 0, 1);
         } else if ((status & 0xf0u) == 0x80u || (status & 0xf0u) == 0x90u) {
@@ -507,7 +512,7 @@ static void next_step(const uint32_t *mix)
     until_step = step_number & 1u ? base - offset : base + offset;
     step_duration = until_step;
     positions = step_number++;
-    if (metronome && !(positions & 3u)) {
+    if ((metronome == 2u || (metronome == 1u && recording)) && !(positions & 3u)) {
         click_remaining = CLICK_SAMPLES;
         click_accent = !(positions & 15u);
         click_phase = 0;
@@ -530,7 +535,7 @@ static void next_step(const uint32_t *mix)
     }
 }
 
-static float render_voice(Voice *v, SlapSynth *s)
+static float render_voice_signal(Voice *v, SlapSynth *s)
 {
     if (v->delay) {
         if (v->releasing) v->age = 0;
@@ -601,6 +606,18 @@ static float render_voice(Voice *v, SlapSynth *s)
     if (v->phase >= 1.0f) v->phase -= 1.0f;
     if (v->fall < 0.00005f) { v->age = 0; return 0.0f; }
     return wave * v->env * v->velocity * v->fall * 0.15f;
+}
+
+static float render_voice(Voice *v, SlapSynth *s)
+{
+    float sample = render_voice_signal(v, s);
+    if (v->steal_tail != 0.0f) {
+        sample += v->steal_tail;
+        v->steal_tail *= 0.94f;
+        if (fm_fabsf(v->steal_tail) < 0.00001f) v->steal_tail = 0.0f;
+    }
+    v->last_sample = sample;
+    return sample;
 }
 
 #if FM1B_CPU2 && !defined(PLAT_WEB)
@@ -730,9 +747,10 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
     }
     if (!recording && rec_running) end_recording(record_clock);
     if (!recording) rec_countdown = 0;
+    if (recording && playing && rec_loop && !rec_start_mode && !rec_running) begin_recording();
     read_notes();
     if (rec_running) mix[rec_track] = tracks[rec_track].mix;
-    if (!playing || (!metronome && !rec_countdown)) click_remaining = 0;
+    if (!playing) click_remaining = 0;
     slap_fx_begin(tempo);
     const unsigned muted = muted_drums();
     unsigned measure_fx = slap_ui.page == FX && slap_ui.fx_page == 4;
@@ -758,7 +776,7 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
                     mix[rec_track] = tracks[rec_track].mix;
                 }
             }
-            if (rec_running && step_number >= rec_length) {
+            if (rec_running && !rec_loop && step_number >= rec_length) {
                 end_recording(record_clock + i);
                 recording = 0;
             }
@@ -1126,10 +1144,36 @@ void app_input_only(void)
         if (!playing) recording = 0;
         ++sequence_epoch;
     }
-    if ((pressed & (1u << B_REC)) && !(slap_ui.page == SEQ &&
-          slap_ui.track == DRUMS && slap_ui.lane && (buttons & (1u << B_SEL)))) {
-        if (slap_ui.page == RECORD) metronome ^= 1u;
-        else slap_ui.page = RECORD;
+    const unsigned rec_button = 1u << B_REC;
+    if (pressed & rec_button) {
+        rec_gesture = !(slap_ui.page == SEQ && slap_ui.track == DRUMS &&
+                        slap_ui.lane && (buttons & (1u << B_SEL)));
+        rec_pressed_at = plat_ms();
+    }
+    if (rec_gesture && plat_ms() - rec_pressed_at >= 2000u) {
+        rec_gesture = 0;
+        slap_ui.page = RECORD;
+    } else if (rec_gesture && !(buttons & rec_button)) {
+        rec_gesture = 0;
+        if (recording) {
+            recording = 0;
+            if (!rec_running) {
+                playing = 0;
+                ++sequence_epoch;
+            }
+        } else if (slap_ui.page == HOME) {
+            rec_track = (unsigned)slap_ui.track;
+            rec_length = tracks[rec_track].mix & 255u;
+            rec_start_mode = !playing;
+            rec_raw = rec_unquantized;
+            rec_overwrite = 0;
+            rec_loop = 1;
+            if (!playing) {
+                ++sequence_epoch;
+                recording = 1;
+                playing = 1;
+            } else recording = 1;
+        }
     }
     if ((pressed & (1u << B_SEL)) && slap_ui.page == RECORD && !(buttons & (1u << B_GLO))) {
         if (recording) {
@@ -1141,6 +1185,7 @@ void app_input_only(void)
             rec_start_mode = rec_count_in;
             rec_raw = rec_unquantized;
             rec_overwrite = rec_replace;
+            rec_loop = 0;
             recording = 1;
         }
     }
@@ -1200,12 +1245,12 @@ void app_input_only(void)
         slap_ui.step = clamp(slap_ui.step + delta, 0, (int)(tracks[slap_ui.track].mix & 255u) - 1);
     else if (slap_ui.page == VISUAL)
         slap_ui.visual = clamp(slap_ui.visual + delta, 0, VISUAL_COUNT - 1);
-    else if (slap_ui.page == FX)
-        slap_ui.fx_page = clamp(slap_ui.fx_page + delta, 0, SLAP_FX_PAGES - 1);
     else if (slap_ui.page == HOME || slap_ui.page == MIXER || (slap_ui.page == RECORD && !recording) ||
-             slap_ui.page == PATCH || slap_ui.page == ENV || slap_ui.page == LFO)
+             slap_ui.page == PATCH || slap_ui.page == ENV || slap_ui.page == LFO || slap_ui.page == FX)
         slap_ui.track = clamp(slap_ui.track + delta, 0, TRACKS - 1);
-    tempo = (uint32_t)clamp((int)tempo + plat_enc(EN_ALGO), 40, 240);
+    int algorithm = plat_enc(EN_ALGO);
+    if (slap_ui.page == FX) slap_ui.fx_page = clamp(slap_ui.fx_page + algorithm, 0, SLAP_FX_PAGES - 1);
+    else tempo = (uint32_t)clamp((int)tempo + algorithm, 40, 240);
     int patch_delta = plat_enc(EN_PRESET);
 
     if (patch_delta) {
@@ -1251,6 +1296,7 @@ void app_input_only(void)
     } else if (slap_ui.page == GLOBAL) {
         tempo = (unsigned)clamp((int)tempo + knob[0], 40, 240);
         swing = (unsigned)clamp((int)swing + knob[1] * 2, 0, 70);
+        metronome = (unsigned)clamp((int)metronome + knob[3], 0, 2);
     } else if (slap_ui.page == FX) {
         for (unsigned k = 0; k < 4; ++k)
             slap_fx_change(slap_ui.track, slap_ui.fx_page, k, knob[k]);
@@ -1474,7 +1520,8 @@ static void draw_panel(void)
 #else
             cv_text(8, 2, &FONT_XS, "K1 TEMPO  /  K2 SWING", C_WHITE);
 #endif
-            cv_text(8, 20, &FONT_XS, "ACTIVE VOICES", c);
+            cv_text(8, 31, &FONT_XS, metronome == 2 ? "K4 METRO ON" : metronome == 1 ? "K4 METRO REC" : "K4 METRO OFF", c);
+            cv_text(8, 18, &FONT_XS, "ACTIVE VOICES", c);
             decimal(number, active_voices);
             cv_text(113, 20, &FONT_XS, number, C_WHITE);
             cv_text(134, 20, &FONT_XS, "DMA XRUNS", c);
@@ -1492,7 +1539,7 @@ static void draw_panel(void)
                 cv_text(x, 0, &FONT_XS, labels[k], c);
                 cv_text(x, 15, &FONT_XS, values[k], C_WHITE);
             }
-            cv_text(8, 30, &FONT_XS, metronome ? "REC: CLICK ON" : "REC: CLICK OFF", c);
+            cv_text(8, 30, &FONT_XS, metronome == 2 ? "METRO ON" : metronome == 1 ? "METRO REC" : "METRO OFF", c);
         }
         cv_blit(0, 196);
         return;
@@ -1510,8 +1557,8 @@ static void draw_panel(void)
     decimal(number, position / 16u % 999u + 1u);
     cv_text(163, 5, &FONT_XS, "BAR", c);
     cv_text(190, 5, &FONT_XS, number, C_WHITE);
-    cv_text(163, 19, &FONT_XS, playing && recording ? "REC" : recording ? "ARM" : playing ? "PLAY" : "STOP", c);
-    decimal(number, (slap_ui.page == SEQ ? (unsigned)slap_ui.step : play_step) + 1u);
+    cv_text(163, 19, &FONT_XS, rec_countdown ? "COUNT" : recording && playing ? "REC" : recording ? "ARM" : playing ? "PLAY" : "STOP", c);
+    decimal(number, rec_countdown ? rec_countdown : (slap_ui.page == SEQ ? (unsigned)slap_ui.step : play_step) + 1u);
     cv_text(202, 19, &FONT_XS, number, C_WHITE);
     cv_blit(0, 48);
     if (slap_ui.page == SAVE) {
