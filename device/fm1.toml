@@ -1,0 +1,7 @@
+name = "slap-5"
+id_prefix = "FM-1_75"
+usb_manufacturer = "ZIAO"
+usb_product = "SLAP-5 FM-1"
+ble = false
+repo = "https://github.com/CodingSlapfu/SLAP-5"
+licence = "MPL-2.0"
