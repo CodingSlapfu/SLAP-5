@@ -1,4 +1,4 @@
-wait 650
+wait 6100
 tap ARP
 expect page 10
 turn K1 1

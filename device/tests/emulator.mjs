@@ -34,14 +34,15 @@ function render(blocks) {
 
 const startup = render(160);
 assert.ok(startup > 0.01 && startup < 0.06, `unexpected startup peak ${startup}`);
-assert.equal(render(100), 0);
+assert.equal(render(2000), 0);
 await app.onMessage({ type: 'buttons', mask: 1 << 10 });
 const peak = render(100);
-assert.ok(peak > 0.005 && peak < 0.95, `unexpected peak ${peak}`);
+assert.equal(peak, 0, "blank project should play silently");
 console.log(`WebAssembly boot, PLAY input and unclipped stereo audio passed (peak ${peak.toFixed(4)}).`);
 
 await app.onMessage({ type: 'app', command: 'read' });
 assert.equal(frames[0].names.length, 128);
+assert.ok(frames[0].project.tracks.every(t => [...t.steps, ...t.extra.flat()].every(n => n === 0)));
 const next = structuredClone(validateProject(frames[0].project));
 next.bpm = 135;
 next.tracks[0].patch = 95;

@@ -8,7 +8,7 @@ enum { TRACK_DELAY = 12288, CHORUS = 1024, ROOM = 2048 };
 enum { MAIN_FX, FILTER, SLICER, INSERT, DISPLAY, REVERB, DELAY, CHORUS_FX, DRIVE };
 
 const char *const slap_fx_pages[SLAP_FX_PAGES] = {
-    "MAIN FX", "FILTER", "SLICER", "INSERTS", "PROCESSOR", "REVERB", "DELAY", "CHORUS", "DRIVE"
+    "MAIN FX", "FILTER", "SLICER", "INSERTS", "FX PROC", "REVERB", "DELAY", "CHORUS", "DRIVE"
 };
 const char *const slap_fx_labels[SLAP_FX_PAGES][4] = {
     {"REVERB", "DELAY", "CHORUS", "DRIVE"},

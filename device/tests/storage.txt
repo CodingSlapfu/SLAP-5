@@ -1,4 +1,4 @@
-wait 650
+wait 6100
 turn ALGO 19
 expect tempo 131
 turn PRESET 9

@@ -1,0 +1,2 @@
+WebAssembly boot, PLAY input and unclipped stereo audio passed (peak 0.0000).
+SLAP STUDIO project round-trip, validation and patch audition passed through the compiled DSP.

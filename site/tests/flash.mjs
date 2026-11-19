@@ -45,7 +45,7 @@ await assert.rejects(transport.serve({ ...link, read: async () => request(valid.
   valid, 0xf0000000, 1000), /bad request/);
 console.log('Checked packaged bytes, corruption, source and target identities, ambiguous ports, and simulated pull requests.');
 
-if (version === '0.1.3') {
+if (version === '0.1.4') {
   const manifest = validateRelease(JSON.parse(await readFile(new URL('../release.json', import.meta.url))));
   await verifyPackage(manifest, raw);
   for (const source of ['FM-1_73000738', 'FM-1_75000102', 'FM-1_015'])

@@ -1,9 +1,9 @@
-wait 650
+wait 6100
 expect patch 67
 tap EDIT
 expect page 3
-turn SELECT -3
-expect patch 64
+turn K1 -1
+expect patch <67
 tap ENV
 expect page 4
 turn K1 2

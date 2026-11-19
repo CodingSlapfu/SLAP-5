@@ -1,0 +1,40 @@
+name: Publish SLAP-5 0.1.4 engineering candidate
+on:
+  push:
+    branches: [main]
+    paths:
+      - engineering/SLAP-5-0.1.4-assets.tar.xz
+permissions:
+  contents: write
+concurrency:
+  group: slap-5-0.1.4-release
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify release payload
+        run: |
+          set -eu
+          mkdir -p "${RUNNER_TEMP}/slap-release"
+          tar -xJf engineering/SLAP-5-0.1.4-assets.tar.xz -C "${RUNNER_TEMP}/slap-release"
+          cd "${RUNNER_TEMP}/slap-release"
+          cmp SHA256SUMS "${GITHUB_WORKSPACE}/evidence/build-0.1.4.sha256"
+          sha256sum -c SHA256SUMS
+      - name: Publish exact candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          tag=v0.1.4-testing
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "The release already exists. Refusing to replace it." >&2
+            exit 1
+          fi
+          gh release create "$tag" --target "$GITHUB_SHA" --prerelease \
+            --title "SLAP-5 0.1.4 engineering TESTING" \
+            --notes-file evidence/release-0.1.4.md \
+            "${RUNNER_TEMP}/slap-release/SLAP-5-0.1.4.fwsc" \
+            "${RUNNER_TEMP}/slap-release/SLAP-5-0.1.4-application.bin" \
+            "${RUNNER_TEMP}/slap-release/SLAP-5-0.1.4-loader.bin" \
+            "${RUNNER_TEMP}/slap-release/SHA256SUMS"

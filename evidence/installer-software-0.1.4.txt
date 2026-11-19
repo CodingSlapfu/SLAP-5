@@ -1,0 +1,2 @@
+Checked packaged bytes, corruption, source and target identities, ambiguous ports, and simulated pull requests.
+Simulated full AQUORA, SLAP-5 and stock OTA staging, loader reconnect, writes, restart, and rejection paths.

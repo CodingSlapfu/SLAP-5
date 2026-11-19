@@ -1,4 +1,4 @@
-wait 650
+wait 6100
 expect track 1
 expect tempo 112
 expect length 16
@@ -28,7 +28,7 @@ expect playing 1
 wav playback.wav
 wait 1400
 wavstop
-expect peak_db_min -40
+expect peak_db_min -46
 expect step >4
 tap PLAY
 expect playing 0

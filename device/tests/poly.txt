@@ -1,6 +1,9 @@
-wait 650
+wait 6100
 tap SEQ
-expect pitch 36
+expect pitch -1
+key 0 down
+key 0 up
+expect pitch 53
 press SEL
 turn SELECT 1
 release SEL
@@ -11,10 +14,10 @@ expect pitch 60
 press SEL
 turn SELECT -1
 release SEL
-expect pitch 36
+expect pitch 53
 tap PLAY
 wait 40
-expect events 5
+expect events 2
 tap PLAY
 tap SAVE
 key 0 down

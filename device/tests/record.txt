@@ -1,7 +1,12 @@
-wait 650
+wait 6100
 tap REC
+expect recording 0
+tap SEL
+expect recording 1
 tap PLAY
+expect playing 1
 key 7 down
+wait 35
 key 7 up
 expect recorded 1
 tap PLAY

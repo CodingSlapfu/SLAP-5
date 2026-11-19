@@ -47,11 +47,21 @@ static int visual_wave(unsigned phase, int amplitude)
     return (int)(slap_sine((float)(phase & 1023u) * (1.0f / 1024.0f)) * (float)amplitude);
 }
 
+static void visual_disc(int x, int y, int radius, int sy, uint16_t color)
+{
+    for (int dy = -radius; dy <= radius; ++dy) {
+        if (y + dy < sy || y + dy >= sy + 40) continue;
+        int span = radius;
+        while (span*span + dy*dy > radius*radius) --span;
+        cv_rect(x-span, y+dy-sy, 2*span+1, 1, color);
+    }
+}
+
 static void visualizer_draw(unsigned kind, unsigned time)
 {
     static const char *const names[] = {
-        "DNA HELIX", "CYBER CITY", "FERROFLUID", "STARFIGHTER", "SOLAR SYSTEM",
-        "CRT PLASMA", "VINYL", "TESLA LIGHTNING", "PIANO WATERFALL"
+        "DNA HELIX", "PRISM FIELD", "FERROFLUID", "GRAVITY RINGS", "SOLAR SYSTEM",
+        "CRT PLASMA", "VINYL", "TESLA LIGHTNING", "SLAP REACTOR"
     };
     int energy[TRACKS];
     for (unsigned t = 0; t < TRACKS; ++t) energy[t] = (int)(track_energy[t] >> 2);
@@ -68,15 +78,17 @@ static void visualizer_draw(unsigned kind, unsigned time)
             }
             break;
         case 1:
-            for (unsigned i = 0; i < 17; ++i) {
-                unsigned t = i % TRACKS, seed = i*173u;
-                int x = (int)((i*17u + 290u - (time/17u)%290u) % 290u) - 20;
-                int h = 36 + (int)(seed % 110u) + energy[t];
-                cv_rect(x, 226 - h - sy, 13, h, RGB(24,30,51));
-                cv_rect(x, 226 - h - sy, 13, 2, track_color[t]);
-                for (int y = 233 - h; y < 225; y += 8)
-                    if ((seed + (unsigned)y + time/45u) % 6u < 2u + (unsigned)energy[t]/10u)
-                        cv_rect(x+3, y-sy, 6, 3, track_color[t]);
+            for (unsigned i = 0; i < 20; ++i) {
+                unsigned t = i % TRACKS;
+                int x = 30 + (int)(i % 5u)*45;
+                int y = 54 + (int)(i / 5u)*45;
+                int height = 10 + energy[t]/3 + visual_wave(time*4u+i*77u, 5);
+                int width = 10 + energy[t]/5;
+                cv_line(x-width, y-sy, x, y-height-sy, track_color[t]);
+                cv_line(x, y-height-sy, x+width, y-sy, track_color[t]);
+                cv_line(x+width, y-sy, x, y+height-sy, track_color[t]);
+                cv_line(x, y+height-sy, x-width, y-sy, track_color[t]);
+                visual_disc(x,y,2+energy[t]/10,sy,C_WHITE);
             }
             break;
         case 2:
@@ -88,27 +100,36 @@ static void visualizer_draw(unsigned kind, unsigned time)
             }
             break;
         case 3:
-            for (unsigned i = 0; i < 10; ++i) {
-                unsigned t = i % TRACKS;
-                int radius = 5 + (int)((i*15u + time/2u) % 145u) + energy[t]/3;
-                int center = 120 + visual_wave(time + 70u*i, radius/5);
-                cv_line(center-radius, 120-radius/2-sy, center+radius, 120-radius/2-sy, track_color[t]);
-                cv_line(center-radius, 120+radius/2-sy, center+radius, 120+radius/2-sy, track_color[t]);
-                cv_line(center-radius, 120-radius/2-sy, center-radius, 120+radius/2-sy, track_color[t]);
-                cv_line(center+radius, 120-radius/2-sy, center+radius, 120+radius/2-sy, track_color[t]);
-            }
-            break;
-        case 4:
-            cv_rect(111, 111-sy, 18, 18, RGB(255,183,89));
             for (unsigned t = 0; t < TRACKS; ++t) {
-                int r = 22 + (int)t*19;
-                for (unsigned n = 0; n < 1024u; n += 43u)
-                    cv_rect(120+visual_wave(n+256,r), 120+visual_wave(n,r/2)-sy, 2, 2, RGB(39,48,67));
-                unsigned theta = time * (6u-t) + t*157u;
-                int size = 5 + energy[t]/6;
-                cv_rect(120-size/2+visual_wave(theta+256,r),120-size/2+visual_wave(theta,r/2)-sy,size,size,track_color[t]);
+                int radius = 24 + (int)t*17 + energy[t]/5;
+                for (unsigned k = 0; k < 1024; k += 37) {
+                    unsigned phase = k + time*(3u+t);
+                    int x = 120 + visual_wave(phase+256, radius);
+                    int y = 130 + visual_wave(phase, radius/2) + visual_wave(2*phase+t*80u,20);
+                    visual_disc(x,y,2+(int)(t==4),sy,track_color[t]);
+                }
             }
             break;
+        case 4: {
+            static const uint8_t sizes[] = {2,4,5,3,12,9,6,6};
+            static const uint8_t rates[] = {24,17,13,10,6,4,3,2};
+            static const uint16_t planet[] = { RGB(160,151,137), RGB(229,185,109),
+                RGB(51,151,224), RGB(210,78,44), RGB(218,158,113), RGB(222,188,116),
+                RGB(116,216,221), RGB(46,80,222) };
+            visual_disc(120,128,14+energy[4]/8,sy,RGB(255,143,22));
+            visual_disc(120,128,11,sy,RGB(255,228,102));
+            for (unsigned i = 0; i < 8; ++i) {
+                int r = 21 + (int)i*12;
+                for (unsigned k=0; k<1024; k+=57)
+                    cv_rect(120+visual_wave(k+256,r),128+visual_wave(k,r*3/4)-sy,1,1,RGB(46,62,85));
+                unsigned phase = time*rates[i]+i*113u;
+                int x = 120+visual_wave(phase+256,r), y = 128+visual_wave(phase,r*3/4);
+                if (i == 5) cv_line(x-13,y+4-sy,x+13,y-4-sy,RGB(237,202,142));
+                visual_disc(x,y,sizes[i],sy,planet[i]);
+                if (i == 2 || i == 4) cv_rect(x-2,y-sy,5,1,i == 2 ? RGB(103,212,105) : RGB(165,93,65));
+            }
+            break;
+        }
         case 5:
             for (int y = sy; y < sy + 40; y += 5)
                 for (int x = 0; x < 240; x += 6) {
@@ -119,13 +140,23 @@ static void visualizer_draw(unsigned kind, unsigned time)
                 }
             break;
         case 6:
-            for (unsigned a = 0; a < 1024; a += 13u)
-                for (int r = 26; r < 93; r += 9)
-                    cv_rect(112+visual_wave(a+256,r),129+visual_wave(a,r*3/4)-sy,3,3,RGB(55,66,81));
-            cv_rect(103,120-sy,18,18,track_color[(positions/4u)%TRACKS]);
-            cv_line(207,49-sy,185,101-sy, C_WHITE);
-            cv_line(185,101-sy,170,114-sy, C_WHITE);
-            cv_rect(110+visual_wave(time*2u,68),127+visual_wave(time*2u+256,51)-sy,5+energy[4]/5,4,track_color[0]);
+            cv_rect(12,42-sy,216,149,RGB(59,44,38));
+            cv_rect(17,47-sy,206,137,RGB(23,26,34));
+            visual_disc(91,115,59,sy,RGB(12,13,17));
+            for (unsigned a=0; a<1024; a+=24)
+                for (int r=31;r<59;r+=8)
+                    cv_rect(91+visual_wave(a+256,r),115+visual_wave(a,r)-sy,2,1,RGB(63,71,86));
+            visual_disc(91,115,22,sy,track_color[positions%TRACKS]);
+            visual_disc(91,115,3,sy,C_WHITE);
+            visual_disc(91+visual_wave(time*5u,17),115+visual_wave(time*5u+256,17),2,sy,C_WHITE);
+            visual_disc(193,68,9,sy,RGB(133,142,155));
+            cv_line(193,68-sy,176,138-sy,C_WHITE);
+            cv_line(176,138-sy,142,147-sy,RGB(226,216,189));
+            cv_rect(17,199-sy,206,27,RGB(14,28,39));
+            for (unsigned x=0;x<SLAP_FX_PLOT-1u;++x) {
+                int a = slap_fx_trace(input_track,x), b = slap_fx_trace(input_track,x+1u);
+                cv_line(18+x*2,212+a/5-sy,20+x*2,212+b/5-sy,track_color[input_track]);
+            }
             break;
         case 7:
             for (unsigned t = 0; t < TRACKS; ++t) {
@@ -138,19 +169,17 @@ static void visualizer_draw(unsigned kind, unsigned time)
             }
             break;
         default:
-            for (unsigned t = 0; t < TRACKS; ++t) {
-                int x = 20 + (int)t*42;
-                cv_line(x+27,38-sy,x,220-sy,track_color[t]);
-                for (unsigned i = 0; i < 12; ++i) {
-                    unsigned length = tracks[t].mix & 255u;
-                    uint32_t word = tracks[t].steps[(positions+i)%length];
-                    if (!(word & ACTIVE)) continue;
-                    int y = 213 - (int)i*14;
-                    int note = (int)(word & NOTES);
-                    cv_rect(x + (int)i*2 + (note % 7), y-sy, 16, 4+(int)((word>>16)&255u)/30, track_color[t]);
+            for (unsigned t=0;t<TRACKS;++t) {
+                int radius=28+(int)t*14;
+                for (unsigned k=0;k<1024;k+=53) {
+                    unsigned a=k+time*(t+1u);
+                    int x=120+visual_wave(a+256,radius+energy[t]/3);
+                    int y=127+visual_wave(a,radius+energy[t]/3);
+                    visual_disc(x,y,2+energy[t]/10,sy,track_color[t]);
                 }
             }
-            cv_rect(12,218-sy,216,2,C_WHITE);
+            cv_rect(46,107-sy,148,35,RGB(8,16,28));
+            block_text(49,112-sy,4,"SLAP-5",C_WHITE);
             break;
         }
         if (!sy) {
@@ -166,14 +195,21 @@ static void draw_boot(unsigned elapsed)
     for (int sy = 0; sy < 240; sy += 40) {
         cv_begin(240,40,RGB(4,7,14));
         for (unsigned i = 0; i < TRACKS; ++i) {
-            int end = clamp((int)elapsed - (int)i*26, 0, 210);
+            int end = clamp((int)elapsed / 12 - (int)i*20, 0, 210);
             int y = 63 + (int)i*27;
             cv_line(14,y-sy,14+end,y-sy,track_color[i]);
-            if (end > 95) cv_rect(31+(int)i*35,y-8-sy,7,9,track_color[i]);
+            if (end > 95) {
+                int junction = 31+(int)i*35;
+                cv_line(junction, y-sy, junction, y-12-sy, track_color[i]);
+                cv_rect(junction-3, y-16-sy, 7, 5, track_color[i]);
+                int pulse = 14 + (int)((elapsed / 6u + i * 31u) % (unsigned)end);
+                cv_rect(pulse, y-1-sy, 5, 3, C_WHITE);
+            }
         }
-        if (elapsed > 245) {
+        if (elapsed > 3200) {
             cv_rect(10,94-sy,220,52,RGB(4,7,14));
-            block_text(31,101-sy,5,"SLAP-5",C_WHITE);
+            int settle = clamp(18 - ((int)elapsed - 3200) / 28, 0, 18);
+            block_text(31,101+settle-sy,5,"SLAP-5",C_WHITE);
         }
         cv_blit(0,sy);
     }
