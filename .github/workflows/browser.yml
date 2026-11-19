@@ -1,5 +1,8 @@
 name: SLAP STUDIO browser tests
 on: [push, pull_request]
+concurrency:
+  group: slap-studio-${{ github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
@@ -11,9 +14,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: sudo apt-get update && sudo apt-get install -y python3-pil python3-fonttools
+      - name: Prepare Python build dependencies
+        run: |
+          python3 -m venv "$RUNNER_TEMP/slap-python"
+          "$RUNNER_TEMP/slap-python/bin/pip" install Pillow==11.3.0 fonttools==4.59.2
+          echo "$RUNNER_TEMP/slap-python/bin" >> "$GITHUB_PATH"
       - run: npm install --no-save --package-lock=false playwright@1.51.1
-      - run: npx playwright install --with-deps chromium
+      - run: npx playwright install chromium
       - name: Build with Emscripten 3.1.64
         run: |
           git clone --depth 1 --branch 3.1.64 https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
