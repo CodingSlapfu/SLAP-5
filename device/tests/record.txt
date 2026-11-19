@@ -1,6 +1,10 @@
 wait 6100
 tap REC
 expect recording 0
+expect metronome 0
+tap REC
+expect metronome 1
+expect recording 0
 tap SEL
 expect recording 1
 tap PLAY
@@ -9,6 +13,10 @@ key 7 down
 wait 35
 key 7 up
 expect recorded 1
+wait 60
+expect events 0
+wait 2200
+expect events 1
 tap PLAY
 tap SEQ
 turn SELECT 1
