@@ -37,13 +37,15 @@ typedef struct {
     float lp, bp, fx_lp, reverb_lp, delay_lp, chorus_lp, drive_lp, crush, phase, gate;
     float allpass[3];
     float coef, damp, low, band, high, dp[4], ch[4], rv[4], dr[4];
-    float depth, mix, amount, tone, speed;
+    float depth, mix, amount, tone, speed, filter_scale, phase_step;
     uint32_t time, mode, insert, clock_step, gate_sample, block_index;
     uint32_t delay_pos, chorus_pos, room_pos, delay_div, crush_count;
+    uint32_t revision, bpm, room_short, room_long;
     uint16_t pattern;
     int16_t slice[256];
 } Fx;
 static Fx fx[SLAP_FX_TRACKS];
+static volatile uint32_t settings_revision[SLAP_FX_TRACKS];
 static PLAT_POOL int16_t echo_line[SLAP_FX_TRACKS][TRACK_DELAY];
 static PLAT_POOL int16_t chorus_line[SLAP_FX_TRACKS][CHORUS];
 static PLAT_POOL int16_t room_line[SLAP_FX_TRACKS][ROOM];
@@ -70,6 +72,7 @@ void slap_fx_init(void)
         settings[t][CHORUS_FX] = bytes(0, 60, 52, 94);
         settings[t][DRIVE] = bytes(0, 54, 108, 39);
         fx[t].gate = 1.0f;
+        ++settings_revision[t];
     }
 }
 
@@ -96,7 +99,11 @@ void slap_fx_change(unsigned track, unsigned page, unsigned knob, int delta)
     unsigned shift = knob * 8u;
     uint32_t word = settings[track][page];
     unsigned v = (unsigned)clamp((int)((word >> shift) & 255u) + delta * stride, 0, cap);
-    settings[track][page] = (word & ~(255u << shift)) | v << shift;
+    uint32_t changed = (word & ~(255u << shift)) | v << shift;
+    if (changed != word) {
+        settings[track][page] = changed;
+        ++settings_revision[track];
+    }
 }
 
 void slap_fx_begin(unsigned bpm)
@@ -105,6 +112,10 @@ void slap_fx_begin(unsigned bpm)
     static const unsigned echo_eighths[6] = {1, 2, 3, 4, 6, 8};
     for (unsigned t = 0; t < SLAP_FX_TRACKS; ++t) {
         Fx *f = &fx[t];
+        uint32_t revision = settings_revision[t];
+        if (f->revision == revision && f->bpm == bpm) continue;
+        f->revision = revision;
+        f->bpm = bpm;
         const uint32_t filter = settings[t][FILTER];
         const uint32_t slice = settings[t][SLICER];
         const uint32_t insert = settings[t][INSERT];
@@ -112,6 +123,8 @@ void slap_fx_begin(unsigned bpm)
         f->low = unit(filter & 255u);
         f->band = unit((filter >> 8) & 255u);
         f->high = unit((filter >> 16) & 255u);
+        float total = f->low + f->band + f->high;
+        f->filter_scale = total > 0.0f ? 1.0f / total : 0.0f;
         f->damp = 1.55f - 1.34f * unit(filter >> 24);
         f->coef = 0.025f + 0.34f * (0.15f + f->low + f->band * .55f + f->high * .33f) / 2.1f;
         f->mode = slice & 255u;
@@ -133,6 +146,9 @@ void slap_fx_begin(unsigned bpm)
             f->rv[k] = unit((room >> shift) & 255u);
             f->dr[k] = unit((drive >> shift) & 255u);
         }
+        f->phase_step = (0.18f + 3.5f * fm_maxf(f->ch[2], f->speed)) / 44100.0f;
+        f->room_long = 300u + (unsigned)(f->rv[2] * 1100.0f);
+        f->room_short = f->room_long * 11u / 17u;
     }
 }
 
@@ -188,12 +204,11 @@ float slap_fx_sample(unsigned track, float dry)
 {
     Fx *f = &fx[track];
     float x = dry;
-    if (f->low + f->band + f->high > 0.0f) {
+    if (f->filter_scale > 0.0f) {
         float hp = x - f->lp - f->damp * f->bp;
         f->bp += f->coef * hp;
         f->lp += f->coef * f->bp;
-        float total = f->low + f->band + f->high;
-        x += f->low*(f->lp-x)/total + f->band*(f->bp-x)/total + f->high*(hp-x)/total;
+        x += (f->low*(f->lp-x) + f->band*(f->bp-x) + f->high*(hp-x)) * f->filter_scale;
         x = fm_clampf(x, -0.9f, 0.9f);
     }
     if (f->dr[0] > 0.0f) {
@@ -203,7 +218,7 @@ float slap_fx_sample(unsigned track, float dry)
         x += f->dr[0] * (f->drive_lp - x);
     }
     if (f->ch[0] > 0.0f || f->insert) {
-        f->phase += (0.18f + 3.5f * fm_maxf(f->ch[2], f->speed)) / 44100.0f;
+        f->phase += f->phase_step;
         if (f->phase >= 1.0f) f->phase -= 1.0f;
         float lfo = 1.0f - 2.0f * fm_fabsf(f->phase - 0.5f);
         if (f->ch[0] > 0.0f || f->insert == 7) {
@@ -233,9 +248,8 @@ float slap_fx_sample(unsigned track, float dry)
     }
     if (f->rv[0] > 0.0f) {
         unsigned idx = f->room_pos;
-        unsigned size = 300u + (unsigned)(f->rv[2] * 1100.0f);
-        float a = unpack(room_line[track][preceding(idx, size, ROOM)]);
-        float b = unpack(room_line[track][preceding(idx, size * 11u / 17u, ROOM)]);
+        float a = unpack(room_line[track][preceding(idx, f->room_long, ROOM)]);
+        float b = unpack(room_line[track][preceding(idx, f->room_short, ROOM)]);
         f->reverb_lp += ((a * 0.61f + b * 0.39f) - f->reverb_lp) * (0.12f + 0.58f*(1.0f - f->rv[3]));
         room_line[track][idx] = pack(x * 0.58f + f->reverb_lp * (0.31f + 0.63f*f->rv[1]));
         f->room_pos = (idx + 1u) & (ROOM - 1u);
@@ -307,5 +321,8 @@ int slap_fx_config_valid(unsigned page, uint32_t word)
 
 void slap_fx_restore(unsigned track, unsigned page, uint32_t word)
 {
-    settings[track][page] = word;
+    if (settings[track][page] != word) {
+        settings[track][page] = word;
+        ++settings_revision[track];
+    }
 }

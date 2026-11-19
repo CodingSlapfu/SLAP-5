@@ -1,4 +1,5 @@
 name = "slap-5"
+font_set = "slapblock"
 id_prefix = "FM-1_75"
 usb_manufacturer = "ZIAO"
 usb_product = "SLAP-5 FM-1"

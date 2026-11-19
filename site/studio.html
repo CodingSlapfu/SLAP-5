@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>SLAP STUDIO</title>
   <link rel="stylesheet" href="studio.css">
+  <link rel="stylesheet" href="fonts/slap-block.css">
 </head>
 <body>
   <header>
@@ -23,13 +24,22 @@
       <button id="export" disabled>Export</button>
       <label class="import">Import<input id="import" type="file" accept=".json,application/json" disabled></label>
     </section>
+    <section class="toolbar" aria-label="Record a take">
+      <label>Bars<select id="take-bars"><option>1</option><option>2</option><option>4</option><option>8</option><option>16</option><option>32</option></select></label>
+      <label>Start<select id="take-start"><option value="0">First note</option><option value="1">Count-in</option></select></label>
+      <label>Quantize<input id="take-quant" type="checkbox" checked></label>
+      <label>Mode<select id="take-mode"><option value="0">Overdub</option><option value="1">Replace</option></select></label>
+      <button id="take" disabled>Record track</button><button id="quick-take" disabled>Quick REC</button><button id="use-midi" disabled>Enable MIDI</button>
+      <output id="take-state" aria-live="polite"></output>
+      <div id="take-keys" class="settings" aria-label="Performance keys"></div>
+    </section>
     <nav id="tracks" aria-label="Tracks"></nav>
     <section class="editor" aria-label="Pattern editor">
       <div class="editor-head">
         <div><p id="track-number"></p><h1 id="title">Piano roll</h1></div>
         <div class="settings">
           <label>Patch<select id="patch" aria-label="Factory patch"></select></label>
-          <label>Steps<input id="length" type="number" min="1" max="64"></label>
+          <label>Steps<input id="length" type="number" min="1" max="512"></label>
           <label>Pan<input id="pan" type="number" min="0" max="255"></label>
           <label>Level<input id="level" type="number" min="0" max="255"></label>
           <label>Mute<input id="mute" type="checkbox"></label>
@@ -51,13 +61,15 @@
         <button id="gen-apply" type="button">Generate drums</button>
       </div>
       <p id="hint">Enable audio to load the FM-1 sequencer and factory patches.</p>
+      <div class="settings"><button id="prev-steps" disabled>Previous steps</button>
+        <button id="next-steps" disabled>Next steps</button></div>
       <div id="view" tabindex="0" aria-label="Step grid"><canvas id="roll"></canvas></div>
       <div class="inspector">
         <output id="position">Select a step</output>
         <label>Velocity<input id="velocity" type="number" min="1" max="127" disabled></label>
         <label>Gate<input id="gate" type="number" min="1" max="255" disabled></label>
         <label>Hit %<input id="prob" type="number" min="0" max="100" disabled></label>
-        <label>Offset <input id="timing" type="number" min="0" max="3" disabled></label>
+        <label>Offset <input id="timing" type="number" min="0" max="15" disabled></label>
         <span id="drum-controls" hidden><label>Drum lane <select id="drum-lane"><option value="0">Kick</option><option value="1">Snare</option><option value="2">Hat</option><option value="3">Rim</option><option value="4">Clap</option><option value="5">Cymbal</option></select></label>
           <label>Mute <input id="drum-mute" type="checkbox"></label>
           <label>Solo <input id="drum-solo" type="checkbox"></label></span>

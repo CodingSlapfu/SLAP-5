@@ -1,0 +1,4 @@
+@font-face { font-family: "SLAP Block"; src: url("SLAPBlock-Regular.ttf") format("truetype"); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: "SLAP Block"; src: url("SLAPBlock-Bold.ttf") format("truetype"); font-weight: 600 900; font-style: normal; font-display: swap; }
+@font-face { font-family: "SLAP Block"; src: url("SLAPBlock-Italic.ttf") format("truetype"); font-weight: 400; font-style: italic; font-display: swap; }
+html { font-family: "SLAP Block", system-ui, sans-serif; }

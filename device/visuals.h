@@ -25,21 +25,21 @@ static const unsigned char slap_block[37][7] = {
     {0,0,0,31,31,0,0}
 };
 
-static void block_text(int x, int y, unsigned pixels, const char *text, uint16_t color)
+static void slap_wordmark(int center, int y)
 {
-    for (; *text; ++text, x += (int)pixels * 6) {
-        int glyph = *text >= 'A' && *text <= 'Z' ? *text - 'A' :
-                    *text >= '0' && *text <= '9' ? *text - '0' + 26 : *text == '-' ? 36 : -1;
-        if (glyph < 0) continue;
-        for (unsigned row = 0; row < 7; ++row)
-            for (unsigned column = 0; column < 5; ++column)
-                if (slap_block[glyph][row] & (16u >> column))
-                    cv_rect(x + (int)(column*pixels), y + (int)(row*pixels), (int)pixels, (int)pixels, color);
-    }
+    cv_text(center - text_w(&FONT_L, "SLAP-5") / 2, y, &FONT_L, "SLAP-5", C_WHITE);
 }
 
 static const uint16_t track_color[] = {
     RGB(28,226,255), RGB(171,112,255), RGB(255,89,176), RGB(255,180,58), RGB(62,242,137)
+};
+
+static const uint16_t track_surface[] = {
+    RGB(0,47,67), RGB(45,20,79), RGB(73,15,51), RGB(67,42,10), RGB(10,54,30)
+};
+
+static const uint16_t track_rule[] = {
+    RGB(0,107,138), RGB(94,45,155), RGB(145,27,99), RGB(141,85,17), RGB(17,112,53)
 };
 
 static int visual_wave(unsigned phase, int amplitude)
@@ -188,7 +188,7 @@ static void visualizer_draw(unsigned kind, unsigned time)
                 }
             }
             cv_rect(46,107-sy,148,35,RGB(8,16,28));
-            block_text(49,112-sy,4,"SLAP-5",C_WHITE);
+            slap_wordmark(120, 110-sy);
             break;
         }
         if (!sy) {
@@ -218,7 +218,7 @@ static void draw_boot(unsigned elapsed)
         if (elapsed > 3200) {
             cv_rect(10,94-sy,220,52,RGB(4,7,14));
             int settle = clamp(18 - ((int)elapsed - 3200) / 28, 0, 18);
-            block_text(31,101+settle-sy,5,"SLAP-5",C_WHITE);
+            slap_wordmark(120, 102+settle-sy);
         }
         cv_blit(0,sy);
     }

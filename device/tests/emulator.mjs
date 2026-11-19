@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { validateProject, encodeNote } from '../../site/project.mjs';
+import { validateProject, encodeNote, withPatternLength } from '../../site/project.mjs';
 
 let Processor;
 globalThis.currentTime = 0;
 const frames = [];
 globalThis.AudioWorkletProcessor = class {
-  port = { postMessage(message) { if (['studio-project', 'studio-generated'].includes(message.type)) frames.push(message); } };
+  port = { postMessage(message) { if (['studio-project', 'studio-generated', 'studio-take', 'studio-take-project'].includes(message.type)) frames.push(message); } };
 };
 globalThis.registerProcessor = (name, type) => { Processor = type; };
 
@@ -49,9 +49,14 @@ next.metronome = 1;
 next.tracks[2].fx[5] |= 93;
 next.tracks[0].patch = 95;
 next.tracks[0].steps[1] = encodeNote(51, 92, 160, 85);
-next.tracks[0].extra[0][1] = encodeNote(55, 83, 120, 100, 2);
+next.tracks[0].extra[0][1] = encodeNote(55, 83, 120, 100);
 next.tracks[4].extra[0][1] = encodeNote(36, 110, 180, 100);
-next.tracks[4].extra[2][1] = encodeNote(42, 86, 130, 50, 1);
+next.tracks[4].extra[2][1] = encodeNote(42, 86, 130, 50);
+next.tracks[0].mix = withPatternLength(next.tracks[0].mix, 512);
+next.tracks[0].steps[400] = encodeNote(63, 100, 120, 100);
+next.tracks[0].offsets[0][400] = 13;
+next.tracks[0].offsets[1][1] = 4;
+next.tracks[4].offsets[3][1] = 2;
 next.drumFilters = 1 << 2;
 await app.onMessage({ type: 'app', command: 'project', project: next });
 await app.onMessage({ type: 'app', command: 'read' });
@@ -85,7 +90,8 @@ for (let track = 0; track < 4; track++) {
   for (const page of [5, 6, 7, 8]) part.fx[page] |= 95;
   for (let step = 0; step < 16; step++) {
     part.steps[step] = encodeNote(39 + track * 7 + step % 4, 122, 240, 100);
-    part.extra[0][step] = encodeNote(46 + track * 7 + step % 5, 111, 192, 100, step % 4);
+    part.extra[0][step] = encodeNote(46 + track * 7 + step % 5, 111, 192, 100);
+    part.offsets[1][step] = step % 4;
   }
 }
 for (let lane = 0; lane < 6; lane++) {
@@ -131,3 +137,38 @@ await app.onMessage({ type: 'app', command: 'transport', playing: true });
 await app.onMessage({ type: 'app', command: 'gen-drums', id: 16, style: 0, hit: 73, groove: 70, variation: 40 });
 assert.equal(frames.at(-1).drums, null);
 console.log('Studio generated 16 distinct editable drum patterns and rejected generation during playback.');
+
+await app.onMessage({ type: 'app', command: 'transport', playing: false });
+await app.onMessage({ type: 'app', command: 'project', project: structuredClone(validateProject(frames[0].project)) });
+await app.onMessage({ type: 'app', command: 'record-start', track: 0, bars: 5, countIn: 0, unquantized: 1, replace: 0 });
+assert.equal(frames.at(-1).state, 6);
+render(10);
+for (const pitch of [60, 64])
+  await app.onMessage({ type: 'app', command: 'record-note', pitch, velocity: 100 });
+render(10);
+for (const pitch of [60, 64])
+  await app.onMessage({ type: 'app', command: 'record-note', pitch, velocity: 0 });
+render(10);
+await app.onMessage({ type: 'app', command: 'record-status' });
+assert.equal(frames.at(-1).state, 5);
+await app.onMessage({ type: 'app', command: 'record-stop' });
+assert.equal(frames.at(-1).state, 0);
+await app.onMessage({ type: 'app', command: 'transport', playing: false });
+await app.onMessage({ type: 'app', command: 'read-take' });
+const take = validateProject(frames.at(-1).project);
+assert.equal(take.tracks[0].mix, withPatternLength(frames[0].project.tracks[0].mix, 512));
+assert.equal(take.tracks[0].steps[0] & 127, 60);
+assert.equal(take.tracks[0].extra[0][0] & 127, 64);
+assert.ok((take.tracks[0].steps[0] >>> 16 & 255) > 1);
+console.log('Studio recorded and finalized two simultaneous notes in a 32-bar take.');
+
+await app.onMessage({ type: 'app', command: 'transport', playing: true });
+render(20);
+await app.onMessage({ type: 'app', command: 'record-start', track: 1, quick: true, unquantized: 0 });
+render(4);
+await app.onMessage({ type: 'app', command: 'record-status' });
+assert.equal(frames.at(-1).state, 5);
+await app.onMessage({ type: 'app', command: 'record-stop' });
+assert.equal(frames.at(-1).state, 0);
+assert.equal(frames.at(-1).playing, true);
+console.log('Studio Quick REC started during playback and stopping the take preserved transport.');

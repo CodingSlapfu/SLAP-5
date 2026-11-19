@@ -1,6 +1,10 @@
 /* SPDX-License-Identifier: MPL-2.0 */
 /* Copyright (C) 2026 Ziao */
 export const within = (v, min, max) => Number.isInteger(v) && v >= min && v <= max;
+export const maxSteps = 512;
+export const patternLength = mix => (mix & 255) | (mix >>> 17 & 768);
+export const withPatternLength = (mix, length) =>
+  ((mix & ~0x060000ff) | (length & 255) | ((length & 768) << 17)) >>> 0;
 export const drumNotes = [36, 38, 42, 37, 39, 49];
 export const eventLanes = track => [track.steps, ...track.extra];
 export function encodeNote(pitch, velocity, gate, probability, timing = 0) {
@@ -21,16 +25,18 @@ const defaultFx = [0, fxWord(0,0,0,22), fxWord(0,0,1,102), fxWord(0,48,68,52), 1
   fxWord(0,48,56,65), fxWord(0,2,52,87), fxWord(0,60,52,94), fxWord(0,54,108,39)];
 
 export function validateProject(project) {
-  if (![1, 2].includes(project?.version) || !within(project.bpm, 40, 240) || !within(project.swing, 0, 70) ||
+  if (![1, 2, 3].includes(project?.version) || !within(project.bpm, 40, 240) || !within(project.swing, 0, 70) ||
       !Array.isArray(project.tracks) || project.tracks.length !== 5) throw new Error('Invalid SLAP-5 project header.');
   if (project.metronome !== undefined && !within(project.metronome, 0, 2))
     throw new Error('Invalid metronome setting.');
   const legacy = project.version === 1;
+  const extended = project.version === 3;
+  const bankSize = extended ? maxSteps : 64;
   if (!legacy && (!within(project.drumFilters, 0, 0x3f3f) || (project.drumFilters & ~0x3f3f)))
     throw new Error('Invalid drum filters.');
   for (const [i, track] of project.tracks.entries()) {
-    if (!track || !within(track.mix, 0, 0x1ffffff) || !within(track.mix & 255, 1, 64) ||
-        !within(track.patch, 0, i === 4 ? 31 : 127) || !Array.isArray(track.steps) || track.steps.length !== 64) {
+    if (!track || !within(track.mix, 0, extended ? 0x7ffffff : 0x1ffffff) || !within(patternLength(track.mix), 1, bankSize) ||
+        !within(track.patch, 0, i === 4 ? 31 : 127) || !Array.isArray(track.steps) || track.steps.length !== bankSize) {
       throw new Error('Invalid track data.');
     }
     if (track.fx !== undefined && (!Array.isArray(track.fx) || track.fx.length !== fxPanels.length ||
@@ -39,20 +45,33 @@ export function validateProject(project) {
       throw new Error('Invalid track effects.');
     if (!legacy && (!Array.isArray(track.extra) || track.extra.length !== (i === 4 ? 6 : 1)))
       throw new Error('Invalid sequencer lane count.');
+    if (extended && (!Array.isArray(track.offsets) || track.offsets.length !== track.extra.length + 1 ||
+        track.offsets.some(offsets => !Array.isArray(offsets) || offsets.length !== bankSize ||
+          offsets.some(offset => !within(offset, 0, 15))))) throw new Error('Invalid sixteenth-step offsets.');
     for (const [lane, events] of [track.steps, ...(legacy ? [] : track.extra)].entries()) {
-      if (!Array.isArray(events) || events.length !== 64) throw new Error('Invalid sequencer lane.');
-      for (const word of events) {
-        if (word === 0) continue;
+      if (!Array.isArray(events) || events.length !== bankSize) throw new Error('Invalid sequencer lane.');
+      for (const [index, word] of events.entries()) {
+        if (word === 0) {
+          if (extended && track.offsets[lane][index]) throw new Error('Offset without a note.');
+          continue;
+        }
         const note = decodeNote(word);
         if (!within(word, 0, 0xffffffff) || !(word & 128) ||
-            (legacy && note.timing) || !note.velocity || !note.gate || note.probability > 100 ||
+            ((legacy || extended) && note.timing) || !note.velocity || !note.gate || note.probability > 100 ||
             (i === 4 && lane && note.pitch !== drumNotes[lane - 1]))
           throw new Error('Invalid note data.');
       }
     }
   }
-  return { ...project, version: 2, drumFilters: legacy ? 0 : project.drumFilters,
+  if (extended) return { ...project, metronome: project.metronome ?? 0,
+    tracks: project.tracks.map(track => ({ ...track, fx: track.fx ?? [...defaultFx] })) };
+  return { ...project, version: 3, drumFilters: legacy ? 0 : project.drumFilters,
     metronome: project.metronome ?? 0,
-    tracks: project.tracks.map((track, i) => ({ ...track, fx: track.fx ?? [...defaultFx],
-      extra: legacy ? Array.from({ length: i === 4 ? 6 : 1 }, () => Array(64).fill(0)) : track.extra })) };
+    tracks: project.tracks.map((track, i) => {
+      const pad = lane => [...lane, ...Array(maxSteps - lane.length).fill(0)];
+      const extra = legacy ? Array.from({ length: i === 4 ? 6 : 1 }, () => Array(64).fill(0)) : track.extra;
+      const lanes = [track.steps, ...extra].map(pad);
+      return { ...track, fx: track.fx ?? [...defaultFx], steps: lanes[0].map(word => word & 0x7fff7fff), extra: lanes.slice(1).map(lane => lane.map(word => word & 0x7fff7fff)),
+        offsets: lanes.map(lane => lane.map(word => decodeNote(word).timing * 2)) };
+    }) };
 }

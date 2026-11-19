@@ -280,9 +280,14 @@ def generate():
     """generated headers: the fonts, the screen reader's words link (fm1-reader)"""
     GEN.mkdir(parents=True, exist_ok=True)
     tools = SRC / "tools"
+    font_env = {}
+    if CONF.get("font_set") == "slapblock":
+        font_dir = GEN / "fonts"
+        subprocess.run([sys.executable, str(APP / "tools/slap_block.py"), str(font_dir)], check=True)
+        font_env = {"X0X_FONTSET": "slapblock", "X0X_FONT_DIRS": str(font_dir)}
     for c in [[tools / "gen_font.py", GEN / "felucca_font.h"],
               [tools / "gen_words.py", APP / CONF.get("words", "words.tsv"), APP / "web" / "words", GEN / "ann_words.h"]]:
-        env = {**os.environ, "FM1_FONT_FULL": " ".join(CONF.get("font_full", []))}
+        env = {**os.environ, **font_env, "FM1_FONT_FULL": " ".join(CONF.get("font_full", []))}
         r = subprocess.run([sys.executable, *map(str, c)], capture_output=True, text=True, env=env)
         sys.stdout.write(r.stdout)
         if r.returncode:
