@@ -39,6 +39,7 @@ static uint32_t until_step, step_duration, step_number, running_epoch;
 static volatile uint32_t step_progress;
 static uint32_t startup_sample;
 static float startup_phase;
+#define ARP_DEFAULT (2u << 8 | 1u << 16 | 64u << 24)
 static volatile uint32_t arp_setup[DRUMS];
 static volatile uint8_t arp_history[16];
 static volatile uint32_t arp_cursor;
@@ -78,7 +79,7 @@ void app_init(void)
     startup_phase = 0.0f;
     slap_fx_init();
     for (unsigned t = 0; t < DRUMS; ++t)
-        arp_setup[t] = 2u << 8 | 1u << 16 | 64u << 24;
+        arp_setup[t] = ARP_DEFAULT;
     arp_cursor = arp_wait = arp_pulse = 0;
     for (unsigned i = 0; i < 16; ++i) arp_history[i] = 255;
     for (unsigned t = 0; t < DRUMS; ++t) tracks[t].lfo = 31u << 8;
@@ -510,6 +511,7 @@ typedef struct {
     uint32_t extra[DRUMS][STEPS];
     uint8_t drums[DRUM_LANES][STEPS][3];
     uint32_t filters;
+    uint32_t arp[DRUMS];
 } SongRecord;
 
 typedef char SongRecordFitsFlash[(sizeof(SongRecord) <= 3840) ? 1 : -1];
@@ -527,9 +529,11 @@ static int read_song(unsigned slot)
 {
     int bytes = plat_store_load(OBJ_SONG1 + slot, &song_io, sizeof(song_io));
     int v2bytes = (int)((uint8_t *)&song_io.extra - (uint8_t *)&song_io);
+    int v3bytes = (int)((uint8_t *)&song_io.arp - (uint8_t *)&song_io);
     if (song_io.magic != SONG_MAGIC ||
         !((song_io.version == 2 && bytes == v2bytes) ||
-          (song_io.version == 3 && bytes == (int)sizeof(song_io))) ||
+          (song_io.version == 3 && bytes == v3bytes) ||
+          (song_io.version == 4 && bytes == (int)sizeof(song_io))) ||
         song_io.bpm < 40 || song_io.bpm > 240 || song_io.swing > 70) return 0;
     for (unsigned t = 0; t < TRACKS; ++t) {
         uint32_t mix = song_io.track[t].mix;
@@ -544,7 +548,7 @@ static int read_song(unsigned slot)
         for (unsigned i = 0; i < SLAP_FX_PAGES; ++i)
             if (!slap_fx_config_valid(i, song_io.track[t].fx[i])) return 0;
     }
-    if (song_io.version == 3) {
+    if (song_io.version >= 3) {
         if (song_io.filters & ~0x3f3fu) return 0;
         for (unsigned t = 0; t < DRUMS; ++t)
             for (unsigned i = 0; i < STEPS; ++i)
@@ -555,6 +559,14 @@ static int read_song(unsigned slot)
                 uint32_t data = (uint32_t)d[0] << 8 | (uint32_t)d[1] << 16 | (uint32_t)d[2] << 24;
                 if (data && !step_valid(data | ACTIVE | lane_pitch[lane])) return 0;
             }
+        }
+    }
+    if (song_io.version == 4) {
+        for (unsigned t = 0; t < DRUMS; ++t) {
+            uint32_t a = song_io.arp[t];
+            unsigned octaves = (a >> 16) & 255u;
+            if ((a & 255u) > 6u || ((a >> 8) & 255u) > 5u ||
+                octaves < 1u || octaves > 4u || (a >> 24) > 100u) return 0;
         }
     }
     return 1;
@@ -578,16 +590,18 @@ static void load_song(unsigned slot)
     }
     for (unsigned t = 0; t < DRUMS; ++t)
         for (unsigned i = 0; i < STEPS; ++i)
-            extra_note[t][i] = song_io.version == 3 ? song_io.extra[t][i] : 0u;
+            extra_note[t][i] = song_io.version >= 3 ? song_io.extra[t][i] : 0u;
     for (unsigned lane = 0; lane < DRUM_LANES; ++lane) {
         for (unsigned i = 0; i < STEPS; ++i) {
             const uint8_t *d = song_io.drums[lane][i];
-            uint32_t data = song_io.version == 3 ?
+            uint32_t data = song_io.version >= 3 ?
                 (uint32_t)d[0] << 8 | (uint32_t)d[1] << 16 | (uint32_t)d[2] << 24 : 0;
             drum_lane[lane][i] = data ? data | ACTIVE | lane_pitch[lane] : 0;
         }
     }
-    drum_filters = song_io.version == 3 ? song_io.filters : 0;
+    drum_filters = song_io.version >= 3 ? song_io.filters : 0;
+    for (unsigned t = 0; t < DRUMS; ++t)
+        arp_setup[t] = song_io.version == 4 ? song_io.arp[t] : ARP_DEFAULT;
     slap_ui.step = 0;
     ++sequence_epoch;
     slap_ui.notice = "LOADED";
@@ -596,7 +610,7 @@ static void load_song(unsigned slot)
 static void write_song(unsigned slot)
 {
     song_io.magic = SONG_MAGIC;
-    song_io.version = 3;
+    song_io.version = 4;
     song_io.bpm = tempo;
     song_io.swing = swing;
     for (unsigned t = 0; t < TRACKS; ++t) {
@@ -620,6 +634,7 @@ static void write_song(unsigned slot)
         }
     }
     song_io.filters = drum_filters;
+    for (unsigned t = 0; t < DRUMS; ++t) song_io.arp[t] = arp_setup[t];
     int result = plat_store_save(OBJ_SONG1 + slot, &song_io, sizeof(song_io));
     slap_ui.notice = result == 0 && read_song(slot) ? "SAVED" : "SAVE FAILED";
 }
@@ -1080,6 +1095,7 @@ int app_expect(const char *name, int *result)
     else if (name_matches(name, "events")) *result = (int)scheduled_events;
     else if (name_matches(name, "step")) *result = (int)positions;
     else if (name_matches(name, "arp_events")) *result = (int)arp_cursor;
+    else if (name_matches(name, "arp_mode")) *result = (int)(arp_setup[0] & 255u);
     else if (name_matches(name, "arp_note")) *result = (int)arp_history[(arp_cursor - 1u) & 15u];
     else if (name_matches(name, "slot")) *result = slap_ui.slot + 1;
     else if (name_matches(name, "fx_page")) *result = slap_ui.fx_page + 1;

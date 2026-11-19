@@ -17,3 +17,15 @@ key 7 up
 key 11 up
 wait 200
 expect arp_events 3
+tap SAVE
+key 0 down
+wait 4100
+key 0 up
+expect store_writes 1
+tap HOME
+tap ARP
+turn K1 -1
+expect arp_mode 0
+tap SAVE
+tap SEL
+expect arp_mode 1
