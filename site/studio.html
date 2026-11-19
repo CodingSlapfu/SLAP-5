@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SLAP STUDIO</title>
+  <link rel="stylesheet" href="studio.css">
+</head>
+<body>
+  <header>
+    <a class="brand" href="studio.html">SLAP<span> STUDIO</span></a>
+    <a href="emulator/">FM-1 Emulator</a>
+  </header>
+  <main>
+    <section aria-label="Transport" class="toolbar">
+      <button id="start">Enable audio</button>
+      <button id="play" disabled>Play</button>
+      <label>BPM<input id="bpm" type="number" min="40" max="240" value="112"></label>
+      <label>Swing<input id="swing" type="number" min="0" max="70" value="0"></label>
+      <button id="undo" disabled>Undo</button>
+      <button id="redo" disabled>Redo</button>
+      <button id="export" disabled>Export</button>
+      <label class="import">Import<input id="import" type="file" accept=".json,application/json" disabled></label>
+    </section>
+    <nav id="tracks" aria-label="Tracks"></nav>
+    <section class="editor" aria-label="Pattern editor">
+      <div class="editor-head">
+        <div><p id="track-number"></p><h1 id="title">Piano roll</h1></div>
+        <div class="settings">
+          <label>Patch<select id="patch" aria-label="Factory patch"></select></label>
+          <label>Steps<input id="length" type="number" min="1" max="64"></label>
+          <label>Pan<input id="pan" type="number" min="0" max="255"></label>
+          <label>Level<input id="level" type="number" min="0" max="255"></label>
+          <label>Mute<input id="mute" type="checkbox"></label>
+        </div>
+      </div>
+      <p id="hint">Enable audio to load the FM-1 sequencer and factory patches.</p>
+      <div id="view" tabindex="0" aria-label="Step grid"><canvas id="roll"></canvas></div>
+      <div class="inspector">
+        <output id="position">Select a step</output>
+        <label>Velocity<input id="velocity" type="number" min="1" max="127" disabled></label>
+        <label>Gate<input id="gate" type="number" min="1" max="255" disabled></label>
+        <label>Hit %<input id="prob" type="number" min="0" max="100" disabled></label>
+        <button id="clear" disabled>Delete note</button>
+      </div>
+    </section>
+    <p id="status" role="status" aria-live="polite"></p>
+  </main>
+  <script type="module" src="studio.js"></script>
+</body>
+</html>

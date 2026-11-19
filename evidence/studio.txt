@@ -1,0 +1,1 @@
+The Playwright test is in site/tests/studio.cjs. Chromium exited before navigation because process_singleton_posix.cc could not create its socket (EPERM). The in-process Node AudioWorklet test verified compiled project round-trip, validation and patch audition. Browser interaction and hardware connection remain unverified.

@@ -1,0 +1,14 @@
+  ok patch == 67
+  ok page == 3
+  ok patch == 64
+  ok page == 4
+  ok page == 5
+  ok fx_page == 1
+  ok fx_k1 == 40
+  ok fx_page == 6
+  ok fx_k1 == 40
+  ok fx_page == 9
+  ok page == 0
+  ok page == 6
+  ok page == 0
+host: 5020 ms simulated, 630 blits, render 0.3% of real time (host CPU)

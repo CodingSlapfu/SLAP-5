@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SLAP FLASH</title>
+  <link rel="stylesheet" href="studio.css">
+</head>
+<body>
+  <header><a class="brand" href="./">SLAP<span> FLASH</span></a><a href="studio.html">SLAP STUDIO</a></header>
+  <main>
+    <h1>FM-1 firmware installer</h1>
+    <p class="intro">No SLAP-5 TESTING release is available. Device detection is available over USB in a browser with Web MIDI SysEx support.</p>
+    <div class="toolbar">
+      <button id="connect">Detect FM-1</button>
+      <p id="result" role="status"></p>
+    </div>
+    <section class="editor copy">
+      <h2>Before installing a future release</h2>
+      <p>Check the release’s supported bootloader and flash revision, save a copy of your current firmware and projects, and keep the manufacturer’s recovery instructions on hand.</p>
+      <p>SLAP FLASH uses a firmware identity reply to detect an FM-1. A reply alone does not confirm flash compatibility.</p>
+    </section>
+  </main>
+  <script type="module" src="flash.js"></script>
+</body>
+</html>

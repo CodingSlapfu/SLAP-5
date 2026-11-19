@@ -1,43 +1,53 @@
-# SLAP-5 development checkpoint
+# SLAP-5
 
-Copyright (C) 2026 Ziao.
+SLAP-5 is an original five-track groovebox for the M-VAVE FM-1. Copyright (C) 2026 Ziao.
 
-This checkpoint contains a five-track sequencer for the M‑VAVE FM‑1, a host simulator, and an emulator built from the same application source. The native build is a development build. The packager reported SDK reference mismatches and physical compatibility is unverified. Keep this checkpoint off the device.
+**Development source.** Keep the current package off physical hardware. SDK and package integrity checks pass. Physical timing, flash compatibility and update recovery remain unverified, and the full TESTING release has additional feature work.
 
 ## Controls
 
-| Control | HOME | SEQ |
-| --- | --- | --- |
-| SELECT | Select track 1–5 | Select step |
-| ALGO | Set BPM | Set BPM |
-| Knob 1 | Pan | MIDI pitch |
-| Knob 2 | Pattern length, 1–64 steps | Velocity |
-| Knob 3 | Level | Note gate |
-| Knob 4 | Swing | Hit probability |
-| Keys | Audition the selected track | Insert or toggle a note in the selected step |
-| PLAY | Start or stop the sequencer | Start or stop the sequencer |
+| Control | Function |
+| --- | --- |
+| HOME | Return to the track sequencer. Press again to open the nine visualizers. |
+| SELECT | Choose a track on HOME, a step in SEQ, a patch in EDIT, a page in FX or a slot in SAVE. |
+| ALGO | Set BPM. |
+| PRESET | Select one of 128 factory patches for melodic tracks, or one of four drum kits on track 5. |
+| HOME knobs | Pan, steps (1–64), level, swing. |
+| SEQ knobs | Pitch, velocity, note gate, hit probability. Press a key to insert or toggle the current note. |
+| FX | Main, filter, slicer, insert, processor, reverb, tempo delay, chorus and drive. |
+| SEL | Open harmony on HOME for a melodic track. Set key, scale, chords and strum. |
+| ENV / LFO | Edit ADSR or pitch LFO on a melodic track. |
+| SAVE | While stopped, hold the selected white key for four seconds to save. Press SEL to load. |
+| PLAY / OCT± | Transport and keyboard octave. |
 
-HOME returns to the main sequencer. GLO opens the global view, where SEL toggles mute for the selected track. OCT− and OCT+ transpose the keyboard. The four pitched tracks have fixed voices at this checkpoint. Track 5 has a synthesized drum voice. A demo pattern is loaded at boot and edits are held in memory. USB MIDI channels 1–5 address the five tracks.
+USB MIDI channels 1–5 address the five tracks. The groove uses one note event per track per step, and the harmony engine can spread a chord across voices. The display uses SLAP BLOCK lettering on the logo. The original opening animation is visual.
 
 ## Build and verify
 
-From the source root:
+The official repository's original source checkpoint is [9588bb2](https://github.com/CodingSlapfu/SLAP-5/commit/9588bb2d672ab4ee4d7e38e60d272be576d32d84). Its source tree matches the recovered local checkpoint at a3ceb2002d74aab16422d8c4ccccd73114b21966. The fm1-base and felucca-bsp licenses remain in the vendor tree. Board support came from the local AQUORA integration at d2c5087. AQUORA and KIRA-9 were used as read-only references.
 
 ```sh
 python3 vendor/fm1-base/tools/build.py device --host
-device/build/host/slap-5_host device/tests/groovebox.txt device/build/host
-python3 vendor/fm1-base/tools/build.py device --web
+for test in groovebox pages storage; do
+    device/build/host/slap-5_host "device/tests/$test.txt" device/build/host
+done
+site/build.sh
 node device/tests/emulator.mjs
+python3 -m http.server 8764 --directory device/build/studio
 ```
 
-The web build requires Emscripten on PATH. To open it locally, run `python3 -m http.server 8000 --directory device/build/emu` and open `http://localhost:8000`. Start the emulator to enable audio, then press PLAY on the panel.
+The site build requires Emscripten on PATH. Use `http://localhost:8764` to open the site, SLAP STUDIO, and the browser instrument emulator. SLAP STUDIO shares the C DSP through the same WASM AudioWorklet and provides track editing, audition, undo/redo and JSON import/export. The SLAP FLASH development page uses the FM-1 MIDI identity handshake and has no write button.
 
-The native development build requires the JieLi toolchain (`JIELI_TOOLCHAIN`, the directory containing `pi32v2` and `common`) and an AC79 SDK checkout (`AC79_SDK`). Invoke `python3 vendor/fm1-base/tools/build.py device`. The tested toolchain bundle was jieli-linux-toolchains-20260730.1. The SDK assets were the three files identified in `evidence/sdk.sha256` and used by the previous AQUORA workspace. The packager expected different hashes for `uboot.boot` and `cfg/eq_cfg_hw.bin`. SDK assets and the resulting update package are excluded from this checkpoint.
+An optional Chromium test is available at `site/tests/studio.cjs`. Run it with Playwright installed and the local site server running. This environment returned EPERM when Chromium tried to open its process-singleton socket. The compiled AudioWorklet and project protocol were exercised using Node. Physical USB/Web MIDI interactions remain untested.
 
-## Provenance and remaining work
+For the native development build, set `JIELI_TOOLCHAIN` to the JieLi Linux toolchain (tested with the 20260730.1 bundle) and `AC79_SDK` to the SDK checkout at d179b4484759423312073f5fbb232501aa491047. Run `device/build-native.sh`. This checks the three pinned SDK hashes before invoking the native build. Provenance and both sets of SHA-256 values are in [SDK pinning](evidence/sdk-pinning.md). See `evidence/` for the image sizes, package checks, software tests and SHA-256 hashes.
 
-The AQUORA v0.7.38 remote source ref was verified at `238a57be426805bbd9292b956315d54a68095bc0`. The board support snapshot came from the local AQUORA integration at `d2c5087`. Its fm1-base and felucca-bsp licenses and notices are vendored. Two AQUORA-specific hooks were removed from the local copy of the board support code. The SLAP-5 app and demo pattern are separate implementations.
+## Remaining TESTING release work
 
-The host and WebAssembly logs cover basic transport, track selection, pattern length, step entry, pitch edits and audible playback. The native build log records image size and static checks. On-device timing, compatibility, updates, installation and rollback still require validation.
+- Expand the sequencer to independent multi-hit drum lanes and polyphonic steps, ties, microtiming, recording and arrangement. Finish individual drum mute/solo and pattern variation.
+- Add LIVE FX performance controls, arpeggiation, Nature beds, comprehensive GLO diagnostics, Bluetooth and clock sync. Complete patch favorites, categories, parameter editing and the remaining studio device transfer and editing workflows.
+- Complete the startup sound and the scrolling sequencer. Listen through the synth and patch library, tune the drum kits and effects, and profile the heaviest DSP and visuals on an FM-1. Implement or demonstrate the dual-core strategy and safe fallback.
+- Verify the storage sectors, update compatibility, bootloader retention and recovery on supported devices. Complete SLAP FLASH transfer, compatibility and rollback paths, and browser integration testing.
+- Publish the TESTING release and complete HTTPS site together once the build passes the release gates. Publish version, identity, checksums, release and source links, and tested installation and recovery instructions.
 
-Remaining scope includes the full synthesis and patch library, advanced melodic and drum sequencing, routing and effects, recording, persistence, wireless MIDI and sync, the custom font and boot animation, visualizers, on-device diagnostics, and SLAP STUDIO, SLAP FLASH and the public site. GitHub returned 404 for CodingSlapfu/SLAP-5 and the repository creation attempt could not authenticate.
+The SDK check verifies the reference file set only. Native static checks and host timing cannot establish physical-device acceptance.

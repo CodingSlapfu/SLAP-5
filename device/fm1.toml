@@ -5,3 +5,5 @@ usb_product = "SLAP-5 FM-1"
 ble = false
 repo = "https://github.com/CodingSlapfu/SLAP-5"
 licence = "MPL-2.0"
+include = ["dsp"]
+o2 = ["dsp/synthesis.c", "dsp/patches.c", "dsp/effects.c"]

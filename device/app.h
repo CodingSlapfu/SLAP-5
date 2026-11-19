@@ -9,8 +9,10 @@
 #define APP_BLOCK 256u
 #define APP_CANVAS_PX (240u*48u)
 #define APP_BLE_AT_BOOT 0
-enum { OBJ_PANEL, OBJ_NOBJ };
-#define APP_STORE_MAP {0xDC000u}
+enum { OBJ_PANEL, OBJ_SONG1, OBJ_SONG8 = OBJ_SONG1 + 7, OBJ_NOBJ };
+/* Eight A/B pairs below the OTA staging window and above AQUORA's bank area. */
+#define APP_STORE_MAP {0xDC000u, 0xC0000u, 0xC2000u, 0xC4000u, 0xC6000u, \
+    0xC8000u, 0xCA000u, 0xCC000u, 0xCE000u}
 
 void app_init(void);
 void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12);
