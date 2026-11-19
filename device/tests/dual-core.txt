@@ -1,0 +1,15 @@
+wait 6100
+tap SEQ
+key 7 down
+key 7 up
+tap HOME
+turn SELECT 4
+tap SEQ
+key 0 down
+key 0 up
+tap HOME
+wav dual-core.wav
+tap PLAY
+wait 3500
+wavstop
+expect events >1

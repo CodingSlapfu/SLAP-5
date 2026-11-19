@@ -5,7 +5,7 @@
 #include "effects.h"
 
 enum { TRACKS = 5, STEPS = 64, VOICES = 16, RATE = 44100 };
-enum { HOME, SEQ, GLOBAL, PATCH, ENV, FX, VISUAL, SAVE, HARMONY, LFO, ARP, MIXER, RECORD };
+enum { HOME, SEQ, GLOBAL, PATCH, ENV, FX, VISUAL, SAVE, HARMONY, LFO, ARP, MIXER, RECORD, GEN_DRUMS };
 enum { NOTES = 0x7f, ACTIVE = 0x80, DRUMS = 4, DRUM_LANES = 6 };
 
 typedef struct {
@@ -18,7 +18,7 @@ typedef struct {
     float phase, inc, env, velocity, fall, bend;
     float attack, decay, sustain, release;
     float lfo_phase, lfo_inc, lfo_fade, lfo_gain, lfo_hold;
-    uint32_t delay;
+    uint32_t delay, rng;
     uint8_t lfo_wave, origin, kit, drum_family;
     uint32_t remaining, age;
     uint8_t track, pitch, manual, releasing, struck;
@@ -28,6 +28,10 @@ static Track tracks[TRACKS];
 static volatile uint32_t extra_note[DRUMS][STEPS];
 static volatile uint32_t drum_lane[DRUM_LANES][STEPS];
 static const uint8_t lane_pitch[DRUM_LANES] = {36,38,42,37,39,49};
+#include "drum_patterns.h"
+static unsigned gen_style, gen_hit = 76, gen_groove = 35, gen_var = 28;
+static unsigned gen_enabled = 1, gen_confirm, gen_count;
+static uint32_t gen_seed = 0xd14a1175u;
 static volatile uint32_t drum_filters;
 static volatile uint32_t scheduled_events;
 static volatile uint32_t recording, recorded_events;
@@ -59,6 +63,9 @@ static volatile uint32_t arp_cursor;
 static uint32_t arp_pulse, arp_wait, arp_last_track = TRACKS, arp_stamp, arp_arrival[NKEYS];
 static float master_gain, energy_smooth[TRACKS];
 static volatile uint32_t track_energy[TRACKS];
+#if FM1B_CPU2 && defined(PLAT_HOST) && !defined(PLAT_WEB)
+static int host_discard_worker_result;
+#endif
 enum { SPECTRUM_BANDS = 7, VISUAL_COUNT = 8 };
 static volatile float visual_rms[2], visual_peak[2], visual_band[SPECTRUM_BANDS];
 static float meter_power[2], analysis_lp[SPECTRUM_BANDS - 1], analysis_power[SPECTRUM_BANDS];
@@ -117,6 +124,14 @@ void app_init(void)
     startup_sample = 0;
     startup_phase = 0.0f;
     slap_fx_init();
+#if FM1B_CPU2 && !defined(PLAT_WEB)
+#ifdef PLAT_HOST
+    host_discard_worker_result = getenv("SLAP_TEST_DISCARD_WORKER") != 0;
+    plat_cpu2_set(getenv("SLAP_TEST_SINGLE_CORE") == 0);
+#else
+    plat_cpu2_set(1);
+#endif
+#endif
     for (unsigned t = 0; t < DRUMS; ++t)
         arp_setup[t] = ARP_DEFAULT;
     arp_cursor = arp_wait = arp_pulse = 0;
@@ -137,13 +152,17 @@ static float slap_sine(float phase) { return fm_sinf(phase * 6.2831853f); }
 
 #include "modulation.h"
 
-static uint32_t random_word(void)
+static uint32_t next_random(uint32_t *state)
 {
-    noise ^= noise << 13;
-    noise ^= noise >> 17;
-    noise ^= noise << 5;
-    return noise;
+    uint32_t value = *state;
+    value ^= value << 13;
+    value ^= value >> 17;
+    value ^= value << 5;
+    *state = value;
+    return value;
 }
+
+static uint32_t random_word(void) { return next_random(&noise); }
 
 static const char *const drum_kits[] = {"STUDIO KIT","BRUSH KIT","FM KIT","INDUSTRIAL"};
 
@@ -201,6 +220,7 @@ static void trigger_voice(unsigned track, unsigned pitch, unsigned velocity, uin
         slap_synth_start(&synths[voice - voices], patch->engine, pitch,
                          patch->color, patch->motion, random_word());
     } else {
+        voice->rng = random_word();
         voice->kit = (uint8_t)tracks[track].patch;
         voice->drum_family = (uint8_t)drum_family(pitch);
         voice->attack = 0.013f;
@@ -424,7 +444,7 @@ static void next_step(const uint32_t *mix)
     }
 }
 
-static float render_voice(Voice *v)
+static float render_voice(Voice *v, SlapSynth *s)
 {
     if (v->delay) {
         if (v->releasing) v->age = 0;
@@ -439,7 +459,6 @@ static float render_voice(Voice *v)
     if (v->releasing && v->env < 0.0001f) { v->age = 0; return 0.0f; }
 
     if (v->track < DRUMS) {
-        SlapSynth *s = &synths[v - voices];
         if (v->lfo_wave) {
             v->lfo_gain = fm_minf(1.0f, v->lfo_gain + v->lfo_fade);
             v->lfo_phase += v->lfo_inc;
@@ -458,7 +477,7 @@ static float render_voice(Voice *v)
     {
         static const float tone[] = {0.0045f, 0.0028f, 0.0052f, 0.0072f};
         static const float pitch_mul[] = {1.0f, 0.81f, 1.33f, 1.85f};
-        float hiss = (float)(random_word() & 65535u) / 32768.0f - 1.0f;
+        float hiss = (float)(next_random(&v->rng) & 65535u) / 32768.0f - 1.0f;
         unsigned family = v->drum_family;
         unsigned kit = v->kit;
         if (family == 0) {
@@ -491,6 +510,90 @@ static float render_voice(Voice *v)
     if (v->fall < 0.00005f) { v->age = 0; return 0.0f; }
     return wave * v->env * v->velocity * v->fall * 0.15f;
 }
+
+#if FM1B_CPU2 && !defined(PLAT_WEB)
+enum { VOICE_BATCH = 64, MIN_VOICE_BATCH = 32 };
+static struct {
+    Voice voice[VOICES];
+    unsigned slot[VOICES];
+    unsigned count, muted;
+    float output[VOICE_BATCH];
+    uint32_t ticks;
+} drum_worker __attribute__((aligned(32)));
+static float voice_bus[VOICE_BATCH][TRACKS];
+static volatile uint32_t worker_jobs, worker_fallbacks, worker_ticks, worker_wait_ticks;
+
+static void render_drum_bus(uint32_t frames)
+{
+    if (frames > VOICE_BATCH) return;
+    uint32_t started = plat_ticks24();
+    for (unsigned i = 0; i < frames; ++i) {
+        float dry = 0.0f;
+        for (unsigned j = 0; j < drum_worker.count; ++j) {
+            Voice *voice = &drum_worker.voice[j];
+            if (!voice->age) continue;
+            float sample = render_voice(voice, 0);
+            if (!(drum_worker.muted & (1u << voice->drum_family))) dry += sample;
+        }
+        drum_worker.output[i] = dry;
+    }
+    drum_worker.ticks = plat_ticks24() - started;
+}
+
+static unsigned render_voice_batch(unsigned frames, unsigned muted,
+                                   uint32_t callback_start, uint32_t budget)
+{
+    if (frames < MIN_VOICE_BATCH || !plat_cpu2_on() ||
+        plat_ticks24() - callback_start >= budget / 2u) return 0;
+    unsigned melodic = 0;
+    drum_worker.count = 0;
+    drum_worker.muted = muted;
+    for (unsigned j = 0; j < VOICES; ++j) {
+        if (!voices[j].age) continue;
+        if (voices[j].track == DRUMS) {
+            unsigned index = drum_worker.count++;
+            drum_worker.slot[index] = j;
+            drum_worker.voice[index] = voices[j];
+        } else ++melodic;
+    }
+    if (!melodic || !drum_worker.count || !plat_cpu2_run(render_drum_bus, frames)) return 0;
+
+    for (unsigned i = 0; i < frames; ++i) {
+        for (unsigned t = 0; t < DRUMS; ++t) voice_bus[i][t] = 0.0f;
+        for (unsigned j = 0; j < VOICES; ++j) {
+            Voice *voice = &voices[j];
+            if (voice->age && voice->track < DRUMS)
+                voice_bus[i][voice->track] += render_voice(voice, &synths[j]);
+        }
+    }
+
+    uint32_t wait_start = plat_ticks24();
+    int busy;
+    while ((busy = plat_cpu2_busy()) &&
+           plat_ticks24() - wait_start < 60u * 24u &&
+           plat_ticks24() - callback_start < budget * 3u / 4u) {}
+    worker_wait_ticks += plat_ticks24() - wait_start;
+#ifdef PLAT_HOST
+    // Exercise the recovery path after the simulated worker has changed its copy.
+    busy |= host_discard_worker_result;
+#endif
+    if (busy || plat_cpu2_wait() != 0) {
+        plat_cpu2_set(0);
+        ++worker_fallbacks;
+        for (unsigned j = 0; j < drum_worker.count; ++j)
+            drum_worker.voice[j] = voices[drum_worker.slot[j]];
+        render_drum_bus(frames);
+    } else {
+        ++worker_jobs;
+        worker_ticks += drum_worker.ticks;
+    }
+    for (unsigned j = 0; j < drum_worker.count; ++j)
+        voices[drum_worker.slot[j]] = drum_worker.voice[j];
+    for (unsigned i = 0; i < frames; ++i)
+        voice_bus[i][DRUMS] = drum_worker.output[i];
+    return frames;
+}
+#endif
 
 /* Two rising tones with independent smooth envelopes, mixed just above silence. */
 static float startup_sound(void)
@@ -541,15 +644,34 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
     const unsigned analyze = slap_ui.page == VISUAL;
     float meter_sum[2] = {0}, meter_peak[2] = {0};
     float target = master_q12 * (1.0f / 4096.0f);
+#if FM1B_CPU2 && !defined(PLAT_WEB)
+    unsigned batch_start = 0, batch_end = 0, next_batch = 0;
+    uint32_t callback_budget = (24000000u / RATE) * frames;
+#endif
     for (uint32_t i = 0; i < frames; ++i) {
         if (playing && until_step == 0) next_step(mix);
         if (until_step) --until_step;
         arp_render_clock();
         float dry[TRACKS] = {0};
+#if FM1B_CPU2 && !defined(PLAT_WEB)
+        if (i == next_batch) {
+            unsigned amount = frames - i;
+            if (amount > VOICE_BATCH) amount = VOICE_BATCH;
+            if (playing && amount > until_step + 1u) amount = until_step + 1u;
+            // A held arpeggio can create a voice before the next sequencer step.
+            if (old_keys && input_track < DRUMS && (arp_setup[input_track] & 255u)) amount = 0;
+            batch_start = i;
+            batch_end = i + render_voice_batch(amount, muted, audio_started, callback_budget);
+            next_batch = batch_end > i ? batch_end : i + VOICE_BATCH;
+        }
+        if (i < batch_end)
+            for (unsigned t = 0; t < TRACKS; ++t) dry[t] = voice_bus[i - batch_start][t];
+        else
+#endif
         for (unsigned j = 0; j < VOICES; ++j) {
             Voice *v = &voices[j];
             if (!v->age) continue;
-            float sample = render_voice(v);
+            float sample = render_voice(v, &synths[j]);
             if (v->track != DRUMS || !(muted & (1u << v->drum_family)))
                 dry[v->track] += sample;
         }
@@ -823,6 +945,42 @@ static unsigned lane_count(unsigned track)
     return track == DRUMS ? DRUM_LANES + 1u : 2u;
 }
 
+static void generate_drums(void)
+{
+    if (!gen_enabled || playing) return;
+    unsigned occupied = 0;
+    unsigned length = tracks[DRUMS].mix & 255u;
+    for (unsigned step = 0; step < length; ++step)
+        for (unsigned lane = 0; lane < lane_count(DRUMS); ++lane)
+            occupied |= *event_cell(DRUMS, step, lane) & ACTIVE;
+    if (occupied && !gen_confirm) {
+        gen_confirm = 1;
+        return;
+    }
+    gen_confirm = 0;
+    ++gen_count;
+    const struct DrumStyle *style = &drum_style[gen_style];
+    for (unsigned step = 0; step < length; ++step) {
+        unsigned beat = step & 15u;
+        unsigned bit = 1u << beat;
+        unsigned fill = (step / 16u % 4u == 3u) && beat >= 13u;
+        tracks[DRUMS].steps[step] = 0;
+        for (unsigned lane = 0; lane < DRUM_LANES; ++lane) {
+            unsigned anchor = (lane < 2) && (style->lanes[lane] & bit);
+            unsigned chance = lane == 2 ? 30 + gen_hit * 70 / 100 : gen_hit;
+            unsigned hit = anchor || ((style->lanes[lane] & bit) && next_random(&gen_seed) % 100u < chance);
+            unsigned ghost = !hit && lane == 1 && ((style->ghost_snare & bit) || fill)
+                             && next_random(&gen_seed) % 100u < gen_var / 2u;
+            unsigned velocity = ghost ? 48u : lane == 0 ? 112u : lane == 1 ? 99u :
+                64u + (!(beat & 3u) ? 20u : 0u);
+            velocity += next_random(&gen_seed) % (1u + gen_var / 7u);
+            unsigned offset = (beat & 1u) ? (3u * gen_groove + 50u) / 100u : 0u;
+            drum_lane[lane][step] = hit || ghost ?
+                cell_word(lane_pitch[lane], velocity, lane == 5 ? 154u : 105u, 100u) | timing_bits(offset) : 0u;
+        }
+    }
+}
+
 void app_input_only(void)
 {
     uint32_t buttons = plat_buttons(), keys = plat_keys();
@@ -862,7 +1020,15 @@ void app_input_only(void)
         recording ^= 1u;
     if (pressed & (1u << B_HOME))
         slap_ui.page = slap_ui.page == HOME ? VISUAL : HOME;
-    if (pressed & (1u << B_SEQ)) { slap_ui.page = SEQ; slap_ui.lane = 0; }
+    if (pressed & (1u << B_SEQ)) {
+        if (slap_ui.page == SEQ && slap_ui.track == DRUMS) {
+            slap_ui.page = GEN_DRUMS;
+            gen_confirm = 0;
+        } else {
+            slap_ui.page = SEQ;
+            slap_ui.lane = 0;
+        }
+    }
     if (slap_ui.page == SEQ && (buttons & (1u << B_SEL))) {
         if (slap_ui.track == DRUMS && slap_ui.lane &&
             (pressed & ((1u << B_ARP) | (1u << B_REC)))) {
@@ -925,7 +1091,15 @@ void app_input_only(void)
     int knob[4];
     for (unsigned k = 0; k < 4; ++k) knob[k] = plat_enc(EN_K1 + k);
     uint32_t mix = tracks[slap_ui.track].mix;
-    if (slap_ui.page == MIXER) {
+    if (slap_ui.page == GEN_DRUMS) {
+        if (knob[0] || knob[1] || knob[2] || knob[3] || (pressed & (1u << B_ARP))) gen_confirm = 0;
+        gen_style = (unsigned)clamp((int)gen_style + knob[0], 0, sizeof(drum_style) / sizeof(drum_style[0]) - 1);
+        gen_hit = (unsigned)clamp((int)gen_hit + knob[1], 0, 100);
+        gen_groove = (unsigned)clamp((int)gen_groove + knob[2], 0, 100);
+        gen_var = (unsigned)clamp((int)gen_var + knob[3], 0, 100);
+        if (pressed & (1u << B_ARP)) gen_enabled ^= 1u;
+        if (pressed & (1u << B_SEL)) generate_drums();
+    } else if (slap_ui.page == MIXER) {
         unsigned t = (unsigned)slap_ui.track;
         track_setting(t, 16, (unsigned)clamp((int)((mix >> 16) & 255u) + knob[0] * 4, 0, 255));
         track_setting(t, 8, (unsigned)clamp((int)((mix >> 8) & 255u) + knob[1] * 4, 0, 255));
@@ -1029,7 +1203,7 @@ static void decimal(char *out, unsigned value)
 
 static void draw_panel(void)
 {
-    static const char *const page_names[] = {"SLAP-5", "SEQUENCE", "GLOBAL", "PATCH", "ENV", "FX", "VISUAL", "SAVE", "HARMONY", "LFO", "ARP", "MIXER", "RECORD"};
+    static const char *const page_names[] = {"SLAP-5", "SEQUENCE", "GLOBAL", "PATCH", "ENV", "FX", "VISUAL", "SAVE", "HARMONY", "LFO", "ARP", "MIXER", "RECORD", "GEN DRUMS"};
     static const char *const arp_labels[] = {"MODE", "RATE", "OCT", "GATE"};
     static const char *const arp_modes[] = {"OFF","UP","DOWN","UP/DN","RANDOM","CHORD","PLAYED"};
     static const char *const arp_rates[] = {"1/4","1/8","1/16","1/32","1/8T","1/16T"};
@@ -1152,7 +1326,16 @@ static void draw_panel(void)
                 cv_text(x, 16, &FONT_M, number, c);
             }
         } else if (slap_ui.page == GLOBAL) {
+#if FM1B_CPU2 && !defined(PLAT_WEB)
+            cv_text(8, 2, &FONT_XS, "C1 JOBS", c);
+            decimal(number, worker_jobs > 9999 ? 9999 : worker_jobs);
+            cv_text(55, 2, &FONT_XS, number, C_WHITE);
+            cv_text(89, 2, &FONT_XS, "FALLBACKS", c);
+            decimal(number, worker_fallbacks > 9999 ? 9999 : worker_fallbacks);
+            cv_text(157, 2, &FONT_XS, number, C_WHITE);
+#else
             cv_text(8, 2, &FONT_XS, "K1 TEMPO  /  K2 SWING", C_WHITE);
+#endif
             cv_text(8, 20, &FONT_XS, "ACTIVE VOICES", c);
             decimal(number, active_voices);
             cv_text(113, 20, &FONT_XS, number, C_WHITE);
@@ -1237,6 +1420,35 @@ static void draw_panel(void)
             cv_begin(240, 40, background);
             cv_blit(0, y);
         }
+        return;
+    }
+    if (slap_ui.page == GEN_DRUMS) {
+        cv_begin(240, 40, background);
+        cv_text(8, 3, &FONT_M, drum_style[gen_style].name, c);
+        cv_text(8, 27, &FONT_XS, gen_confirm ? "SEL AGAIN TO REPLACE" :
+                playing ? "STOP TO GENERATE" : gen_enabled ? "SEL GENERATE   /   ARP OFF" : "GEN OFF   /   ARP ON", C_WHITE);
+        cv_blit(0, 80);
+        for (unsigned strip = 0; strip < 2; ++strip) {
+            cv_begin(240, 36, background);
+            for (unsigned row = 0; row < 3; ++row)
+                for (unsigned step = 0; step < 16; ++step) {
+                    unsigned at = bank + step;
+                    unsigned hit = at < length && (drum_lane[strip * 3 + row][at] & ACTIVE);
+                    cv_rect(8 + step * 14, row * 11, 12, 8,
+                            hit ? c : RGB(12,54,36));
+                    if (playing && at == play_step) cv_rect(8 + step * 14, row * 11, 2, 8, C_WHITE);
+                }
+            cv_blit(0, 120 + strip * 36);
+        }
+        cv_begin(240, 48, background);
+        static const char *const label[] = {"STYLE", "HIT %", "GROOVE", "VAR %"};
+        unsigned value[] = {gen_style + 1, gen_hit, gen_groove, gen_var};
+        for (unsigned k = 0; k < 4; ++k) {
+            cv_text(8 + k * 58, 2, &FONT_XS, label[k], c);
+            decimal(number, value[k]);
+            cv_text(8 + k * 58, 17, &FONT_M, number, C_WHITE);
+        }
+        cv_blit(0, 192);
         return;
     }
     uint32_t env = tracks[selected].envelope;
@@ -1442,6 +1654,11 @@ int app_expect(const char *name, int *result)
         *result = power > 0.000001f;
     }
     else if (name_matches(name, "metronome")) *result = (int)metronome;
+#if FM1B_CPU2 && !defined(PLAT_WEB)
+    else if (name_matches(name, "worker_jobs")) *result = (int)worker_jobs;
+    else if (name_matches(name, "worker_fallbacks")) *result = (int)worker_fallbacks;
+#endif
+    else if (name_matches(name, "gen_count")) *result = (int)gen_count;
     else if (name_matches(name, "recorded")) *result = (int)recorded_events;
     else if (name_matches(name, "playing")) *result = (int)playing;
     else if (name_matches(name, "lane")) *result = slap_ui.lane;
