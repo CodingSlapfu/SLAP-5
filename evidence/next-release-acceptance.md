@@ -46,3 +46,8 @@ Resume from the commit containing this milestone. Continue with versioned extend
 - **Typography and color — implemented and checked in host output.** Rounded SLAP Block Bold, Regular and Italic ship via generated firmware glyphs and web fonts. Track-colored surfaces, separators and meters applied across native panels. Physical LCD acceptance remains.
 - **Sound and optimization — software measurements passed.** Three-register sweep and gain trims for 12 outliers. All 128 patch signatures and 192 kit/lane auditions passed. Dense effects peaked at 0.2608 full scale. Five-chain benchmark median fell from 1.094 s to 0.979 s. Worker-disabled, worker-enabled and discarded-worker WAVs match. Physical performance and listening remain.
 - **Release — native and automated OTA passed.** Candidate identity `FM-1_75000111`, package SHA-256 `ea1357f1b8a9030d2cea776506c461e7687ab3d0ec5b170ced5ab0d29d92074c`. Publication workflow waits for Chromium to pass against the exact tagged source. Preserve v0.1.7 for rollback.
+
+## Published 0.1.11 TESTING
+
+- **Release and deployment — VERIFIED.** Release source `e8172330923058b7e4f8322d5d9e7a972ee29d0c`. GitHub Chromium run 44619668838 and release run 44619896505 succeeded. GitHub publishes the verified package as v0.1.11-testing. The matching Studio, emulator, fonts and installer deployed to the existing site. The live /flash page and manifest select `FM-1_75000111`; a fresh live firmware download matched the GitHub asset SHA-256.
+- v0.1.7 remains available for rollback. Hardware listening, actual callback timing and physical LCD acceptance remain owner checks. Use a spare bank for V5 recording tests so the prior release can still load the older banks.
