@@ -8,6 +8,7 @@ const install = document.getElementById('install');
 const confirmed = document.getElementById('confirmed');
 const status = document.getElementById('result');
 const availability = document.getElementById('availability');
+const desktop = document.getElementById('desktop-fallback');
 let release, access, checked, running = false;
 
 async function loadRelease() {
@@ -20,6 +21,7 @@ async function loadRelease() {
 }
 
 function updateInstall() {
+  confirmed.disabled = !release || !checked || running;
   install.disabled = !release || !checked || !confirmed.checked || running;
 }
 
@@ -27,7 +29,7 @@ async function identify() {
   const updater = new SlapUpdater(access);
   const port = updater.singlePort();
   const id = await updater.probe(port);
-  if (!id || id.model !== 'FM-1' || id.open) throw new Error('No supported running FM-1 replied.');
+  if (!id || id.model !== 'FM-1') throw new Error('No running FM-1 replied over Web MIDI.');
   return { updater, id, port };
 }
 
@@ -39,11 +41,13 @@ connect.addEventListener('click', async () => {
     if (!navigator.requestMIDIAccess) throw new Error('Use an HTTPS browser with Web MIDI SysEx support.');
     access = await navigator.requestMIDIAccess({ sysex: true });
     const { id, port } = await identify();
-    checked = release?.sources.includes(id.text) ? { identity: id.text, port } : undefined;
-    status.textContent = `Detected ${id.text}. ${checked ? 'Firmware identity accepted.' :
-      release ? 'This firmware identity is outside the release allowlist.' : 'There is no approved package to install.'}`;
+    checked = !id.open && release?.sources.includes(id.text) ? { identity: id.text, port } : undefined;
+    status.textContent = `Detected ${id.text}. ${checked ? 'Browser update approved for this firmware identity.' :
+      'Use M-Flasher for this device.'}`;
+    if (!checked) desktop.focus();
   } catch (error) {
-    status.textContent = error.message;
+    status.textContent = error.message + ' Continue with M-Flasher for USB download mode.';
+    desktop.focus();
   } finally {
     connect.disabled = false;
     updateInstall();
