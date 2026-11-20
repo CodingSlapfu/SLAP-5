@@ -11,7 +11,7 @@ globalThis.fm1App = {
       port.postMessage({
         type: m.command === 'read-take' ? 'studio-take-project' : 'studio-project',
         names: namesFor(128, ex.studio_patch_name),
-        kitNames: namesFor(32, ex.studio_kit_name),
+        kitNames: namesFor(ex.studio_kit_count(), ex.studio_kit_name),
         project: {
           version: 5,
           drumFilters: ex.studio_drum_filters(),

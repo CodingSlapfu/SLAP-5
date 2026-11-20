@@ -78,6 +78,14 @@ void slap_synth_start(SlapSynth *s, int16_t *string, unsigned engine, unsigned p
     s->rng = seed | 1u;
     s->engine = (uint8_t)engine;
     s->string = string;
+    switch (engine) {
+    case 2: case 5: case 18: case 21: case 23: case 24:
+        s->slow_inc = (0.19f + s->motion * 2.2f) * (1.0f / 44100.0f);
+        break;
+    default:
+        s->slow_inc = 0.0f;
+        break;
+    }
     if (engine == 4 || engine == 6) {
         unsigned period = (unsigned)(1.0f / s->inc + 0.25f);
         s->length = period > SLAP_STRING_CAPACITY ? SLAP_STRING_CAPACITY :
@@ -120,9 +128,12 @@ float slap_synth_sample(SlapSynth *s)
     const float p = s->phase, d = s->inc, c = s->color, m = s->motion;
     const float x = s->second, y = s->third, t = s->slow;
     float out = 0.0f;
-    float next_x = x + d, next_y = y + d;
+    float next_x = x, next_y = y;
     const float next_p = p + d;
-    s->slow = wrap(t + (0.19f + m * 2.2f) * (1.0f / 44100.0f));
+    if (s->slow_inc) {
+        float next = t + s->slow_inc;
+        s->slow = next - (float)(int)next;
+    }
 
     switch (s->engine) {
     case 0: { /* Four operators, with blended serial and parallel modulation. */
@@ -144,9 +155,13 @@ float slap_synth_sample(SlapSynth *s)
         break;
     case 2: { /* Interpolate three periodic frames along the timbre axis. */
         float morph = c * 0.76f + m * (0.12f + 0.12f*sine(t));
-        float a = sine(p), b = 0.62f * sine(p) + 0.28f * sine(3*p) + 0.10f * sine(5*p);
-        float z = 0.40f * sine(p) + 0.38f * sine(2*p) + 0.22f * sine(7*p);
-        out = morph < 0.5f ? a + (b-a)*morph*2.0f : b + (z-b)*(2.0f*morph-1.0f);
+        float a = sine(p), b = 0.62f * a + 0.28f * sine(3*p) + 0.10f * sine(5*p);
+        if (morph < 0.5f) {
+            out = a + (b-a)*morph*2.0f;
+        } else {
+            float z = 0.40f * a + 0.38f * sine(2*p) + 0.22f * sine(7*p);
+            out = b + (z-b)*(2.0f*morph-1.0f);
+        }
         break;
     }
     case 3: {
@@ -270,8 +285,9 @@ float slap_synth_sample(SlapSynth *s)
     default: out = sine(p); break;
     }
 
-    s->phase = wrap(next_p);
-    s->second = wrap(next_x);
-    s->third = wrap(next_y);
+    // Voice oscillator advances are nonnegative. Shaping still uses signed wrap.
+    s->phase = next_p - (float)(int)next_p;
+    s->second = next_x - (float)(int)next_x;
+    s->third = next_y - (float)(int)next_y;
     return out;
 }

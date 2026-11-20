@@ -27,6 +27,9 @@ async function test() {
     assert.equal(await page.locator('h1').textContent(), 'Drum sequencer');
     assert.equal(await wet.inputValue(), '0');
     assert.equal(await page.locator('#gen-style option').count(), 16);
+    assert.equal(await page.locator('#patch option').count(), 24);
+    assert.equal(await page.locator('#patch').inputValue(), '32');
+    await page.locator('#patch').selectOption({ label: 'CINEMATIC' });
     assert.ok(await page.locator('#gen-apply').isDisabled());
     const roll = page.locator('#roll');
     const box = await roll.boundingBox();
@@ -47,10 +50,15 @@ async function test() {
     assert.equal(project.metronome, 2);
     assert.equal(project.tracks[0].fx[5] & 255, 71);
     assert.equal(project.tracks[4].fx[5] & 255, 0);
+    assert.equal(project.tracks[4].patch, 55);
+    project.tracks[4].patch = 31;
     assert.equal((project.tracks[4].extra[2][5] >>> 8) & 127, 88);
     await page.locator('#import').setInputFiles({ name: 'song.json', mimeType: 'application/json',
       buffer: Buffer.from(JSON.stringify({ ...project, bpm: 138 })) });
     await page.waitForFunction(() => document.getElementById('bpm').value === '138');
+    assert.equal(await page.locator('#patch').inputValue(), '31');
+    assert.equal(await page.locator('#patch option').count(), 25);
+    assert.match(await page.locator('#patch option:checked').textContent(), /legacy/);
     await page.locator('#play').click();
     page.once('dialog', dialog => dialog.accept());
     await page.locator('#gen-apply').click();

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MPL-2.0 */
 /* Copyright (C) 2026 Ziao */
-import { decodeNote, drumNotes, encodeNote, eventLanes, fxLimit, fxPanels, maxSteps, patternLength, validateProject, withPatternLength, within } from './project.mjs';
+import { decodeNote, drumNotes, encodeNote, eventLanes, fxLimit, fxPanels, legacyDrumKits, maxSteps, patternLength, validateProject, withPatternLength, within } from './project.mjs';
 
 const $ = id => document.getElementById(id);
 const colors = ['#1ce2ff', '#ab70ff', '#ff59b0', '#ffb43a', '#3ef289'];
@@ -17,7 +17,8 @@ const drumRow = pitch => {
 };
 const left = 69, width = 40, top = 27, height = 23;
 let context, worklet, project, stateBefore = [], stateAfter = [];
-let track = 0, step = 0, lane = 0, playing = false, drag, patches = [], drumKits = [], displayedKit = false;
+let track = 0, step = 0, lane = 0, playing = false, drag, patches = [], drumKits = [];
+let displayedKit = false, displayedLegacy = -1;
 
 function send(command, fields = {}) {
   worklet.port.postMessage({ type: 'app', command, ...fields });
@@ -72,11 +73,19 @@ function draw() {
   $('track-number').textContent = `TRACK ${track + 1}`;
   $('title').textContent = track === 4 ? 'Drum sequencer' : 'Piano roll';
   $('hint').textContent = 'Click to add. Drag a note to move it or drag its right edge to change the gate.';
-  if (displayedKit !== (track === 4) || !$('patch').options.length) {
-    displayedKit = track === 4;
-    $('patch').replaceChildren(...(displayedKit ? drumKits : patches).map((name, i) => new Option(name, i)));
+  const drumTrack = track === 4;
+  const legacy = drumTrack && current.patch < legacyDrumKits ? current.patch : -1;
+  const patchSelect = $('patch');
+  if (displayedKit !== drumTrack || displayedLegacy !== legacy || !patchSelect.options.length) {
+    displayedKit = drumTrack;
+    displayedLegacy = legacy;
+    const options = drumTrack
+      ? drumKits.slice(legacyDrumKits).map((name, i) => new Option(name, legacyDrumKits + i))
+      : patches.map((name, i) => new Option(name, i));
+    if (legacy >= 0) options.unshift(new Option(`${drumKits[legacy]} (legacy)`, legacy));
+    patchSelect.replaceChildren(...options);
   }
-  $('patch').value = current.patch;
+  patchSelect.value = current.patch;
   $('length').value = steps;
   $('prev-steps').disabled = first === 0;
   $('next-steps').disabled = last === steps;

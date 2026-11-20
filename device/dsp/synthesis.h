@@ -12,7 +12,7 @@ typedef struct {
 
 typedef struct {
     float phase, second, third, slow, pole, feedback, strike;
-    float inc, color, motion;
+    float inc, color, motion, slow_inc;
     uint32_t rng;
     uint16_t length, index;
     uint8_t engine;

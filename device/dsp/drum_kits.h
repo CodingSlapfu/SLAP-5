@@ -4,7 +4,8 @@
 
 enum {
     DRUM_SUB = 1u << 0, DRUM_BEATER = 1u << 1, DRUM_MEMBRANE = 1u << 2,
-    DRUM_BRUSH = 1u << 3, DRUM_CLUSTER = 1u << 4, DRUM_PLATE = 1u << 5
+    DRUM_BRUSH = 1u << 3, DRUM_CLUSTER = 1u << 4, DRUM_PLATE = 1u << 5,
+    DRUM_TAPE = 1u << 6, DRUM_FOLD = 1u << 7
 };
 
 static const struct DrumKit {
@@ -44,5 +45,32 @@ static const struct DrumKit {
     {"DUST ROOM", 1, 95, 69, 85, 121, 115, 24, 25, 36, DRUM_BRUSH | DRUM_CLUSTER},
     {"NEON PERC", 2, 131, 148, 122, 168, 87, 102, 71, 123, DRUM_BEATER | DRUM_MEMBRANE | DRUM_CLUSTER | DRUM_PLATE},
     {"GLASS TIN", 3, 151, 125, 183, 124, 157, 125, 110, 68, DRUM_MEMBRANE | DRUM_PLATE},
+    // IDs 0–31 retain their original recipes for saved songs.
+    {"STUDIO",      0,  99,  92,  98, 104, 120, 73, 62, 54, DRUM_BEATER | DRUM_MEMBRANE},
+    {"BRUSH",       1,  86,  77,  73,  61, 138, 15, 38, 19, DRUM_BRUSH | DRUM_MEMBRANE},
+    {"VINTAGE",     0, 112,  98, 113,  94,  94, 47, 33, 69, DRUM_TAPE | DRUM_CLUSTER},
+    {"DEEP 808",    0,  74, 117,  86, 122, 215, 52, 98, 23, DRUM_SUB},
+    {"PUNCH 909",   2, 119, 107, 126,  87,  95, 110, 91, 109, DRUM_SUB | DRUM_BEATER | DRUM_PLATE},
+    {"ACID JAZZ",   1, 118, 116,  88, 105, 115, 40, 54, 51, DRUM_BEATER | DRUM_BRUSH},
+    {"HOUSE",       2, 103, 127, 118, 108, 101, 86, 70, 81, DRUM_SUB | DRUM_CLUSTER},
+    {"DEEP HOUSE",  2,  87,  96,  76,  77, 132, 47, 65, 34, DRUM_SUB | DRUM_BRUSH},
+    {"RUFF HOUSE",  3, 102, 118,  94, 132, 108, 101, 102, 113, DRUM_SUB | DRUM_BEATER | DRUM_FOLD},
+    {"TECHNO",      3, 108,  89, 153, 112, 105, 107, 77, 98, DRUM_BEATER | DRUM_PLATE | DRUM_FOLD},
+    {"ELECTRO",     2, 130,  88, 143, 157,  84, 115, 94, 96, DRUM_MEMBRANE | DRUM_CLUSTER},
+    {"HIP-HOP",     0,  87,  99,  86,  85, 142, 63, 94, 61, DRUM_SUB | DRUM_MEMBRANE | DRUM_CLUSTER},
+    {"BOOM BAP",    0,  94,  72,  97, 120,  91, 33, 76, 79, DRUM_BEATER | DRUM_MEMBRANE | DRUM_TAPE},
+    {"TRAP",        2,  69, 143, 153, 117, 167, 101, 114, 118, DRUM_SUB | DRUM_CLUSTER | DRUM_PLATE},
+    {"JUNGLE",      1, 124, 133, 125,  99,  78, 93, 55, 84, DRUM_BEATER | DRUM_MEMBRANE | DRUM_TAPE},
+    {"HARD DNB",    2, 114, 149, 108, 123,  79, 118, 105, 107, DRUM_BEATER | DRUM_MEMBRANE | DRUM_FOLD},
+    {"BREAKS",      0, 109, 126, 137, 116,  99, 85, 45, 91, DRUM_BEATER | DRUM_MEMBRANE | DRUM_CLUSTER},
+    {"DUBSTEP",     3,  79,  83,  79, 155, 151, 43, 118, 94, DRUM_SUB | DRUM_PLATE | DRUM_FOLD},
+    {"SYNTHWAVE",   2,  98, 118, 106,  82, 158, 76, 87, 68, DRUM_SUB | DRUM_MEMBRANE | DRUM_CLUSTER},
+    {"IDM LAB",     3, 132,  65, 176, 105,  82, 122, 67, 97, DRUM_MEMBRANE | DRUM_CLUSTER | DRUM_PLATE},
+    {"FM LAB",      2, 150, 161, 131, 142, 126, 110, 125, 86, DRUM_SUB | DRUM_MEMBRANE | DRUM_PLATE},
+    {"LO-FI",       1,  77,  60,  57,  73, 129, 16, 48, 38, DRUM_BRUSH | DRUM_TAPE},
+    {"AMBIENT",     1,  64,  80,  78,  66, 197, 23, 30, 12, DRUM_BRUSH | DRUM_PLATE},
+    {"CINEMATIC",   0,  63,  68,  70,  68, 183, 77, 112, 66, DRUM_SUB | DRUM_BEATER | DRUM_MEMBRANE | DRUM_PLATE},
 };
-enum { DRUM_KITS = sizeof(drum_kits) / sizeof(drum_kits[0]) };
+enum { DRUM_LEGACY_KITS = 32, DRUM_KITS = sizeof(drum_kits) / sizeof(drum_kits[0]),
+       DRUM_PRIMARY_KITS = DRUM_KITS - DRUM_LEGACY_KITS };
+_Static_assert(DRUM_PRIMARY_KITS == 24, "Expected 24 primary drum kits");

@@ -107,3 +107,26 @@ cp tests/dual-core.txt "$tmp/late/input.txt"
 printf '%s\n' 'expect voice_late_jobs 1' 'expect worker_jobs 4' 'expect worker_fallbacks 1' >> "$tmp/late/input.txt"
 SLAP_TEST_LATE_VOICE=1 build/host/slap-5_host "$tmp/late/input.txt" "$tmp/late"
 cmp "$tmp/single/dual-core.wav" "$tmp/late/dual-core.wav"
+
+# Held chord arpeggios can allocate several voices. Batch only up to their
+# next sample-accurate tick and compare with the single-core render.
+for mode in worker single; do
+    mkdir "$tmp/arp-$mode"
+    {
+        printf '%s\n' 'wait 6100' 'tap ARP' 'turn K1 5' 'wav arp.wav' \
+            'key 7 down' 'key 11 down' 'key 14 down' 'wait 800' \
+            'key 7 up' 'key 11 up' 'key 14 up' 'wait 400' 'wavstop'
+        if [ "$mode" = worker ]; then
+            echo 'expect worker_jobs >0'
+            echo 'expect worker_fallbacks 0'
+        else
+            echo 'expect worker_jobs 0'
+        fi
+    } > "$tmp/arp-$mode/input.txt"
+    (
+        unset SLAP_TEST_SINGLE_CORE SLAP_TEST_DISCARD_WORKER SLAP_TEST_DISCARD_FX SLAP_TEST_LATE_VOICE
+        [ "$mode" != single ] || export SLAP_TEST_SINGLE_CORE=1
+        build/host/slap-5_host "$tmp/arp-$mode/input.txt" "$tmp/arp-$mode"
+    )
+done
+cmp "$tmp/arp-worker/arp.wav" "$tmp/arp-single/arp.wav"

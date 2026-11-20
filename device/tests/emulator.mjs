@@ -109,7 +109,15 @@ await app.onMessage({ type: 'app', command: 'transport', playing: false });
 render(900);
 const kitProject = structuredClone(validateProject(frames[0].project));
 const kitPeaks = [];
-for (let kit = 0; kit < 32; kit++) {
+const { kitNames } = frames[0];
+assert.equal(kitNames.length, 56);
+assert.deepEqual(kitNames.slice(32), [
+  'STUDIO', 'BRUSH', 'VINTAGE', 'DEEP 808', 'PUNCH 909', 'ACID JAZZ', 'HOUSE',
+  'DEEP HOUSE', 'RUFF HOUSE', 'TECHNO', 'ELECTRO', 'HIP-HOP', 'BOOM BAP', 'TRAP',
+  'JUNGLE', 'HARD DNB', 'BREAKS', 'DUBSTEP', 'SYNTHWAVE', 'IDM LAB', 'FM LAB',
+  'LO-FI', 'AMBIENT', 'CINEMATIC'
+]);
+for (let kit = 0; kit < kitNames.length; kit++) {
   kitProject.tracks[4].patch = kit;
   await app.onMessage({ type: 'app', command: 'project', project: kitProject });
   for (const pitch of [36, 38, 42, 37, 39, 49]) {
@@ -120,7 +128,7 @@ for (let kit = 0; kit < 32; kit++) {
     render(210);
   }
 }
-console.log(`32 kits, six drum lanes each: peak range ${Math.min(...kitPeaks).toFixed(4)}–${Math.max(...kitPeaks).toFixed(4)}.`);
+console.log(`${kitNames.length} kits, six drum lanes each: peak range ${Math.min(...kitPeaks).toFixed(4)}–${Math.max(...kitPeaks).toFixed(4)}.`);
 
 const signatures = new Set();
 for (let style = 0; style < 16; style++) {

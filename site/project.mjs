@@ -2,6 +2,8 @@
 /* Copyright (C) 2026 Ziao */
 export const within = (v, min, max) => Number.isInteger(v) && v >= min && v <= max;
 export const maxSteps = 512;
+export const legacyDrumKits = 32;
+export const primaryDrumKits = 24;
 export const patternLength = mix => (mix & 255) | (mix >>> 17 & 768);
 export const withPatternLength = (mix, length) =>
   ((mix & ~0x060000ff) | (length & 255) | ((length & 768) << 17)) >>> 0;
@@ -38,7 +40,7 @@ export function validateProject(project) {
     throw new Error('Invalid drum filters.');
   for (const [i, track] of project.tracks.entries()) {
     if (!track || !within(track.mix, 0, extended ? 0x7ffffff : 0x1ffffff) || !within(patternLength(track.mix), 1, bankSize) ||
-        !within(track.patch, 0, i === 4 ? 31 : 127) || !Array.isArray(track.steps) || track.steps.length !== bankSize) {
+        !within(track.patch, 0, i === 4 ? legacyDrumKits + primaryDrumKits - 1 : 127) || !Array.isArray(track.steps) || track.steps.length !== bankSize) {
       throw new Error('Invalid track data.');
     }
     if (track.fx !== undefined && (!Array.isArray(track.fx) || track.fx.length !== fxPanels.length ||

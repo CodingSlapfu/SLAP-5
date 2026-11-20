@@ -4,6 +4,7 @@
 #include "synthesis.h"
 #include "oscillator.h"
 #include "effects.h"
+#include "drum_kits.h"
 
 enum { TRACKS = 5, LEGACY_STEPS = 64, STEPS = 512, VOICES = 16, RATE = 44100 };
 enum { HOME, SEQ, GLOBAL, PATCH, ENV, FX, VISUAL, SAVE, HARMONY, LFO, ARP, MIXER, RECORD, GEN_DRUMS };
@@ -88,6 +89,9 @@ static volatile unsigned global_details;
 enum { PROFILE_INPUT, PROFILE_EVENTS, PROFILE_VOICES, PROFILE_FX, PROFILE_MIX, PROFILE_OUTPUT, PROFILE_COUNT };
 static volatile uint32_t serial_peak, serial_at_peak[PROFILE_COUNT];
 static volatile uint32_t peak_voice_batch, peak_fx_batch, peak_worker_work, peak_worker_wait;
+#if FM1B_CPU2 && !defined(PLAT_WEB)
+static volatile uint32_t peak_worker_overlap, peak_voice_recovery, peak_fx_recovery;
+#endif
 
 static volatile uint32_t active_voices, voice_steals;
 static volatile uint8_t mixer_auto[TRACKS], mixer_proc[TRACKS];
@@ -238,7 +242,7 @@ void app_init(void)
     static const uint8_t defaults[] = {67, 0, 78, 37};
     for (unsigned t = 0; t < DRUMS; ++t)
         load_patch(t, defaults[t]);
-
+    tracks[DRUMS].patch = DRUM_LEGACY_KITS;
 }
 
 static float slap_sine(float phase) { return fm_sinf(phase * 6.2831853f); }
@@ -256,8 +260,6 @@ static uint32_t next_random(uint32_t *state)
 }
 
 static uint32_t random_word(void) { return next_random(&noise); }
-
-#include "drum_kits.h"
 
 static unsigned drum_family(unsigned pitch)
 {
@@ -283,6 +285,14 @@ static const uint8_t factory_trim[SLAP_PATCHES] = {
     [105] = 83, [106] = 82, [107] = 85, /* Clarinet, Oboe, Bassoon */
     [122] = 116                        /* Slow Granules */
 };
+
+static unsigned select_drum_kit(unsigned current, int delta)
+{
+    if (!delta) return current;
+    if (current < DRUM_LEGACY_KITS)
+        current = delta > 0 ? DRUM_LEGACY_KITS - 1u : DRUM_KITS;
+    return (unsigned)clamp((int)current + delta, DRUM_LEGACY_KITS, DRUM_KITS - 1);
+}
 
 static float drum_decay(unsigned family, const struct DrumKit *kit, unsigned identity)
 {
@@ -876,6 +886,14 @@ static float render_voice_signal(Voice *v, SlapSynth *s)
                 wave = 0.57f * wave + 0.37f * plate;
             }
         }
+        if (layers & DRUM_TAPE) {
+            float rounded = wave * (1.34f - 0.34f * wave * wave);
+            wave = 0.78f * rounded + 0.22f * v->drum_noise * v->bend;
+        }
+        if (layers & DRUM_FOLD) {
+            float driven = 2.1f * wave;
+            wave = 0.53f * wave + 0.47f * (fm_clampf(driven, -1.0f, 1.0f) * 2.0f - driven);
+        }
         if (v->kit >= 4u) inc *= v->drum_tune;
         v->fall *= v->drum_decay;
     }
@@ -897,55 +915,98 @@ static float render_voice(Voice *v, SlapSynth *s)
     return sample;
 }
 
+enum { VOICE_BATCH = SLAP_FX_BATCH };
+static float voice_bus[VOICE_BATCH][TRACKS];
+
+static void clear_voice_bus(float bus[][TRACKS], unsigned frames)
+{
+    __builtin_memset(bus, 0, frames * sizeof(*bus));
+}
+
+static void render_voice_into_bus(Voice *voice, SlapSynth *synth, unsigned muted,
+                                  float bus[][TRACKS], unsigned frames)
+{
+    unsigned track = voice->track;
+    int audible = track != DRUMS || !(muted & (1u << voice->drum_family));
+    for (unsigned i = 0; i < frames && voice->age; ++i) {
+        float sample = render_voice(voice, synth);
+        if (audible) bus[i][track] += sample;
+    }
+}
+
+static void render_local_voice_bus(const unsigned *slots, unsigned active, unsigned remote,
+                                   int ordered_rng, unsigned muted, unsigned frames)
+{
+    clear_voice_bus(voice_bus, frames);
+    if (ordered_rng) {
+        // Sample-and-hold shares the scheduler RNG and needs sample/slot order.
+        for (unsigned i = 0; i < frames; ++i) {
+            for (unsigned n = 0; n < active; ++n) {
+                unsigned slot = slots[n];
+                Voice *voice = &voices[slot];
+                if (!voice->age || (remote & (1u << slot))) continue;
+                float sample = render_voice(voice, &synths[slot]);
+                if (voice->track != DRUMS || !(muted & (1u << voice->drum_family)))
+                    voice_bus[i][voice->track] += sample;
+            }
+        }
+    } else {
+        for (unsigned n = 0; n < active; ++n) {
+            unsigned slot = slots[n];
+            if (!(remote & (1u << slot)))
+                render_voice_into_bus(&voices[slot], &synths[slot], muted, voice_bus, frames);
+        }
+    }
+}
+
 #if FM1B_CPU2 && !defined(PLAT_WEB)
-enum { VOICE_BATCH = SLAP_FX_BATCH, MIN_VOICE_BATCH = 32, REMOTE_VOICES = VOICES / 2 };
+enum { MIN_VOICE_BATCH = 32, REMOTE_VOICES = VOICES / 2 };
 static struct {
     Voice voice[REMOTE_VOICES];
     unsigned slot[REMOTE_VOICES];
     unsigned count, muted;
-    float output[REMOTE_VOICES][VOICE_BATCH];
-    uint32_t ticks;
+    float bus[VOICE_BATCH][TRACKS];
+    uint32_t start, ticks;
 } voice_worker __attribute__((aligned(32)));
 static PLAT_POOL SlapSynth worker_synth[REMOTE_VOICES];
-static float voice_bus[VOICE_BATCH][TRACKS];
 static float fx_bus[TRACKS][VOICE_BATCH] __attribute__((aligned(32)));
 static unsigned fx_worker_tracks[SLAP_FX_WORKER_TRACKS], fx_worker_count;
 static volatile uint32_t fx_worker_jobs, fx_worker_fallbacks, fx_worker_ticks;
-static uint32_t fx_job_ticks;
+static uint32_t fx_job_start, fx_job_ticks, worker_overlap_ticks;
 static volatile uint32_t worker_jobs, worker_fallbacks, worker_ticks, worker_wait_ticks;
 static volatile uint32_t voice_late_jobs, voice_rejected_jobs, voice_busy_jobs, fx_late_jobs;
+
+static uint32_t worker_overlap(uint32_t local, uint32_t local_ticks,
+                               uint32_t remote, uint32_t remote_ticks)
+{
+    // Differences are at most one audio callback, including across timer wrap.
+    int32_t remote_offset = (int32_t)(remote - local);
+    int32_t start = remote_offset > 0 ? remote_offset : 0;
+    int32_t end = remote_offset + (int32_t)remote_ticks;
+    if (end > (int32_t)local_ticks) end = (int32_t)local_ticks;
+    return end > start ? (uint32_t)(end - start) : 0u;
+}
 
 static void render_worker_voices(uint32_t frames)
 {
     if (frames > VOICE_BATCH) return;
     uint32_t started = plat_ticks24();
-    for (unsigned j = 0; j < voice_worker.count; ++j) {
-        Voice *voice = &voice_worker.voice[j];
-        unsigned audible = voice->track != DRUMS || !(voice_worker.muted & (1u << voice->drum_family));
-        SlapSynth *synth = voice->track == DRUMS ? 0 : &worker_synth[j];
-        for (unsigned i = 0; i < frames; ++i) {
-            float sample = voice->age ? render_voice(voice, synth) : 0.0f;
-            voice_worker.output[j][i] = audible ? sample : 0.0f;
-        }
-    }
+    clear_voice_bus(voice_worker.bus, frames);
+    for (unsigned i = 0; i < voice_worker.count; ++i)
+        render_voice_into_bus(&voice_worker.voice[i], &worker_synth[i], voice_worker.muted,
+                              voice_worker.bus, frames);
+    voice_worker.start = started;
     voice_worker.ticks = plat_ticks24() - started;
 }
 
-static unsigned render_voice_batch(unsigned frames, unsigned muted, unsigned allow_fx,
+static unsigned render_voice_batch(unsigned frames, unsigned muted,
                                    uint32_t callback_start, uint32_t budget)
 {
-    if (!frames) return 0;
-    unsigned can_dispatch = frames >= MIN_VOICE_BATCH && plat_cpu2_on() &&
-        plat_ticks24() - callback_start < budget / 2u;
-    if (can_dispatch && plat_cpu2_busy()) {
-        ++voice_busy_jobs;
-        can_dispatch = 0;
-    }
-    unsigned active_slots[VOICES], active = 0, total_cost = 0;
+    unsigned active_slots[VOICES], active = 0, total_cost = 0, eligible = 0;
     unsigned cost[VOICES];
     int ordered_rng = 0;
     static const uint8_t engine_cost[SLAP_ENGINES] = {
-        7, 4, 9, 4, 4, 6, 3, 10, 4, 5, 4, 4, 8,
+        7, 4, 7, 4, 4, 6, 3, 10, 4, 5, 4, 4, 8,
         4, 5, 6, 8, 9, 7, 6, 5, 4, 7, 6, 5
     };
     for (unsigned j = 0; j < VOICES; ++j) {
@@ -955,129 +1016,113 @@ static unsigned render_voice_batch(unsigned frames, unsigned muted, unsigned all
         if (voice->track == DRUMS) {
             unsigned layers = drum_kits[voice->kit].layers;
             cost[j] = (voice->drum_family == 0 ? 5u : 4u) + (layers != 0 ? 2u : 0u);
+            eligible |= 1u << j;
         } else {
-            cost[j] = engine_cost[synths[j].engine] + (voice->lfo_wave ? 2u : 0u);
+            unsigned engine = synths[j].engine;
+            cost[j] = engine_cost[engine] + (voice->lfo_wave ? 2u : 0u);
             ordered_rng |= voice->lfo_wave == 5;
+            // Shared sample-and-hold RNG and mutable string lines stay on Core 0.
+            if (voice->lfo_wave != 5 && engine != 4 && engine != 6) eligible |= 1u << j;
         }
         total_cost += cost[j];
     }
-    unsigned assigned_cost = 0;
-    unsigned target_cost = (total_cost + 1u) / 2u;
-    unsigned remote = 0, local_only = 0;
-    if (can_dispatch) {
+    int worker_on = plat_cpu2_on();
+    int mailbox_busy = worker_on && plat_cpu2_busy();
+    if (mailbox_busy) ++voice_busy_jobs;
+
+    // Build the same two groups with or without a usable second core. Grouping
+    // and merge order determine float rounding and must survive a failed job.
+    unsigned assigned = 0, target = (total_cost + 1u) / 2u, remote = 0, remote_count = 0;
+    if (frames >= MIN_VOICE_BATCH && !mailbox_busy) {
+        for (unsigned n = active; n-- > 0 && remote_count < REMOTE_VOICES;) {
+            unsigned j = active_slots[n], next = assigned + cost[j];
+            if (!(eligible & (1u << j)) || next >= total_cost) continue;
+            if (next > target && next - target > target - assigned) continue;
+            assigned = next;
+            remote |= 1u << j;
+            ++remote_count;
+            if (assigned >= target) break;
+        }
+    }
+
+    int launched = 0;
+    if (remote && worker_on && plat_ticks24() - callback_start < budget / 2u) {
         voice_worker.count = 0;
         voice_worker.muted = muted;
-    }
-    // Take a suffix of the active slots on each track to preserve its float sum.
-    for (unsigned n = active; can_dispatch && n-- > 0 && voice_worker.count < REMOTE_VOICES;) {
-        unsigned j = active_slots[n];
-        const Voice *voice = &voices[j];
-        if (local_only & (1u << voice->track)) continue;
-        if (voice->track != DRUMS &&
-            (voice->lfo_wave == 5 || synths[j].engine == 4 || synths[j].engine == 6)) {
-            // Sample-and-hold shares the scheduler RNG. String engines own long delay lines.
-            local_only |= 1u << voice->track;
-            continue;
-        }
-        // A skipped voice blocks earlier voices on that track to preserve mix order.
-        unsigned next_cost = assigned_cost + cost[j];
-        if (next_cost >= total_cost || (next_cost > target_cost &&
-            next_cost - target_cost > target_cost - assigned_cost)) {
-            local_only |= 1u << voice->track;
-            continue;
-        }
-        assigned_cost = next_cost;
-        unsigned index = voice_worker.count++;
-        voice_worker.slot[index] = j;
-        voice_worker.voice[index] = *voice;
-        if (voice->track != DRUMS) {
-            worker_synth[index] = synths[j];
-            worker_synth[index].string = 0;
-        }
-        remote |= 1u << j;
-        if (assigned_cost >= target_cost) break;
-    }
-    unsigned split = remote && plat_cpu2_run(render_worker_voices, frames);
-    if (remote && !split) ++voice_rejected_jobs;
-    if (!active && !allow_fx) return 0;
-
-    for (unsigned i = 0; i < frames; ++i)
-        for (unsigned t = 0; t < TRACKS; ++t) voice_bus[i][t] = 0.0f;
-    unsigned local_mask = split ? remote : 0;
-    if (ordered_rng) {
-        // Shared sample-and-hold draws must retain sample/slot order.
-        for (unsigned i = 0; i < frames; ++i)
-            for (unsigned n = 0; n < active; ++n) {
-                unsigned j = active_slots[n];
-                Voice *voice = &voices[j];
-                if (!voice->age || (local_mask & (1u << j))) continue;
-                float sample = render_voice(voice, &synths[j]);
-                if (voice->track != DRUMS || !(muted & (1u << voice->drum_family)))
-                    voice_bus[i][voice->track] += sample;
+        for (unsigned n = 0; n < active; ++n) {
+            unsigned slot = active_slots[n];
+            if (!(remote & (1u << slot))) continue;
+            unsigned i = voice_worker.count++;
+            voice_worker.slot[i] = slot;
+            voice_worker.voice[i] = voices[slot];
+            if (voices[slot].track != DRUMS) {
+                worker_synth[i] = synths[slot];
+                worker_synth[i].string = 0;
             }
+        }
+        launched = plat_cpu2_run(render_worker_voices, frames);
+        if (!launched) ++voice_rejected_jobs;
+    }
+
+    uint32_t local_start = launched ? plat_ticks24() : 0;
+    render_local_voice_bus(active_slots, active, remote, ordered_rng, muted, frames);
+    if (!remote) return frames;
+
+    int completed = 0;
+    uint32_t recovery_start = 0;
+    if (launched) {
+        uint32_t wait_start = plat_ticks24();
+        int busy;
+        while ((busy = plat_cpu2_busy()) &&
+               plat_ticks24() - wait_start < 60u * 24u &&
+               plat_ticks24() - callback_start < budget * 3u / 4u) {}
+        worker_wait_ticks += plat_ticks24() - wait_start;
+#ifdef PLAT_HOST
+        if (host_late_voice && worker_jobs >= 4u && !voice_late_jobs) busy = 1;
+        int discard = host_discard_worker_result;
+#else
+        int discard = 0;
+#endif
+        completed = !busy && !discard && plat_cpu2_wait() == 0;
+        if (completed) {
+            worker_overlap_ticks += worker_overlap(local_start, wait_start - local_start,
+                                                   voice_worker.start, voice_worker.ticks);
+        } else {
+            recovery_start = plat_ticks24();
+            if (busy) ++voice_late_jobs;
+            else ++voice_rejected_jobs;
+            plat_cpu2_set(0);
+            ++worker_fallbacks;
+        }
+    }
+    if (completed) {
+        ++worker_jobs;
+        worker_ticks += voice_worker.ticks;
+        for (unsigned i = 0; i < voice_worker.count; ++i) {
+            unsigned slot = voice_worker.slot[i];
+            voices[slot] = voice_worker.voice[i];
+            if (voices[slot].track != DRUMS) {
+                synths[slot] = worker_synth[i];
+                synths[slot].string = synth_strings[slot];
+            }
+        }
     } else {
+        // The worker is stopped or never launched. Recover just its group
+        // using the original voice state, with no reuse of partial output.
+        clear_voice_bus(voice_worker.bus, frames);
         for (unsigned n = 0; n < active; ++n) {
-            unsigned j = active_slots[n];
-            if (local_mask & (1u << j)) continue;
-            Voice *voice = &voices[j];
-            unsigned track = voice->track;
-            unsigned audible = track != DRUMS || !(muted & (1u << voice->drum_family));
-            for (unsigned i = 0; i < frames && voice->age; ++i) {
-                float sample = render_voice(voice, &synths[j]);
-                if (audible) voice_bus[i][track] += sample;
-            }
+            unsigned slot = active_slots[n];
+            if (remote & (1u << slot))
+                render_voice_into_bus(&voices[slot], &synths[slot], muted, voice_worker.bus, frames);
+        }
+        if (launched) {
+            uint32_t recovery = plat_ticks24() - recovery_start;
+            if (recovery > peak_voice_recovery) peak_voice_recovery = recovery;
         }
     }
-
-    if (!split) return frames;
-    uint32_t wait_start = plat_ticks24();
-    int busy;
-    while ((busy = plat_cpu2_busy()) &&
-           plat_ticks24() - wait_start < 60u * 24u &&
-           plat_ticks24() - callback_start < budget * 3u / 4u) {}
-    worker_wait_ticks += plat_ticks24() - wait_start;
-#ifdef PLAT_HOST
-    if (host_late_voice && worker_jobs >= 4u && !voice_late_jobs) busy = 1;
-#endif
-    int unusable = busy;
-#ifdef PLAT_HOST
-    // Simulate a rejected result after the worker has modified its private copy.
-    if (host_discard_worker_result) unusable = 1;
-#endif
-    if (unusable || plat_cpu2_wait() != 0) {
-        if (busy) ++voice_late_jobs;
-        else ++voice_rejected_jobs;
-        // Retire the worker after a missed deadline or invalid result.
-        // Recover this suffix once from its untouched Core 0 state.
-        plat_cpu2_set(0);
-        ++worker_fallbacks;
-        // Only independent voices can be assigned remotely. Replay their
-        // suffix in slot order without scanning every slot on every sample.
-        for (unsigned n = 0; n < active; ++n) {
-            unsigned j = active_slots[n];
-            if (!(remote & (1u << j))) continue;
-            Voice *voice = &voices[j];
-            unsigned track = voice->track;
-            unsigned audible = track != DRUMS || !(muted & (1u << voice->drum_family));
-            for (unsigned i = 0; i < frames && voice->age; ++i) {
-                float sample = render_voice(voice, &synths[j]);
-                if (audible) voice_bus[i][track] += sample;
-            }
-        }
-        return frames;
-    }
-    ++worker_jobs;
-    worker_ticks += voice_worker.ticks;
-    for (unsigned j = voice_worker.count; j-- > 0;) {
-        unsigned slot = voice_worker.slot[j], track = voice_worker.voice[j].track;
-        voices[slot] = voice_worker.voice[j];
-        if (track != DRUMS) {
-            synths[slot] = worker_synth[j];
-            synths[slot].string = synth_strings[slot];
-        }
-        for (unsigned i = 0; i < frames; ++i)
-            voice_bus[i][track] += voice_worker.output[j][i];
-    }
+    for (unsigned i = 0; i < frames; ++i)
+        for (unsigned t = 0; t < TRACKS; ++t)
+            voice_bus[i][t] += voice_worker.bus[i][t];
     return frames;
 }
 
@@ -1116,6 +1161,7 @@ static void render_worker_fx(uint32_t frames)
     uint32_t start = plat_ticks24();
     for (unsigned slot = 0; slot < fx_worker_count; ++slot)
         render_track_fx(fx_worker_tracks[slot], frames);
+    fx_job_start = start;
     fx_job_ticks = plat_ticks24() - start;
 }
 
@@ -1130,6 +1176,7 @@ static unsigned render_fx_batch(unsigned frames, unsigned mask, uint32_t start, 
         slap_fx_checkpoint(slot, t, frames);
     }
     if (!plat_cpu2_run(render_worker_fx, frames)) return 0;
+    uint32_t local_start = plat_ticks24();
     for (unsigned t = 0; t < TRACKS; ++t)
         if (!(mask & (1u << t))) render_track_fx(t, frames);
 
@@ -1144,16 +1191,39 @@ static unsigned render_fx_batch(unsigned frames, unsigned mask, uint32_t start, 
 #endif
     if (busy || plat_cpu2_wait() != 0) {
         // Stop the worker before restoring any state or reusing its output bus.
+        uint32_t recovery_start = plat_ticks24();
         plat_cpu2_set(0);
         ++fx_worker_fallbacks;
         if (busy) ++fx_late_jobs;
         for (unsigned slot = 0; slot < fx_worker_count; ++slot)
             slap_fx_rollback(slot);
         render_worker_fx(frames);
+        uint32_t recovery = plat_ticks24() - recovery_start;
+        if (recovery > peak_fx_recovery) peak_fx_recovery = recovery;
     } else {
+        worker_overlap_ticks += worker_overlap(local_start, wait_start - local_start,
+                                               fx_job_start, fx_job_ticks);
         ++fx_worker_jobs;
         fx_worker_ticks += fx_job_ticks;
     }
+    return frames;
+}
+
+#else
+
+static unsigned render_voice_batch(unsigned frames, unsigned muted,
+                                   uint32_t callback_start, uint32_t budget)
+{
+    (void)callback_start;
+    (void)budget;
+    unsigned slots[VOICES], active = 0;
+    int ordered_rng = 0;
+    for (unsigned j = 0; j < VOICES; ++j) {
+        if (!voices[j].age) continue;
+        slots[active++] = j;
+        ordered_rng |= voices[j].track != DRUMS && voices[j].lfo_wave == 5;
+    }
+    render_local_voice_bus(slots, active, 0, ordered_rng, muted, frames);
     return frames;
 }
 
@@ -1189,6 +1259,7 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
 #if FM1B_CPU2 && !defined(PLAT_WEB)
         worker_jobs = worker_fallbacks = worker_ticks = worker_wait_ticks = 0;
         fx_worker_jobs = fx_worker_fallbacks = fx_worker_ticks = 0;
+        worker_overlap_ticks = peak_worker_overlap = peak_voice_recovery = peak_fx_recovery = 0;
         voice_late_jobs = voice_rejected_jobs = voice_busy_jobs = fx_late_jobs = 0;
 #endif
         for (unsigned bin = 0; bin < DSP_BINS; ++bin) dsp_histogram[bin] = 0;
@@ -1231,12 +1302,14 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
     const unsigned effect_mask = inspect_fx ? (1u << TRACKS) - 1u : slap_fx_active_mask();
     float meter_sum[2] = {0}, meter_peak[2] = {0};
     float target = master_q12 * (1.0f / 4096.0f);
-#if FM1B_CPU2 && !defined(PLAT_WEB)
-    unsigned batch_start = 0, batch_end = 0, fx_batch_end = 0, next_batch = 0;
-    unsigned fx_mask = measure_fx || !plat_cpu2_on() ? 0 : select_fx_worker_tracks();
+    unsigned batch_start = 0, batch_end = 0;
     uint32_t callback_budget = (24000000u / RATE) * frames;
+#if FM1B_CPU2 && !defined(PLAT_WEB)
+    unsigned fx_batch_end = 0;
+    unsigned fx_mask = measure_fx || !plat_cpu2_on() ? 0 : select_fx_worker_tracks();
     uint32_t voice_batch_ticks = 0, fx_batch_ticks = 0;
     uint32_t remote_start = worker_ticks + fx_worker_ticks, wait_start = worker_wait_ticks;
+    uint32_t overlap_start = worker_overlap_ticks;
 #endif
     if (profile) serial[PROFILE_INPUT] = plat_ticks24() - audio_started;
     for (uint32_t i = 0; i < frames; ++i) {
@@ -1264,41 +1337,36 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
         if (until_step) --until_step;
         arp_render_clock();
         if (profile) serial[PROFILE_EVENTS] += plat_ticks24() - section;
-        float dry[TRACKS] = {0};
-#if FM1B_CPU2 && !defined(PLAT_WEB)
-        if (i == next_batch) {
+        if (i == batch_end) {
             unsigned amount = frames - i;
             if (amount > VOICE_BATCH) amount = VOICE_BATCH;
             if (playing && amount > until_step + 1u) amount = until_step + 1u;
-            // A held arpeggio can create a voice before the next sequencer step.
-            if (old_keys && input_track < DRUMS && (arp_setup[input_track] & 255u)) amount = 0;
+            // The current sample's arpeggio tick has already run. End this
+            // batch before the next tick can allocate or steal a voice.
+            if (old_keys && input_track < DRUMS && (arp_setup[input_track] & 255u) &&
+                amount > arp_wait + 1u)
+                amount = arp_wait + 1u;
             batch_start = i;
+#if FM1B_CPU2 && !defined(PLAT_WEB)
             uint32_t stage_start = plat_ticks24();
-            batch_end = i + render_voice_batch(amount, muted, fx_mask, audio_started, callback_budget);
+#else
+            uint32_t stage_start = profile ? plat_ticks24() : 0;
+#endif
+            batch_end = i + render_voice_batch(amount, muted, audio_started, callback_budget);
+#if FM1B_CPU2 && !defined(PLAT_WEB)
             uint32_t voice_end = plat_ticks24();
             voice_batch_ticks += voice_end - stage_start;
+            if (profile) serial[PROFILE_VOICES] += voice_end - stage_start;
             fx_batch_end = i;
-            if (batch_end > i && fx_mask) {
-                fx_batch_end += render_fx_batch(batch_end - i, fx_mask, audio_started, callback_budget);
+            if (fx_mask) {
+                fx_batch_end += render_fx_batch(amount, fx_mask, audio_started, callback_budget);
                 fx_batch_ticks += plat_ticks24() - voice_end;
             }
-            next_batch = batch_end > i ? batch_end : i + VOICE_BATCH;
-        }
-        if (i < batch_end)
-            for (unsigned t = 0; t < TRACKS; ++t) dry[t] = voice_bus[i - batch_start][t];
-        else
+#else
+            if (profile) serial[PROFILE_VOICES] += plat_ticks24() - stage_start;
 #endif
-        {
-            if (profile) section = plat_ticks24();
-            for (unsigned j = 0; j < VOICES; ++j) {
-                Voice *v = &voices[j];
-                if (!v->age) continue;
-                float sample = render_voice(v, &synths[j]);
-                if (v->track != DRUMS || !(muted & (1u << v->drum_family)))
-                    dry[v->track] += sample;
-            }
-            if (profile) serial[PROFILE_VOICES] += plat_ticks24() - section;
         }
+        const float *dry = voice_bus[i - batch_start];
         float l = 0.0f, r = 0.0f;
         for (unsigned t = 0; t < TRACKS; ++t) {
             unsigned sample_cost = measure_fx && i == 0u;
@@ -1406,6 +1474,7 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
             peak_fx_batch = fx_batch_ticks;
             peak_worker_work = worker_ticks + fx_worker_ticks - remote_start;
             peak_worker_wait = worker_wait_ticks - wait_start;
+            peak_worker_overlap = worker_overlap_ticks - overlap_start;
 #endif
             dsp_peak_ticks = elapsed;
         }
@@ -1909,7 +1978,7 @@ void app_input_only(void)
         slap_ui.page = MIXER;
         pressed &= ~(1u << B_SEL);
     } else if (pressed & (1u << B_GLO)) {
-        global_details = slap_ui.page == GLOBAL ? (global_details + 1u) % 4u : 0u;
+        global_details = slap_ui.page == GLOBAL ? (global_details + 1u) % 5u : 0u;
         slap_ui.page = GLOBAL;
     }
     if (pressed & (1u << B_SAVE)) {
@@ -1959,7 +2028,7 @@ void app_input_only(void)
     if (patch_delta) {
         int old_patch = (int)tracks[slap_ui.track].patch;
         if (slap_ui.track == DRUMS)
-            tracks[DRUMS].patch = (unsigned)clamp(old_patch + patch_delta, 0, DRUM_KITS - 1);
+            tracks[DRUMS].patch = select_drum_kit((unsigned)old_patch, patch_delta);
         else load_patch(slap_ui.track, (unsigned)clamp(old_patch + patch_delta, 0, SLAP_PATCHES-1));
     }
     int knob[4];
@@ -1986,7 +2055,7 @@ void app_input_only(void)
         mixer_proc[t] = (uint8_t)clamp((int)mixer_proc[t] + knob[3] * 4, 0, 255);
     } else if (slap_ui.page == PATCH) {
         unsigned t = (unsigned)slap_ui.track;
-        if (t == DRUMS) tracks[t].patch = (unsigned)clamp((int)tracks[t].patch + knob[1], 0, DRUM_KITS - 1);
+        if (t == DRUMS) tracks[t].patch = select_drum_kit(tracks[t].patch, knob[1]);
         else if (knob[0] || knob[1]) {
             int patch = (int)tracks[t].patch, engine = slap_patches[patch].engine;
             engine = clamp(engine + knob[0], 0, SLAP_ENGINES-1);
@@ -2198,7 +2267,8 @@ static void draw_panel(void)
             slap_ui.page == RECORD ? (recording ? "SEL END TAKE  /  PLAY STOP" : playing ? "STOP TO ARM A TAKE" : "SEL ARM  /  PLAY TO START") :
             global_details == 1 ? "PEAK BREAKDOWN  /  GLO NEXT" :
             global_details == 2 ? "SERIAL PROFILE  /  TIMING OVERHEAD" :
-            global_details == 3 ? "WORKER COUNTERS  /  GLO NEXT" : "SLAP-5 " APP_VERSION "  /  GLO FOR PEAK", C_WHITE);
+            global_details == 3 ? "WORKER COUNTERS  /  GLO NEXT" :
+            global_details == 4 ? "CORE TIMING  /  GLO NEXT" : "SLAP-5 " APP_VERSION "  /  GLO FOR PEAK", C_WHITE);
         cv_blit(0, 48);
         for (int strip = 0; strip < 3; ++strip) {
             cv_begin(240, 36, background);
@@ -2236,13 +2306,24 @@ static void draw_panel(void)
                     {peak_worker_work / 24u, peak_worker_wait / 24u}
                 };
                 static const char *const serial_labels[PROFILE_COUNT] = {
-                    "INPUT / SETUP US", "EVENTS US", "DIRECT VOICE US", "SERIAL FX US", "TRACK MIX US", "OUTPUT / METER US"
+                    "INPUT / SETUP US", "EVENTS US", "VOICE SPANS US", "SERIAL FX US", "TRACK MIX US", "OUTPUT / METER US"
                 };
                 static const char *const worker_labels[3][2] = {
                     {"VOICE LATE", "FX LATE"}, {"VOICE BUSY", "VOICE REJECT"}, {"VOICE RERENDER", "FX ROLLBACK"}
                 };
+                static const char *const timing_labels[3][2] = {
+                    {"C1 OVERLAP US", "C1 WAIT US"}, {"VOICE RECOV US", "FX RECOV US"},
+                    {"PEAK LOAD %", "HEADROOM US"}
+                };
+                unsigned timing_values[3][2] = {
+                    {0, 0}, {0, 0}, {budget ? peak * 100u / budget : 0, budget > peak ? (budget - peak) / 24u : 0}
+                };
                 unsigned worker_values[3][2] = {{0}};
 #if FM1B_CPU2 && !defined(PLAT_WEB)
+                timing_values[0][0] = peak_worker_overlap / 24u;
+                timing_values[0][1] = peak_worker_wait / 24u;
+                timing_values[1][0] = peak_voice_recovery / 24u;
+                timing_values[1][1] = peak_fx_recovery / 24u;
                 worker_values[0][0] = voice_late_jobs;
                 worker_values[0][1] = fx_late_jobs;
                 worker_values[1][0] = voice_busy_jobs;
@@ -2253,11 +2334,11 @@ static void draw_panel(void)
                 for (unsigned col = 0; col < 2; ++col) {
                     int x = 8 + (int)col * 116;
                     unsigned stage = (unsigned)strip * 2u + col;
-                    const char *label = global_details == 3 ? worker_labels[strip][col] :
+                    const char *label = global_details == 4 ? timing_labels[strip][col] : global_details == 3 ? worker_labels[strip][col] :
                         global_details == 2 ? serial_labels[stage] :
                         global_details == 1 ? detail_labels[strip][col] : labels[strip][col];
                     cv_text(x, 0, &FONT_XS, label, C_WHITE);
-                    unsigned value = global_details == 3 ? worker_values[strip][col] :
+                    unsigned value = global_details == 4 ? timing_values[strip][col] : global_details == 3 ? worker_values[strip][col] :
                         global_details == 2 ? serial_at_peak[stage] / 24u :
                         global_details == 1 ? detail_values[strip][col] : values[strip][col];
                     decimal(number, value);
@@ -2387,13 +2468,17 @@ static void draw_panel(void)
     if (slap_ui.page == PATCH) {
         cv_begin(240, 40, background);
         cv_text(8, 2, &FONT_B, selected == DRUMS ? "DRUM KITS" : slap_engine_names[patch->engine], c);
-        cv_text(8, 21, &FONT_XS, "SELECT TRACK  /  K1 GROUP  /  K2 PATCH", C_WHITE);
+        cv_text(8, 21, &FONT_XS, selected == DRUMS ? "SELECT TRACK  /  K2 KIT" :
+                "SELECT TRACK  /  K1 GROUP  /  K2 PATCH", C_WHITE);
         cv_blit(0, 80);
         int current = (int)tracks[selected].patch;
-        int count = selected == DRUMS ? DRUM_KITS : SLAP_PATCHES;
-        int first = clamp(current-1, 0, count-3);
+        int drums = selected == DRUMS;
+        int legacy_kit = drums && current < DRUM_LEGACY_KITS;
+        int minimum = drums ? DRUM_LEGACY_KITS : 0;
+        int count = drums ? DRUM_KITS : SLAP_PATCHES;
+        int first = clamp(current - 1, minimum, count - 3);
         for (int row = 0; row < 3; ++row) {
-            int item = first + row;
+            int item = legacy_kit ? (row == 0 ? current : minimum + row - 1) : first + row;
             const char *name = selected == DRUMS ? drum_kits[item].name : slap_patches[item].name;
             cv_begin(240, 30, background);
             cv_rect(7, 2, 226, 26, item == current ? c : track_surface[selected]);
@@ -2897,6 +2982,8 @@ STUDIO_EXPORT void studio_set_clock(uint32_t bpm, uint32_t amount)
     if (bpm >= 40 && bpm <= 240) tempo = bpm;
     if (amount <= 70) swing = amount;
 }
+
+STUDIO_EXPORT uint32_t studio_kit_count(void) { return DRUM_KITS; }
 
 STUDIO_EXPORT const char *studio_kit_name(uint32_t kit)
 {
