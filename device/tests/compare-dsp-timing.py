@@ -27,7 +27,7 @@ TRACE = """    dt = now_ns() - t0;
     render_ns_total += dt;"""
 
 
-def build(revision, destination):
+def build(revision, destination, cpu_time=False):
     destination.mkdir()
     archive = subprocess.check_output(
         ["git", "archive", revision, "device", "vendor/fm1-base"], cwd=ROOT
@@ -36,7 +36,12 @@ def build(revision, destination):
     host = destination / "vendor/fm1-base/host/plat_host.c"
     source = host.read_text()
     assert source.count(TIMER) == 1, "Host callback timing hook changed"
-    host.write_text(source.replace(TIMER, TRACE))
+    source = source.replace(TIMER, TRACE)
+    if cpu_time:
+        clock = "static double now_ns(void)\n{\n    struct timespec t;\n    clock_gettime(CLOCK_MONOTONIC, &t)"
+        assert source.count(clock) == 1, "Host callback clock changed"
+        source = source.replace(clock, clock.replace("CLOCK_MONOTONIC", "CLOCK_THREAD_CPUTIME_ID"))
+    host.write_text(source)
     subprocess.run(
         ["python3", "vendor/fm1-base/tools/build.py", "device", "--host"],
         cwd=destination, check=True, stdout=subprocess.DEVNULL,
@@ -44,7 +49,7 @@ def build(revision, destination):
     return destination / "device/build/host/slap-5_host"
 
 
-def measure(binary, script, destination, single):
+def measure(binary, script, destination, single, full=False):
     destination.mkdir()
     trace = destination / "trace.bin"
     env = {k: v for k, v in os.environ.items() if not k.startswith("SLAP_TEST_")}
@@ -56,29 +61,38 @@ def measure(binary, script, destination, single):
     samples.frombytes(trace.read_bytes())
     # The fixture ends with ten seconds of steady playback after recording.
     assert len(samples) >= 1600
-    played = sorted(nanoseconds / 1000 for nanoseconds in samples[-1600:])
-    return statistics.mean(played), played[1519], played[1583], played[-1]
+    played = sorted(nanoseconds / 1000 for nanoseconds in (samples if full else samples[-1600:]))
+    return statistics.mean(played), played[(95 * len(played) - 1) // 100], played[(99 * len(played) - 1) // 100], played[-1]
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("baseline")
     parser.add_argument("redesign")
+    parser.add_argument("--reference", help="Optional third source revision to compare")
     parser.add_argument("--runs", type=int, default=5)
+    parser.add_argument("--cpu-time", action="store_true", help="Measure synchronous host thread CPU time")
+    parser.add_argument("--full", action="store_true", help="Include recording and playback in the timing window")
     parser.add_argument("--chords", action="store_true")
     args = parser.parse_args()
     if args.runs < 1:
         parser.error("--runs must be positive")
     fixture = runpy.run_path(str(Path(__file__).with_name("dense-recording.py")))["scenario"]
+    print(f"{'Thread CPU' if args.cpu_time else 'Wall'} time, "
+          f"{'full recording and playback' if args.full else 'steady playback'}", flush=True)
     with tempfile.TemporaryDirectory() as directory:
         scratch = Path(directory)
-        binaries = {
-            label: build(revision, scratch / label)
-            for label, revision in [("baseline", args.baseline), ("redesign", args.redesign)]
-        }
-        for name, seed, bpm, fx in [("dry", 519331, 112, False), ("wet", 220507, 137, True)]:
+        revisions = [("baseline", args.baseline), ("redesign", args.redesign)]
+        if args.reference:
+            revisions.append(("reference", args.reference))
+        binaries = {label: build(revision, scratch / label, args.cpu_time) for label, revision in revisions}
+        workloads = [("dry", 519331, 112, False), ("wet", 220507, 137, True),
+                     ("arrangement", 519331, 160, False)]
+        for name, seed, bpm, fx in workloads:
             script = scratch / f"{name}.txt"
-            script.write_text("\n".join(fixture(seed, bpm, 1, fx, fx, chords=args.chords)) + "\n")
+            arrangement = name == "arrangement"
+            script.write_text("\n".join(fixture(seed, bpm, 1, fx, fx, chords=args.chords or arrangement,
+                                                 arrangement=arrangement)) + "\n")
             for single in (False, True):
                 mode = "single" if single else "worker"
                 results = {label: [] for label in binaries}
@@ -86,7 +100,7 @@ def main():
                     labels = list(binaries)[::1 if run % 2 == 0 else -1]
                     for label in labels:
                         destination = scratch / f"{name}-{mode}-{label}-{run}"
-                        results[label].append(measure(binaries[label], script, destination, single))
+                        results[label].append(measure(binaries[label], script, destination, single, args.full))
                 for label, rows in results.items():
                     stats = " / ".join(f"{statistics.median(values):.2f}" for values in zip(*rows))
                     print(f"{name} {mode} {label}   mean/P95/P99/peak µs   {stats}", flush=True)

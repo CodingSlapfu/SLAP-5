@@ -15,16 +15,16 @@ import wave
 from pcm_parity import compare_pcm
 
 
-def scenario(seed, bpm, bars, fx, visual, chords=False):
+def scenario(seed, bpm, bars, fx, visual, chords=False, arrangement=False):
     rng = random.Random(seed)
     commands = ["wait 6100", f"turn ALGO {bpm - 112}", f"expect tempo {bpm}"]
     if bars > 1:
         steps = bars * 16
     else:
         steps = 16
-    for track in range(5):
+    for track in ([0, 1, 4] if arrangement else range(5)):
         if track:
-            commands.append("turn SELECT 1")
+            commands.append(f"turn SELECT {3 if arrangement and track == 4 else 1}")
         commands.append(f"expect track {track + 1}")
         if steps > 16:
             commands += [f"turn K2 {steps - 16}", f"expect length {steps}"]
@@ -47,6 +47,8 @@ def scenario(seed, bpm, bars, fx, visual, chords=False):
             commands += ["turn K1 2", "turn K2 5", "turn ALGO -2", "turn K1 50",
                          "turn K2 45", "turn K3 40", "turn K4 30", "turn ALGO 2"]
         commands.append("tap HOME")
+    if arrangement:
+        commands += ["tap FX", "turn ALGO 1", "turn K1 2", "turn K2 5", "tap HOME"]
     if visual:
         commands += ["tap HOME", "turn SELECT 6", "expect page 6"]
     return commands + ["wav dense.wav", "wait 10000", "wavstop"]
@@ -61,9 +63,10 @@ def main():
     parser.add_argument("--visual", action="store_true")
     parser.add_argument("--chords", action="store_true")
     parser.add_argument("--async-worker", action="store_true")
+    parser.add_argument("--arrangement", action="store_true", help="Use two synth tracks and drum slicer")
     args = parser.parse_args()
     host = Path(__file__).resolve().parents[1] / "build/host/slap-5_host"
-    commands = scenario(args.seed, args.bpm, args.bars, args.fx, args.visual, args.chords)
+    commands = scenario(args.seed, args.bpm, args.bars, args.fx, args.visual, args.chords, args.arrangement)
     with tempfile.TemporaryDirectory() as work_path:
         work = Path(work_path)
         wavs = {}

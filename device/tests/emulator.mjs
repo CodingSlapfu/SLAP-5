@@ -130,6 +130,27 @@ for (let kit = 0; kit < kitNames.length; kit++) {
 }
 console.log(`${kitNames.length} kits, six drum lanes each: peak range ${Math.min(...kitPeaks).toFixed(4)}–${Math.max(...kitPeaks).toFixed(4)}.`);
 
+const rapid = structuredClone(validateProject(frames[0].project));
+rapid.bpm = 240;
+for (let lane = 0; lane < 6; lane++) {
+  for (let step = 0; step < 16; step++) {
+    rapid.tracks[4].extra[lane][step] = encodeNote([36, 38, 42, 37, 39, 49][lane], 117, 180, 100);
+    rapid.tracks[4].offsets[lane + 1][step] = (lane * 2 + step) % 16;
+  }
+}
+const rapidPeaks = [];
+for (let kit = 0; kit < kitNames.length; kit++) {
+  rapid.tracks[4].patch = kit;
+  await app.onMessage({ type: 'app', command: 'project', project: rapid });
+  await app.onMessage({ type: 'app', command: 'transport', playing: true });
+  const peak = render(760);
+  assert.ok(peak > 0.001 && peak < 0.95, `rapid kit ${kit}: unexpected peak ${peak}`);
+  rapidPeaks.push(peak);
+  await app.onMessage({ type: 'app', command: 'transport', playing: false });
+  render(350);
+}
+console.log(`${rapidPeaks.length} rapid-hit kits at 240 BPM: peak range ${Math.min(...rapidPeaks).toFixed(4)}–${Math.max(...rapidPeaks).toFixed(4)}.`);
+
 const signatures = new Set();
 for (let style = 0; style < 16; style++) {
   await app.onMessage({ type: 'app', command: 'gen-drums', id: style, style, hit: 73, groove: 70, variation: 40 });
