@@ -98,6 +98,9 @@ static volatile uint32_t dsp_reset_request, dsp_xrun_baseline;
 static volatile unsigned global_details;
 enum { PROFILE_INPUT, PROFILE_EVENTS, PROFILE_VOICES, PROFILE_FX, PROFILE_MIX, PROFILE_OUTPUT, PROFILE_COUNT };
 static volatile uint32_t serial_peak, serial_at_peak[PROFILE_COUNT];
+#if defined(PLAT_HOST) && !defined(PLAT_WEB)
+static uint32_t host_serial_fx_batch;
+#endif
 enum { SPIKE_NOTE_ON, SPIKE_LOCAL, SPIKE_DISPATCH, SPIKE_SPAN, SPIKE_FX, SPIKE_COUNT };
 static volatile uint32_t spike_values[SPIKE_COUNT], spike_callback;
 static uint32_t spike_current[SPIKE_COUNT];
@@ -1619,6 +1622,9 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
         dsp_peak_ticks = dsp_avg_ticks = dsp_overruns = dsp_callbacks = 0;
         peak_voice_batch = peak_fx_batch = peak_worker_work = peak_worker_wait = 0;
         serial_peak = spike_callback = 0;
+#if defined(PLAT_HOST) && !defined(PLAT_WEB)
+        host_serial_fx_batch = 0;
+#endif
         half_trace_written = longest_half_ticks = half_trace_faults = 0;
         for (unsigned engine = 0; engine < TRACE_ENGINES; ++engine)
             local_engine_peaks[engine] = remote_engine_peaks[engine] = 0;
@@ -1872,6 +1878,9 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
         }
         if (profile && elapsed > serial_peak) {
             serial_peak = elapsed;
+#if defined(PLAT_HOST) && FM1B_CPU2 && !defined(PLAT_WEB)
+            host_serial_fx_batch = fx_batch_ticks;
+#endif
             for (unsigned part = 0; part < PROFILE_COUNT; ++part) serial_at_peak[part] = serial[part];
         }
         if (!profile && !spike_enabled && elapsed > dsp_peak_ticks) {
@@ -3265,6 +3274,16 @@ int app_expect(const char *name, int *result)
 #if defined(PLAT_HOST)
     else if (name_matches(name, "peak_voices")) *result = (int)host_peak_voices;
     else if (name_matches(name, "voice_steals")) *result = (int)voice_steals;
+#endif
+#if defined(PLAT_HOST) && !defined(PLAT_WEB)
+    else if (name_matches(name, "profile_peak_us")) *result = (int)(serial_peak / 24u);
+    else if (name_matches(name, "profile_fx_batch_us")) *result = (int)(host_serial_fx_batch / 24u);
+    else if (name_matches(name, "profile_input_us")) *result = (int)(serial_at_peak[PROFILE_INPUT] / 24u);
+    else if (name_matches(name, "profile_events_us")) *result = (int)(serial_at_peak[PROFILE_EVENTS] / 24u);
+    else if (name_matches(name, "profile_voices_us")) *result = (int)(serial_at_peak[PROFILE_VOICES] / 24u);
+    else if (name_matches(name, "profile_serial_fx_us")) *result = (int)(serial_at_peak[PROFILE_FX] / 24u);
+    else if (name_matches(name, "profile_mix_us")) *result = (int)(serial_at_peak[PROFILE_MIX] / 24u);
+    else if (name_matches(name, "profile_output_us")) *result = (int)(serial_at_peak[PROFILE_OUTPUT] / 24u);
 #endif
     else if (name_matches(name, "tempo")) *result = (int)tempo;
     else if (name_matches(name, "boot")) *result = (int)slap_ui.booting;
