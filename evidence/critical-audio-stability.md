@@ -111,3 +111,29 @@ bank reader. Use the serial profile and worker counts to guide the next
 design comparison. Compare a bounded persistent worker/FX pipeline against
 this candidate under the same dry and wet musical workloads, then qualify
 the worst callback, new XRUNs and fallback cost on an FM-1 before promotion.
+
+## Corrective TESTING publication
+
+SLAP-5 0.1.16 is the current software-qualified TESTING release. Source
+`08a1543961c4388afb8f8e88a869d0bb96ce6f0d` is the exact release tag target.
+[Chromium CI](https://github.com/CodingSlapfu/SLAP-5/actions/runs/44692394463)
+and the [publication workflow](https://github.com/CodingSlapfu/SLAP-5/actions/runs/44692663497) passed.
+
+- [GitHub TESTING prerelease](https://github.com/CodingSlapfu/SLAP-5/releases/tag/v0.1.16-testing)
+- [Live direct installer](https://slap-5.jminie66.chatgpt.site/flash)
+- [Architecture, benchmark results and device acceptance procedure](release-0.1.16.md)
+
+The live release manifest and firmware were matched byte for byte against
+the audited local package. The live emulator matched the tested build.
+The v0.1.14 rollback download was verified against its published hash.
+
+| Verified asset | SHA-256 |
+|---|---|
+| Corrective firmware, `FM-1_75000116` | `ad54f3b64f7ab730b6f63584908b11b713f610fda6e3f93395bdfe3234dec6e1` |
+| Matching emulator WASM | `e71dc52cac25cb6c33b8fc57ae0378a3d6e1fa27703d184f5b672068e120ffd3` |
+| v0.1.14 rollback package | `8cf3240a239e92eee2b7fef2c9ef5fec6803a3444ebb035faf5e422484bb2689` |
+
+Physical installation, FM-1 callback deadlines and DMA underruns remain
+open until owner testing. Resume from the tagged source or the verified
+`slap-5-red-alert-dsp` development branch. The original v0.1.15 backup is
+retained.
