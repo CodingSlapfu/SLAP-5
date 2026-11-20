@@ -1,0 +1,43 @@
+name: Publish SLAP-5 0.1.19 experimental diagnostic
+on:
+  push:
+    branches: [slap-5-red-alert-dsp]
+    paths: ['.github/workflows/engineering-release-0119-diagnostic.yml']
+permissions:
+  contents: write
+concurrency:
+  group: slap-5-0.1.19-diagnostic
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify the archive and full firmware identity
+        run: |
+          set -eu
+          mkdir "$RUNNER_TEMP/diagnostic"
+          cat engineering/diagnostic-0119/archive.* > "$RUNNER_TEMP/diagnostic.tar.xz"
+          echo "a5ea53b11647af276d226f0343654c473eaa82189b043e72140f1ef9ee6cb074  $RUNNER_TEMP/diagnostic.tar.xz" | sha256sum -c
+          tar -xJf "$RUNNER_TEMP/diagnostic.tar.xz" -C "$RUNNER_TEMP/diagnostic"
+          (cd "$RUNNER_TEMP/diagnostic" && sha256sum -c SHA256SUMS)
+          echo "926a12c82784d88235725045be91f582298538af561d86eca4c35b68232dd53d  $RUNNER_TEMP/diagnostic/SLAP-5-0.1.19.fwsc" | sha256sum -c
+          mkdir -p "$RUNNER_TEMP/flash-tests/tests" "$RUNNER_TEMP/flash-tests/protocol"
+          cp site/flash-release.mjs site/flash-transport.mjs "$RUNNER_TEMP/flash-tests/"
+          cp site/tests/flash.mjs "$RUNNER_TEMP/flash-tests/tests/"
+          cp vendor/fm1-base/web/fm1ota.js vendor/fm1-base/web/fm1ports.js vendor/fm1-base/web/fm1pkg.js "$RUNNER_TEMP/flash-tests/protocol/"
+          printf '{"type":"module"}\n' > "$RUNNER_TEMP/flash-tests/package.json"
+          node "$RUNNER_TEMP/flash-tests/tests/flash.mjs" "$RUNNER_TEMP/diagnostic/SLAP-5-0.1.19.fwsc" 0.1.19
+      - name: Publish diagnostic prerelease without promoting the installer
+        run: |
+          set -eu
+          (cd "$RUNNER_TEMP/diagnostic" && sha256sum SLAP-5-0.1.19.fwsc > SHA256SUMS)
+          gh release create v0.1.19-diagnostic --target "$GITHUB_SHA" --prerelease --latest=false \
+            --title 'SLAP-5 0.1.19 EXPERIMENTAL — PHYSICAL PERFORMANCE UNVERIFIED' \
+            --notes-file evidence/release-0.1.19-diagnostic.md \
+            "$RUNNER_TEMP/diagnostic/SLAP-5-0.1.19.fwsc" \
+            "$RUNNER_TEMP/diagnostic/SHA256SUMS"

@@ -104,19 +104,26 @@ static uint32_t spike_current[SPIKE_COUNT];
 static int spike_enabled, engine_profile;
 volatile unsigned app_audio_half_profile_enabled;
 enum { HALF_TRACE_SIZE = 8 };
-static struct {
+typedef struct {
     uint32_t observed, half, app, note_on, span, wait, overlap, nested, timer5, xrun;
-} volatile half_trace[HALF_TRACE_SIZE];
-static volatile unsigned half_trace_written;
+    uint32_t local, dispatch, voice, fx_batch, remote, jobs, ack, buffer, deadline;
+} HalfTrace;
+static volatile HalfTrace half_trace[HALF_TRACE_SIZE];
+static volatile unsigned half_trace_written, half_trace_frozen, half_trace_faults;
 static uint32_t half_app_ticks, half_wait_ticks, half_overlap_ticks;
+static uint32_t half_voice_ticks, half_fx_ticks, half_remote_ticks, half_jobs;
 static volatile uint32_t longest_half_ticks;
+static unsigned dma_view;
 enum { TRACE_DRUM_ENGINE = SLAP_ENGINES, TRACE_ENGINES = SLAP_ENGINES + 1 };
 static volatile uint32_t local_engine_peaks[TRACE_ENGINES], remote_engine_peaks[TRACE_ENGINES];
 
-void app_audio_half_profile(uint32_t ticks, uint32_t nested, uint32_t timer5_ticks, unsigned xrun)
+void app_audio_half_profile(uint32_t ticks, uint32_t nested, uint32_t timer5_ticks, uint32_t ack_ticks, unsigned half, unsigned xrun)
 {
-    if (!spike_enabled) return;
-    if (!xrun && ticks <= longest_half_ticks) return;
+    if (!spike_enabled || half_trace_frozen) return;
+    const uint32_t budget = (24000000u / RATE) * APP_BLOCK + (24000000u % RATE) * APP_BLOCK / RATE;
+    unsigned late = ticks > budget;
+    if (!xrun && !late && (half_trace_faults || ticks <= longest_half_ticks)) return;
+    if (xrun || late) ++half_trace_faults;
     if (ticks > longest_half_ticks) longest_half_ticks = ticks;
     unsigned index = half_trace_written & (HALF_TRACE_SIZE - 1u);
     half_trace[index].observed = plat_ticks24();
@@ -129,6 +136,15 @@ void app_audio_half_profile(uint32_t ticks, uint32_t nested, uint32_t timer5_tic
     half_trace[index].nested = nested;
     half_trace[index].timer5 = timer5_ticks;
     half_trace[index].xrun = xrun;
+    half_trace[index].local = spike_current[SPIKE_LOCAL];
+    half_trace[index].dispatch = spike_current[SPIKE_DISPATCH];
+    half_trace[index].voice = half_voice_ticks;
+    half_trace[index].fx_batch = half_fx_ticks;
+    half_trace[index].remote = half_remote_ticks;
+    half_trace[index].jobs = half_jobs;
+    half_trace[index].ack = ack_ticks;
+    half_trace[index].buffer = half;
+    half_trace[index].deadline = late;
     ++half_trace_written;
 }
 
@@ -1578,7 +1594,7 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
 {
     uint32_t audio_started = plat_ticks24();
     unsigned profile = slap_ui.page == GLOBAL && global_details == 2;
-    app_audio_half_profile_enabled = slap_ui.page == GLOBAL && global_details == 8;
+    app_audio_half_profile_enabled = slap_ui.page == GLOBAL && global_details == 8 && !half_trace_frozen;
     engine_profile = slap_ui.page == GLOBAL && global_details == 9;
     spike_enabled = app_audio_half_profile_enabled || engine_profile ||
         (slap_ui.page == GLOBAL && global_details == 7);
@@ -1590,7 +1606,7 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
         dsp_peak_ticks = dsp_avg_ticks = dsp_overruns = dsp_callbacks = 0;
         peak_voice_batch = peak_fx_batch = peak_worker_work = peak_worker_wait = 0;
         serial_peak = spike_callback = 0;
-        half_trace_written = longest_half_ticks = 0;
+        half_trace_written = longest_half_ticks = half_trace_faults = 0;
         for (unsigned engine = 0; engine < TRACE_ENGINES; ++engine)
             local_engine_peaks[engine] = remote_engine_peaks[engine] = 0;
         for (unsigned part = 0; part < SPIKE_COUNT; ++part) spike_values[part] = 0;
@@ -1662,6 +1678,7 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
     uint32_t voice_batch_ticks = 0, fx_batch_ticks = 0;
     uint32_t remote_start = worker_ticks + fx_worker_ticks, wait_start = worker_wait_ticks;
     uint32_t overlap_start = worker_overlap_ticks;
+    uint32_t jobs_start = worker_jobs + fx_worker_jobs;
 #endif
     if (profile) serial[PROFILE_INPUT] = plat_ticks24() - audio_started;
     for (uint32_t i = 0; i < frames; ++i) {
@@ -1817,6 +1834,10 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
 #if FM1B_CPU2 && !defined(PLAT_WEB)
             half_wait_ticks = worker_wait_ticks - wait_start;
             half_overlap_ticks = worker_overlap_ticks - overlap_start;
+            half_voice_ticks = voice_batch_ticks;
+            half_fx_ticks = fx_batch_ticks;
+            half_remote_ticks = worker_ticks + fx_worker_ticks - remote_start;
+            half_jobs = worker_jobs + fx_worker_jobs - jobs_start;
 #endif
         }
         if (spike_enabled && elapsed > spike_callback) {
@@ -2440,6 +2461,10 @@ void app_input_only(void)
             while (last < SLAP_PATCHES-1 && slap_patches[last+1].engine == engine) ++last;
             load_patch(t, (unsigned)clamp(clamp(patch, first, last) + knob[1], first, last));
         }
+    } else if (slap_ui.page == GLOBAL && global_details == 8) {
+        if (knob[0]) dma_view = (unsigned)clamp((int)dma_view + knob[0], 0, 3);
+        if (knob[1]) half_trace_frozen = knob[1] > 0;
+        if (knob[2]) dsp_reset_request = 1;
     } else if (slap_ui.page == GLOBAL) {
         tempo = (unsigned)clamp((int)tempo + knob[0], 40, 240);
         swing = (unsigned)clamp((int)swing + knob[1] * 2, 0, 70);
@@ -2637,6 +2662,12 @@ static void draw_panel(void)
         const char *patch_name = selected == DRUMS ? drum_kits[tracks[selected].patch].name :
             slap_patches[tracks[selected].patch].name;
         cv_begin(240, 40, background);
+        HalfTrace dma = {0};
+        unsigned written = half_trace_written, fault_count = half_trace_faults;
+        if (slap_ui.page == GLOBAL && global_details == 8 && written) {
+            dma = half_trace[(written - 1u) & (HALF_TRACE_SIZE - 1u)];
+            if (written != half_trace_written) dma = (HalfTrace){0};
+        }
         cv_text(8, 4, &FONT_M, slap_ui.page == GLOBAL ? "SYSTEM" : patch_name, c);
         cv_text(8, 25, slap_ui.page == RECORD ? &FONT_S : &FONT_XS, slap_ui.page == MIXER ? "SEL MUTE  /  ARP SOLO" :
             slap_ui.page == RECORD ? (recording ? "SEL END TAKE  /  PLAY STOP" : playing ? "STOP TO ARM A TAKE" : "SEL ARM  /  PLAY TO START") :
@@ -2646,7 +2677,7 @@ static void draw_panel(void)
             global_details == 4 ? "CORE TIMING  /  GLO NEXT" :
             global_details == 5 ? "CORE 1 STATUS  /  GLO NEXT" :
             global_details == 9 ? "ENGINE SPAN PEAKS  /  TIMING OVERHEAD" :
-            global_details == 8 ? "DMA TRACE  /  TIMING OVERHEAD" :
+            global_details == 8 ? (half_trace_frozen ? "DMA FROZEN / K1 PAGE / K2 RESUME" : "DMA TRACE / K1 PAGE / K2 FREEZE") :
             global_details == 7 ? "SPIKE PROFILE  /  TIMING OVERHEAD" :
             global_details == 6 ? "DISPATCH  /  GLO NEXT" : "SLAP-5 " APP_VERSION "  /  GLO FOR PEAK", C_WHITE);
         cv_blit(0, 48);
@@ -2733,17 +2764,22 @@ static void draw_panel(void)
                         continue;
                     }
                     if (global_details == 8) {
-                        static const char *const labels_dma[] = {
-                            "DMA HALF US", "APP CALLBACK US", "WORKER WAIT US",
-                            "CORE 1 OVERLAP US", "NESTED T5 US", "HALF XRUN"
+                        static const char *const labels_dma[4][6] = {
+                            {"DMA HALF US", "APP CALLBACK US", "ACK US", "NESTED T5 US", "HALF XRUN", "DEADLINE MISS"},
+                            {"VOICE BATCH US", "LOCAL VOICE US", "NOTE-ON US", "DISPATCH US", "MAX SPAN US", "BATCH FX US"},
+                            {"CORE 1 WORK US", "WORKER WAIT US", "CORE 1 OVERLAP US", "COMPLETED JOBS", "T5 INTERRUPTS", "DMA BUFFER"},
+                            {"TRACE ID", "FAULT RECORDS", "OTHER APP US", "OUTSIDE APP US", "TICK STAMP", "HALF XRUN"}
                         };
-                        unsigned written = half_trace_written;
-                        unsigned i = (written - 1u) & (HALF_TRACE_SIZE - 1u);
-                        unsigned values[] = {half_trace[i].half / 24u, half_trace[i].app / 24u,
-                            half_trace[i].wait / 24u, half_trace[i].overlap / 24u,
-                            half_trace[i].timer5 / 24u, half_trace[i].xrun};
-                        cv_text(x, 0, &FONT_XS, labels_dma[stage], C_WHITE);
-                        decimal(number, written ? values[stage] : 0);
+                        uint32_t accounted = dma.voice + dma.fx_batch;
+                        unsigned values[4][6] = {
+                            {dma.half / 24u, dma.app / 24u, dma.ack / 24u, dma.timer5 / 24u, dma.xrun, dma.deadline},
+                            {dma.voice / 24u, dma.local / 24u, dma.note_on / 24u, dma.dispatch / 24u, dma.span / 24u, dma.fx_batch / 24u},
+                            {dma.remote / 24u, dma.wait / 24u, dma.overlap / 24u, dma.jobs, dma.nested, dma.buffer},
+                            {written, fault_count, dma.app > accounted ? (dma.app - accounted) / 24u : 0u,
+                             dma.half > dma.app ? (dma.half - dma.app) / 24u : 0u, dma.observed, dma.xrun}
+                        };
+                        cv_text(x, 0, &FONT_XS, labels_dma[dma_view][stage], C_WHITE);
+                        decimal(number, values[dma_view][stage]);
                         cv_text(x, 13, text_w(&FONT_M, number) > 110 ? &FONT_S : &FONT_M, number, c);
                         continue;
                     }

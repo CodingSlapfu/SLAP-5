@@ -116,6 +116,9 @@ void fm1_alnk0_irq(void)                            /* via isr_alnk0 (hal/fm1_is
         uint32_t started = trace ? fm1_ticks() : 0u, nested = trace ? fm1b_dbg.nested : 0u;
 #endif
         render_block(&abuf[half * HALF_WORDS]);
+#ifdef APP_AUDIO_HALF_PROFILE
+        uint32_t before_ack = trace ? fm1_ticks() : 0;
+#endif
         fm1_audio_ack_half();
         unsigned xrun = fm1_audio_free_half() != half;
         if (xrun) {
@@ -123,8 +126,11 @@ void fm1_alnk0_irq(void)                            /* via isr_alnk0 (hal/fm1_is
             audio_xruns++;
         }
 #ifdef APP_AUDIO_HALF_PROFILE
-        if (trace && app_audio_half_profile_enabled)
-            app_audio_half_profile(fm1_ticks() - started, fm1b_dbg.nested - nested, audio_timer5_ticks, xrun);
+        if (trace && app_audio_half_profile_enabled) {
+            uint32_t ended = fm1_ticks();
+            app_audio_half_profile(ended - started, fm1b_dbg.nested - nested, audio_timer5_ticks,
+                                   ended - before_ack, half, xrun);
+        }
 #endif
     }
 }
