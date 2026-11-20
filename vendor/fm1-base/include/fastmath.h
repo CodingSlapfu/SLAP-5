@@ -27,13 +27,13 @@
 
 typedef union { float f; uint32_t u; int32_t i; } fm_bits_t;
 
-static inline float fm_fabsf(float x) { fm_bits_t b; b.f = x; b.u &= 0x7FFFFFFFu; return b.f; }
-static inline float fm_minf(float a, float b) { return a < b ? a : b; }
+static inline __attribute__((always_inline)) float fm_fabsf(float x) { fm_bits_t b; b.f = x; b.u &= 0x7FFFFFFFu; return b.f; }
+static inline __attribute__((always_inline)) float fm_minf(float a, float b) { return a < b ? a : b; }
 static inline float fm_maxf(float a, float b) { return a > b ? a : b; }
-static inline float fm_clampf(float x, float lo, float hi) { return x < lo ? lo : x > hi ? hi : x; }
+static inline __attribute__((always_inline)) float fm_clampf(float x, float lo, float hi) { return x < lo ? lo : x > hi ? hi : x; }
 
 /* floor for |x| < 2^31 */
-static inline float fm_floorf(float x)
+static inline __attribute__((always_inline)) float fm_floorf(float x)
 {
     int32_t i = (int32_t)x;
     float f = (float)i;

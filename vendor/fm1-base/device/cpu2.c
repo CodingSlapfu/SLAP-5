@@ -5,6 +5,14 @@
  * (fm1_irq.h with FM1_CPU1) are felucca-bsp's; here: when it may start, and the app's calls. */
 #include "fm1_cpu1.h"
 
+static unsigned cpu2_start_state;
+static volatile uint32_t cpu2_probe_result;
+
+static void cpu2_probe(uint32_t challenge)
+{
+    cpu2_probe_result = fm1_cnum() == 1u ? challenge ^ 0x43315259u : 0;
+}
+
 static uint8_t cpu2_booting;                    /* app_init is running: the one time it may start (main_fm1.c) */
 
 /* at boot, before app_init: the bar an earlier build set is lifted (FM1B_BUILD: tools/build.py build_id) */
@@ -22,9 +30,27 @@ int plat_cpu2_set(int on)
     /* at power-on only, in app_init, before the audio and the timers (the start that works: Melodee's, X0X's; safe
      * mode runs no app). With the fallback (fm1.toml cpu2_fallback), not after a failed start: one core; without,
      * always (a failure restarts, and two failed starts are safe mode) */
-    if (!cpu2_booting || (FM1_CPU1_FALLBACK && bootguard.failed))
+    if (!cpu2_booting)
         return -1;
-    return fm1_cpu1_start();
+    if (FM1_CPU1_FALLBACK && bootguard.failed) {
+        cpu2_start_state = PLAT_CPU2_BOOT_GUARD;
+        return -1;
+    }
+    if (fm1_cpu1_start() != 0) {
+        cpu2_start_state = fm1_cpu1_barred() ? PLAT_CPU2_BARRED : PLAT_CPU2_NO_REPLY;
+        return -1;
+    }
+    // Exercise the real mailbox before entering the audio callback.
+    const uint32_t challenge = 0x8a163015u;
+    cpu2_probe_result = 0;
+    if (!fm1_cpu1_run(cpu2_probe, challenge) || fm1_cpu1_wait() != 0 ||
+        cpu2_probe_result != (challenge ^ 0x43315259u)) {
+        if (fm1_cpu1_on) fm1_cpu1_retire(FM1_CPU1_MISREAD);
+        cpu2_start_state = PLAT_CPU2_PROBE_FAILED;
+        return -1;
+    }
+    cpu2_start_state = PLAT_CPU2_STARTED;
+    return 0;
 }
 int plat_cpu2_on(void) { return fm1_cpu1_on; }
 int plat_cpu2_run(void (*fn)(uint32_t), uint32_t arg) { return fm1_cpu1_run(fn, arg); }
@@ -35,3 +61,7 @@ int plat_cpu2_gave_up(void) { return fm1_cpu1_gave_up; }
 uint32_t plat_cpu2_bad(void) { return fm1_cpu1_mb.rejected; }
 int plat_cpu2_barred(void) { return fm1_cpu1_barred(); }
 uint32_t plat_cpu2_stack(void) { return fm1_cpu1_stack_used(); }
+unsigned plat_cpu2_start_state(void) { return cpu2_start_state; }
+uint32_t plat_cpu2_mailbox_jobs(void) { return fm1_cpu1_mb.jobs; }
+uint32_t plat_cpu2_mailbox_requests(void) { return fm1_cpu1_mb.request; }
+void plat_cpu2_retire_late(void) { if (fm1_cpu1_on) fm1_cpu1_retire(FM1_CPU1_LATE); }

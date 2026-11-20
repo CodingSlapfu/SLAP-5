@@ -91,6 +91,11 @@
 #include <stdint.h>
 #include <math.h>
 #include <time.h>
+#ifndef PLAT_WEB
+#include <pthread.h>
+#include <sched.h>
+#include <stdatomic.h>
+#endif
 #define __attribute__(x)
 
 /* ------------------------------------------------------------ screen --- */
@@ -630,22 +635,91 @@ uint32_t plat_ticks24(void)                     /* the host's monotonic clock, a
 #if FM1B_CPU2 && !defined(APP_HOST_CPU2)
 /* the second core, simulated: a job runs at once, in order (the same sums as the device's split) */
 static int cpu2_on;
-int plat_cpu2_set(int on) { cpu2_on = on; return 0; }
+static uint32_t cpu2_jobs;
+#ifndef PLAT_WEB
+enum { CPU2_IDLE, CPU2_WORK, CPU2_STOP };
+static pthread_t cpu2_thread;
+static atomic_int cpu2_state;
+static int cpu2_threaded;
+static void (*cpu2_task)(uint32_t);
+static uint32_t cpu2_arg;
+
+static void *cpu2_host_worker(void *unused)
+{
+    (void)unused;
+    for (;;) {
+        int state = atomic_load_explicit(&cpu2_state, memory_order_acquire);
+        if (state == CPU2_STOP) return NULL;
+        if (state == CPU2_WORK) {
+            cpu2_task(cpu2_arg);
+            atomic_store_explicit(&cpu2_state, CPU2_IDLE, memory_order_release);
+        } else {
+            sched_yield();
+        }
+    }
+}
+#endif
+
+int plat_cpu2_busy(void)
+{
+#ifndef PLAT_WEB
+    return cpu2_threaded && atomic_load_explicit(&cpu2_state, memory_order_acquire) == CPU2_WORK;
+#else
+    return 0;
+#endif
+}
+
+int plat_cpu2_wait(void)
+{
+#ifndef PLAT_WEB
+    while (plat_cpu2_busy()) sched_yield();
+#endif
+    return cpu2_on ? 0 : -1;
+}
+
+int plat_cpu2_set(int on)
+{
+#ifndef PLAT_WEB
+    if (!on && cpu2_threaded) {
+        // Joining prevents a simulated late worker from writing into recovered state.
+        plat_cpu2_wait();
+        atomic_store_explicit(&cpu2_state, CPU2_STOP, memory_order_release);
+        pthread_join(cpu2_thread, NULL);
+        cpu2_threaded = 0;
+    }
+    if (on && !cpu2_on && getenv("SLAP_TEST_ASYNC")) {
+        atomic_store_explicit(&cpu2_state, CPU2_IDLE, memory_order_relaxed);
+        if (pthread_create(&cpu2_thread, NULL, cpu2_host_worker, NULL) != 0) return -1;
+        cpu2_threaded = 1;
+    }
+#endif
+    cpu2_on = on;
+    return 0;
+}
 int plat_cpu2_on(void) { return cpu2_on; }
 int plat_cpu2_run(void (*fn)(uint32_t), uint32_t arg)
 {
-    if (!cpu2_on)
-        return 0;
-    fn(arg);
+    if (!cpu2_on || plat_cpu2_busy()) return 0;
+#ifndef PLAT_WEB
+    if (cpu2_threaded) {
+        cpu2_task = fn;
+        cpu2_arg = arg;
+        atomic_store_explicit(&cpu2_state, CPU2_WORK, memory_order_release);
+    } else
+#endif
+        fn(arg);
+    ++cpu2_jobs;
     return 1;
 }
-int plat_cpu2_wait(void) { return 0; }
 void plat_cpu2_sync(void) {}
-int plat_cpu2_busy(void) { return 0; }
 int plat_cpu2_gave_up(void) { return 0; }
 uint32_t plat_cpu2_bad(void) { return 0; }
 int plat_cpu2_barred(void) { return 0; }
 uint32_t plat_cpu2_stack(void) { return 0; }
+unsigned plat_cpu2_start_state(void) { return cpu2_on ? PLAT_CPU2_STARTED : PLAT_CPU2_NOT_TRIED; }
+uint32_t plat_cpu2_mailbox_jobs(void) { return cpu2_jobs - (unsigned)plat_cpu2_busy(); }
+uint32_t plat_cpu2_mailbox_requests(void) { return cpu2_jobs; }
+void plat_cpu2_retire_late(void) { plat_cpu2_set(0); }
 #endif
 
 /* -------------------------------------------------------------- app --- */

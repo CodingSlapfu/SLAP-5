@@ -122,10 +122,10 @@ static uint32_t bytes(unsigned a, unsigned b, unsigned c, unsigned d)
     return a | b << 8 | c << 16 | d << 24;
 }
 static float unit(unsigned x) { return x * (1.0f / 127.0f); }
-static float clamp_signal(float x) { return fm_clampf(x, -0.999f, 0.999f); }
-static int16_t pack(float x) { return (int16_t)(clamp_signal(x) * 32767.0f); }
-static float unpack(int16_t x) { return x * (1.0f / 32768.0f); }
-static float soft(float x) { return x / (1.0f + fm_fabsf(x)); }
+static inline __attribute__((always_inline)) float clamp_signal(float x) { return fm_clampf(x, -0.999f, 0.999f); }
+static inline __attribute__((always_inline)) int16_t pack(float x) { return (int16_t)(clamp_signal(x) * 32767.0f); }
+static inline __attribute__((always_inline)) float unpack(int16_t x) { return x * (1.0f / 32768.0f); }
+static inline __attribute__((always_inline)) float soft(float x) { return x / (1.0f + fm_fabsf(x)); }
 
 void slap_fx_init(void)
 {
@@ -224,19 +224,19 @@ void slap_fx_begin(unsigned bpm)
     }
 }
 
-static unsigned preceding(unsigned pos, unsigned n, unsigned length)
+static inline __attribute__((always_inline)) unsigned preceding(unsigned pos, unsigned n, unsigned length)
 {
     return pos >= n ? pos - n : pos + length - n;
 }
 
-static float fold(float x)
+static inline __attribute__((always_inline)) float fold(float x)
 {
     float y = (x + 1.0f) * 0.25f;
     y -= fm_floorf(y);
     return 1.0f - 4.0f * fm_fabsf(y - 0.5f);
 }
 
-static float insert_sample(Fx *f, float x, float lfo, float flange)
+static inline __attribute__((always_inline)) float insert_sample(Fx *f, float x, float lfo, float flange)
 {
     float drive = 1.0f + f->amount * 12.0f;
     float out = x;
@@ -284,6 +284,9 @@ unsigned slap_fx_active_mask(void)
     return mask;
 }
 
+#ifndef PLAT_HOST
+__attribute__((section(".c1_text.slap_fx"), noinline))
+#endif
 float slap_fx_sample(unsigned track, float dry)
 {
     Fx *f = &fx[track];

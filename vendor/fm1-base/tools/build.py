@@ -1017,7 +1017,7 @@ def build_host():
            "-Wno-unused-function", "-Wno-unused-parameter", "-DPLAT_HOST", *opt_flags(), *["-DFM1B_BLE=1"] * BLE, *["-DFM1B_BLE_CENTRAL=1"] * (BLE and bool(CONF.get("ble_central"))), *["-DFM1B_WIFI=1"] * WIFI,
            *(f"-I{d}" for d in (SRC / "device", SRC / "include", SRC / "lib", APP, GEN, *(APP / d for d in CONF.get("include", [])))),
            *(f'-DAPP_VERSION="{VERSION}"',) * bool(VERSION),
-           "-o", str(exe), str(SRC / "host" / "plat_host.c"), *o2_objs, "-lm"]
+           "-o", str(exe), str(SRC / "host" / "plat_host.c"), *o2_objs, "-lm", "-pthread"]
     r = subprocess.run(cmd, capture_output=True, text=True)
     sys.stderr.write(r.stderr)
     if r.returncode:

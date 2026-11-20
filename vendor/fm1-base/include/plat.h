@@ -313,6 +313,13 @@ uint32_t plat_cpu2_bad(void);          /* the jobs it misread */
 int plat_cpu2_barred(void);            /* 1: one core until power-off (given up, or the first core crashed beside it) */
 uint32_t plat_cpu2_stack(void);        /* how deep its stack (2816 B) has gone, in bytes */
 
+enum { PLAT_CPU2_NOT_TRIED, PLAT_CPU2_STARTED, PLAT_CPU2_BOOT_GUARD,
+       PLAT_CPU2_BARRED, PLAT_CPU2_NO_REPLY, PLAT_CPU2_PROBE_FAILED };
+unsigned plat_cpu2_start_state(void);
+uint32_t plat_cpu2_mailbox_jobs(void);
+uint32_t plat_cpu2_mailbox_requests(void);
+void plat_cpu2_retire_late(void);     /* hold the worker before recovering its job */
+
 /* the app's optional hooks (app.h defines the macro when it has the function):
  *   APP_TICK        void app_tick(void)           1 kHz, in the timer interrupt (a clock, a sequencer)
  *   APP_BOOT        void app_boot(void)           once, after the platform is up, before app_ui_init (a radio)

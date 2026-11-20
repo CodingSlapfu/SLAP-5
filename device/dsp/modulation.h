@@ -32,10 +32,10 @@ static unsigned scale_degree(unsigned note, unsigned degrees, unsigned root, uns
     return note;
 }
 
-static float lfo_shape(unsigned kind, float phase, float held)
+static inline __attribute__((always_inline)) float lfo_shape(unsigned kind, float phase, float held)
 {
     switch (kind) {
-    case 1: return slap_sine(phase);
+    case 1: return lfo_sine(phase);
     case 2: return 1.0f - 4.0f * fm_fabsf(phase - 0.5f);
     case 3: return 2.0f * phase - 1.0f;
     case 4: return phase < 0.5f ? 1.0f : -1.0f;

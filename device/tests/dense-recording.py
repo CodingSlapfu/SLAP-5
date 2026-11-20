@@ -15,7 +15,7 @@ import wave
 from pcm_parity import compare_pcm
 
 
-def scenario(seed, bpm, bars, fx, visual):
+def scenario(seed, bpm, bars, fx, visual, chords=False):
     rng = random.Random(seed)
     commands = ["wait 6100", f"turn ALGO {bpm - 112}", f"expect tempo {bpm}"]
     if bars > 1:
@@ -28,6 +28,8 @@ def scenario(seed, bpm, bars, fx, visual):
         commands.append(f"expect track {track + 1}")
         if steps > 16:
             commands += [f"turn K2 {steps - 16}", f"expect length {steps}"]
+        if chords and track < 4:
+            commands += ["tap SEL", "turn K3 1", "expect chord_mode 1", "tap HOME"]
         commands += ["tap REC", "wait 6400", "expect rec_running 1"]
         for _ in range(steps if bars == 1 else steps // 2):
             keys = rng.sample(range(8 if track == 4 else 19), rng.choice((2, 2, 3, 4)))
@@ -57,9 +59,11 @@ def main():
     parser.add_argument("--bars", type=int, choices=(1, 16, 32), default=1)
     parser.add_argument("--fx", action="store_true")
     parser.add_argument("--visual", action="store_true")
+    parser.add_argument("--chords", action="store_true")
+    parser.add_argument("--async-worker", action="store_true")
     args = parser.parse_args()
     host = Path(__file__).resolve().parents[1] / "build/host/slap-5_host"
-    commands = scenario(args.seed, args.bpm, args.bars, args.fx, args.visual)
+    commands = scenario(args.seed, args.bpm, args.bars, args.fx, args.visual, args.chords)
     with tempfile.TemporaryDirectory() as work_path:
         work = Path(work_path)
         wavs = {}
@@ -68,8 +72,14 @@ def main():
             directory.mkdir()
             script = directory / "case.txt"
             worker_assert = "expect worker_jobs >0" if mode == "worker" else "expect worker_jobs 0"
-            script.write_text("\n".join([*commands, worker_assert, "expect worker_fallbacks 0"]) + "\n")
+            assertions = [worker_assert, "expect worker_fallbacks <2" if mode == "worker" and args.async_worker
+                          else "expect worker_fallbacks 0"]
+            if mode == "worker" and args.async_worker:
+                assertions += ["expect worker_overlap_us >0"]
+            script.write_text("\n".join([*commands, *assertions]) + "\n")
             env = {key: value for key, value in os.environ.items() if not key.startswith("SLAP_TEST_")}
+            if mode == "worker" and args.async_worker:
+                env["SLAP_TEST_ASYNC"] = "1"
             if mode == "single":
                 env["SLAP_TEST_SINGLE_CORE"] = "1"
             subprocess.run([host, script, directory], env=env, check=True)

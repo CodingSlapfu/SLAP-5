@@ -6,6 +6,7 @@
 
 #define APP_NAME "SLAP-5"
 #define APP_SPLASH_RGB RGB(45,230,245)
+#define APP_CPU2_EARLY 1  /* boot and verify Core 1 after rails settle, before the LCD and DSP init */
 #define APP_BLOCK 256u
 #define APP_CANVAS_PX (240u*52u)
 #define APP_BLE_AT_BOOT 0

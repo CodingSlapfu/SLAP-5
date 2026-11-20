@@ -914,6 +914,14 @@ static void fm1_main(void)
 #endif
         }
     }
+#if FM1B_CPU2 && defined(APP_CPU2_EARLY)
+    if (!safe_mode) {
+        cpu2_boot();
+        cpu2_booting = 1;
+        plat_cpu2_set(1);
+        cpu2_booting = 0;
+    }
+#endif
     lcd_init();
     palette_set(APP_PALETTE);
     splash();
@@ -944,12 +952,12 @@ static void fm1_main(void)
     fm1_adc_init();
     panel_init();
     led_pos_init();
-#if FM1B_CPU2
+#if FM1B_CPU2 && !defined(APP_CPU2_EARLY)
     cpu2_boot();
     cpu2_booting = 1;                               /* (plat_cpu2_set: the second core starts in app_init or never) */
 #endif
     app_init();                                     /* the app's engine and its saved state (or defaults) */
-#if FM1B_CPU2
+#if FM1B_CPU2 && !defined(APP_CPU2_EARLY)
     cpu2_booting = 0;
 #endif
     audio_init();
