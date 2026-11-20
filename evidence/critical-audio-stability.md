@@ -50,7 +50,7 @@ specific DSP stages on the physical FM-1 remains unmeasured.
   Native concurrent timing and repeated late-FX recovery remain open.
 - GLO cycles through summary, non-intrusive peak breakdown, opt-in serial
   profiling and worker counts. The serial page measures input/setup,
-  sequencing and arpeggio, direct voices, serial FX/FX output reads, mixing,
+  sequencing and arpeggio, direct voices, serial FX, mixing,
   and master/output/telemetry at the worst profiled block. Its per-sample
   timer reads add overhead. Use the ordinary summary for deadline qualification.
   These categories do not yet separately isolate drum allocation, metronome,
@@ -86,7 +86,7 @@ and shared wet buses are not qualified by this checkpoint.
 
 ### Host comparison
 
-Three 10,000-block x86 WASM passes used the same preloaded dense dry pattern.
+Three 10,000-block x86 WASM passes on the first instrumentation checkpoint used the same preloaded dense dry pattern.
 Median run means were 74.85 µs on released v0.1.14 and 76.70 µs on the
 candidate. Median run P99 values were 278.49 and 342.15 µs. Median run
 maxima were 2,259.69 and 2,358.00 µs. The passes are noisy and give no
@@ -94,8 +94,8 @@ consistent speedup. WASM does not execute the native dual-core scheduling
 changes. These measurements cannot establish an FM-1 improvement.
 
 Candidate identity FM-1_75000115. FWSC SHA-256
-a39f7408eff209e675a98c9f86aa7d4abc6a9b1d64df25b2434b553f405adbe3.
-Audited app 153,716 bytes; .data+.bss 58,980 / 98,304 and pool
+9306c77f723a11dcb3e96751e21a21ceea389f77da63be33ed94b2bc564b12b9.
+Audited app 153,684 bytes; .data+.bss 58,980 / 98,304 and pool
 328,612 / 344,064 bytes.
 
 ## Gate and resume

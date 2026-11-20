@@ -1310,19 +1310,21 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
         float l = 0.0f, r = 0.0f;
         for (unsigned t = 0; t < TRACKS; ++t) {
             unsigned sample_cost = measure_fx && i == 0u;
-            uint32_t started = sample_cost || profile ? plat_ticks24() : 0u;
-            float processed;
+            float processed = dry[t];
 #if FM1B_CPU2 && !defined(PLAT_WEB)
             if (i < fx_batch_end) processed = fx_bus[t][i - batch_start];
             else
 #endif
-            processed = (effect_mask & (1u << t)) ? slap_fx_sample(t, dry[t]) : dry[t];
-            if (profile || sample_cost) {
-                section = plat_ticks24();
-                uint32_t ticks = section - started;
-                if (profile) serial[PROFILE_FX] += ticks;
-                if (sample_cost) fx_cost_ticks[t] = (7u * fx_cost_ticks[t] + ticks + 4u) / 8u;
+            if (effect_mask & (1u << t)) {
+                uint32_t started = sample_cost || profile ? plat_ticks24() : 0u;
+                processed = slap_fx_sample(t, dry[t]);
+                if (profile || sample_cost) {
+                    uint32_t ticks = plat_ticks24() - started;
+                    if (profile) serial[PROFILE_FX] += ticks;
+                    if (sample_cost) fx_cost_ticks[t] = (7u * fx_cost_ticks[t] + ticks + 4u) / 8u;
+                }
             }
+            if (profile) section = plat_ticks24();
             float sample = dry[t] + wet[t] * (processed - dry[t]);
             float amplitude = fm_fabsf(sample);
             mixer_envelope[t] += (amplitude - mixer_envelope[t]) *
