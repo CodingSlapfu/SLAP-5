@@ -2,6 +2,14 @@
 /* Copyright (C) 2026 Ziao */
 #include "synthesis.h"
 #include "fastmath.h"
+#include "oscillator.h"
+
+#ifndef PLAT_HOST
+__attribute__((section(".data"), aligned(16)))
+#endif
+const float slap_sine_table[SLAP_SINE_SIZE + 1] = {
+#include "slap_sine_table.inc"
+};
 
 const char *const slap_engine_names[SLAP_ENGINES] = {
     "OP FM", "VIRTUAL ANALOG", "WAVETABLE", "PHASE DIST",
@@ -16,7 +24,7 @@ static float wrap(float phase)
     return phase - (float)(int)phase + (phase < 0.0f && phase != (float)(int)phase ? 1.0f : 0.0f);
 }
 
-static float sine(float phase) { return fm_sinf(6.283185307f * wrap(phase)); }
+static float sine(float phase) { return slap_oscillator(phase); }
 static float tri(float phase) { return 1.0f - 4.0f * fm_fabsf(wrap(phase) - 0.5f); }
 static float limit(float v) { return v / (1.0f + fm_fabsf(v)); }
 

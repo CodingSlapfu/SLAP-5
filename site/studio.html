@@ -27,7 +27,7 @@
     <section class="toolbar" aria-label="Record a take">
       <label>Bars<select id="take-bars"><option>1</option><option>2</option><option>4</option><option>8</option><option>16</option><option>32</option></select></label>
       <label>Start<select id="take-start"><option value="0">First note</option><option value="1">Count-in</option></select></label>
-      <label>Quantize<input id="take-quant" type="checkbox" checked></label>
+      <label>Quantize<select id="take-quant"><option value="0">Off</option><option value="1">25% · 1/8</option><option value="2">50% · 1/8</option><option value="3">75% · 1/8</option><option value="4">100% · 1/8</option><option value="5">25% · 1/16</option><option value="6" selected>50% · 1/16</option><option value="7">75% · 1/16</option><option value="8">100% · 1/16</option><option value="9">25% · 1/32</option><option value="10">50% · 1/32</option><option value="11">75% · 1/32</option><option value="12">100% · 1/32</option></select></label>
       <label>Mode<select id="take-mode"><option value="0">Overdub</option><option value="1">Replace</option></select></label>
       <button id="take" disabled>Record track</button><button id="quick-take" disabled>Quick REC</button><button id="use-midi" disabled>Enable MIDI</button>
       <output id="take-state" aria-live="polite"></output>
@@ -68,6 +68,7 @@
         <output id="position">Select a step</output>
         <label>Velocity<input id="velocity" type="number" min="1" max="127" disabled></label>
         <label>Gate<input id="gate" type="number" min="1" max="255" disabled></label>
+        <label>Hold ms<input id="hold-ms" type="number" min="0" max="190214" disabled></label>
         <label>Hit %<input id="prob" type="number" min="0" max="100" disabled></label>
         <label>Offset <input id="timing" type="number" min="0" max="15" disabled></label>
         <span id="drum-controls" hidden><label>Drum lane <select id="drum-lane"><option value="0">Kick</option><option value="1">Snare</option><option value="2">Hat</option><option value="3">Rim</option><option value="4">Clap</option><option value="5">Cymbal</option></select></label>

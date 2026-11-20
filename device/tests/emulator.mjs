@@ -143,10 +143,10 @@ await app.onMessage({ type: 'app', command: 'project', project: structuredClone(
 await app.onMessage({ type: 'app', command: 'record-start', track: 0, bars: 5, countIn: 0, unquantized: 1, replace: 0 });
 assert.equal(frames.at(-1).state, 6);
 render(10);
-for (const pitch of [60, 64])
+for (const pitch of [60, 64, 67, 71])
   await app.onMessage({ type: 'app', command: 'record-note', pitch, velocity: 100 });
 render(10);
-for (const pitch of [60, 64])
+for (const pitch of [60, 64, 67, 71])
   await app.onMessage({ type: 'app', command: 'record-note', pitch, velocity: 0 });
 render(10);
 await app.onMessage({ type: 'app', command: 'record-status' });
@@ -158,9 +158,17 @@ await app.onMessage({ type: 'app', command: 'read-take' });
 const take = validateProject(frames.at(-1).project);
 assert.equal(take.tracks[0].mix, withPatternLength(frames[0].project.tracks[0].mix, 512));
 assert.equal(take.tracks[0].steps[0] & 127, 60);
-assert.equal(take.tracks[0].extra[0][0] & 127, 64);
+assert.deepEqual(take.tracks[0].extra.map(lane => lane[0] & 127), [64, 67, 71]);
+const previousFormat = {
+  ...take, version: 3, tracks: take.tracks.map((part, track) =>
+    track === 4 ? part : { ...part, extra: part.extra.slice(0, 1), offsets: part.offsets.slice(0, 2) })
+};
+const migrated = validateProject(previousFormat);
+assert.equal(migrated.tracks[0].extra[0][0] & 127, 64);
+assert.ok(migrated.tracks[0].extra[1].every(word => word === 0));
+assert.ok(migrated.tracks[0].extra[2].every(word => word === 0));
 assert.ok((take.tracks[0].steps[0] >>> 16 & 255) > 1);
-console.log('Studio recorded and finalized two simultaneous notes in a 32-bar take.');
+console.log('Studio recorded four simultaneous notes in a 32-bar take and migrated a two-lane project.');
 
 await app.onMessage({ type: 'app', command: 'transport', playing: true });
 render(20);
@@ -172,3 +180,26 @@ await app.onMessage({ type: 'app', command: 'record-stop' });
 assert.equal(frames.at(-1).state, 0);
 assert.equal(frames.at(-1).playing, true);
 console.log('Studio Quick REC started during playback and stopping the take preserved transport.');
+
+const timingCases = [];
+for (const quantization of [0, 5, 6, 7, 8]) {
+  await app.onMessage({ type: 'app', command: 'transport', playing: false });
+  await app.onMessage({ type: 'app', command: 'project', project: frames[0].project });
+  await app.onMessage({ type: 'app', command: 'record-start', track: 0, bars: 5, countIn: 0, quantization, replace: 0 });
+  await app.onMessage({ type: 'app', command: 'record-note', pitch: 60, velocity: 100 });
+  render(12);
+  await app.onMessage({ type: 'app', command: 'record-note', pitch: 62, velocity: 85 });
+  render(172);
+  await app.onMessage({ type: 'app', command: 'record-note', pitch: 62, velocity: 0 });
+  render(2);
+  await app.onMessage({ type: 'app', command: 'record-stop' });
+  await app.onMessage({ type: 'app', command: 'read-take' });
+  const part = validateProject(frames.at(-1).project).tracks[0];
+  const lanes = [part.steps, ...part.extra];
+  const lane = lanes.findIndex(events => (events[0] & 127) === 62);
+  assert.ok(lane >= 0);
+  assert.equal(part.durations[lane][0], 172);
+  timingCases.push(part.offsets[lane][0]);
+}
+assert.equal(new Set(timingCases).size, 5);
+console.log('Five quantization strengths changed onset independently of the recorded hold duration.');

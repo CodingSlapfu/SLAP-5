@@ -48,10 +48,15 @@ function edit(change) {
 
 const selected = () => project.tracks[track];
 const pageStart = () => Math.floor(step / 64) * 64;
-const noteAt = (part, lane, step) => ({ ...decodeNote(eventLanes(part)[lane][step]), timing: part.offsets[lane][step] });
+const noteAt = (part, lane, step) => ({ ...decodeNote(eventLanes(part)[lane][step]), timing: part.offsets[lane][step], duration: part.durations[lane][step] });
+const durationMs = units => Math.round(units * 128000 / 44100);
+const durationUnits = ms => Math.min(65535, Math.round(ms * 44100 / 128000));
+const noteWidth = note => Math.max(10, width * (note.duration ?
+  note.duration * 128 * project.bpm / (44100 * 15) : note.gate / 192));
 function setNote(part, lane, step, note) {
   eventLanes(part)[lane][step] = note ? encodeNote(note.pitch, note.velocity, note.gate, note.probability) : 0;
   part.offsets[lane][step] = note?.timing ?? 0;
+  part.durations[lane][step] = note?.duration ?? 0;
 }
 const pitchAt = row => track === 4 ? drumNotes[row] : 84 - row;
 const noteLabel = (pitch) => track === 4 ? drums[drumRow(pitch)] :
@@ -119,6 +124,9 @@ function draw() {
     $(id).value = word ? value : '';
     $(id).disabled = !word;
   }
+  $('hold-ms').value = word && track !== 4 ? durationMs(note.duration) : '';
+  $('hold-ms').disabled = !word || track === 4;
+  $('gate').disabled = !word || !!note.duration;
   $('clear').disabled = !word;
   const g = ctx2d;
   g.font = '12px "SLAP Block", system-ui';
@@ -148,7 +156,7 @@ function paintNote(s, note) {
   const row = track === 4 ? drumRow(note.pitch) : 84 - note.pitch;
   if (row < 0 || row >= (track === 4 ? 6 : 49)) return;
   const x = left + (s - pageStart()) * width + 2, y = top + row * height + 2;
-  const size = Math.max(10, Math.min(width * 1.33, note.gate * width / 192));
+  const size = noteWidth(note);
   ctx2d.globalAlpha = 0.34 + note.velocity / 190;
   ctx2d.fillStyle = colors[track];
   ctx2d.fillRect(x, y, size, height - 5);
@@ -173,14 +181,22 @@ $('roll').addEventListener('pointerdown', e => {
   step = point.cell;
   const event = eventLanes(selected());
   const matches = (word, pitch) => word && (track === 4 ? drumRow(decodeNote(word).pitch) === drumRow(pitch) : decodeNote(word).pitch === pitch);
-  const hitLane = event.findIndex(row => matches(row[step], point.pitch));
+  let hitLane = event.findIndex(row => matches(row[step], point.pitch));
+  if (hitLane < 0 && track !== 4) {
+    const first = pageStart();
+    for (let start = step - 1; start >= first && hitLane < 0; --start) {
+      hitLane = event.findIndex((row, index) => matches(row[start], point.pitch) &&
+        point.x <= (start - first) * width + 2 + noteWidth(noteAt(selected(), index, start)));
+      if (hitLane >= 0) step = start;
+    }
+  }
   lane = hitLane >= 0 ? hitLane : track === 4 ? drumRow(point.pitch) + 1 : event.findIndex(row => !row[step]);
-  if (lane < 0) { lane = 0; $('status').textContent = 'Both note slots are occupied at this step.'; draw(); return; }
+  if (lane < 0) { lane = 0; $('status').textContent = 'All four note slots are occupied at this step.'; draw(); return; }
   const word = event[lane][step], note = noteAt(selected(), lane, step);
   if (word && (track === 4 ? drumRow(note.pitch) === drumRow(point.pitch) : note.pitch === point.pitch)) {
-    const end = (step - pageStart()) * width + 2 + Math.max(10, Math.min(width * 1.33, note.gate * width / 192));
+    const end = (step - pageStart()) * width + 2 + noteWidth(note);
     const resize = point.x > end - 7 && point.x < end + 2;
-    drag = { from: step, to: step, lane, note, initial: note.gate, resize, start: point.x };
+    drag = { from: step, to: step, lane, note, initial: note.gate, initialDuration: note.duration, resize, start: point.x };
     $('roll').setPointerCapture(e.pointerId);
     draw();
   } else {
@@ -193,7 +209,12 @@ $('roll').addEventListener('pointermove', e => {
   const point = hit(e);
   if (!point) return;
   if (drag.resize) {
-    drag.note.gate = Math.max(1, Math.min(255, Math.round(drag.initial + (point.x - drag.start) * 192 / width)));
+    if (drag.initialDuration) {
+      const deltaMs = (point.x - drag.start) * 15000 / (width * project.bpm);
+      drag.note.duration = Math.max(1, durationUnits(durationMs(drag.initialDuration) + deltaMs));
+    } else {
+      drag.note.gate = Math.max(1, Math.min(255, Math.round(drag.initial + (point.x - drag.start) * 192 / width)));
+    }
   } else {
     drag.to = point.cell;
     drag.note.pitch = point.pitch;
@@ -303,7 +324,7 @@ function startTake(quick) {
   $('quick-take').textContent = 'End take';
   $('take-state').textContent = 'Arming';
   send('record-start', { track, quick, bars: $('take-bars').selectedIndex,
-    countIn: Number($('take-start').value), unquantized: Number(!$('take-quant').checked), replace });
+    countIn: Number($('take-start').value), quantization: Number($('take-quant').value), replace });
 }
 $('take').addEventListener('click', () => startTake(false));
 $('quick-take').addEventListener('click', () => startTake(true));
@@ -345,6 +366,11 @@ for (const [id, key, max] of [['velocity', 'velocity', 127], ['gate', 'gate', 25
     setNote(p.tracks[track], lane, step, note);
   });
 }
+numberInput('hold-ms', 0, 190214, (p, value) => {
+  const note = noteAt(p.tracks[track], lane, step);
+  note.duration = durationUnits(value);
+  setNote(p.tracks[track], lane, step, note);
+});
 $('patch').addEventListener('change', () => {
   edit(p => { p.tracks[track].patch = Number($('patch').value); });
   send('audition', { track, pitch: track === 4 ? 36 : 60 });

@@ -16,6 +16,7 @@ void slap_fx_begin(unsigned bpm);
 uint32_t slap_fx_config(unsigned track, unsigned page);
 int slap_fx_config_valid(unsigned page, uint32_t word);
 void slap_fx_restore(unsigned track, unsigned page, uint32_t word);
+unsigned slap_fx_active_mask(void);
 float slap_fx_sample(unsigned track, float dry);
 int slap_fx_response(unsigned track, unsigned point);
 int slap_fx_trace(unsigned track, unsigned point);

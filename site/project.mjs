@@ -25,12 +25,14 @@ const defaultFx = [0, fxWord(0,0,0,22), fxWord(0,0,1,102), fxWord(0,48,68,52), 1
   fxWord(0,48,56,65), fxWord(0,2,52,87), fxWord(0,60,52,94), fxWord(0,54,108,39)];
 
 export function validateProject(project) {
-  if (![1, 2, 3].includes(project?.version) || !within(project.bpm, 40, 240) || !within(project.swing, 0, 70) ||
+  if (![1, 2, 3, 4, 5].includes(project?.version) || !within(project.bpm, 40, 240) || !within(project.swing, 0, 70) ||
       !Array.isArray(project.tracks) || project.tracks.length !== 5) throw new Error('Invalid SLAP-5 project header.');
   if (project.metronome !== undefined && !within(project.metronome, 0, 2))
     throw new Error('Invalid metronome setting.');
   const legacy = project.version === 1;
-  const extended = project.version === 3;
+  const extended = project.version >= 3;
+  const polyphonic = project.version >= 4;
+  const hasDurations = project.version === 5;
   const bankSize = extended ? maxSteps : 64;
   if (!legacy && (!within(project.drumFilters, 0, 0x3f3f) || (project.drumFilters & ~0x3f3f)))
     throw new Error('Invalid drum filters.');
@@ -43,16 +45,21 @@ export function validateProject(project) {
         track.fx.some((word, page) => !within(word, 0, 0xffffffff) || (word & 0x80808080) ||
           fxPanels[page].some((_, knob) => (word >>> (8 * knob) & 255) > fxLimit(page, knob)))))
       throw new Error('Invalid track effects.');
-    if (!legacy && (!Array.isArray(track.extra) || track.extra.length !== (i === 4 ? 6 : 1)))
+    if (!legacy && (!Array.isArray(track.extra) || track.extra.length !== (i === 4 ? 6 : polyphonic ? 3 : 1)))
       throw new Error('Invalid sequencer lane count.');
     if (extended && (!Array.isArray(track.offsets) || track.offsets.length !== track.extra.length + 1 ||
         track.offsets.some(offsets => !Array.isArray(offsets) || offsets.length !== bankSize ||
           offsets.some(offset => !within(offset, 0, 15))))) throw new Error('Invalid sixteenth-step offsets.');
+    if (hasDurations && (!Array.isArray(track.durations) || track.durations.length !== track.extra.length + 1 ||
+        track.durations.some(lane => !Array.isArray(lane) || lane.length !== bankSize ||
+          lane.some(units => !within(units, 0, i === 4 ? 0 : 65535)))))
+      throw new Error('Invalid note duration.');
     for (const [lane, events] of [track.steps, ...(legacy ? [] : track.extra)].entries()) {
       if (!Array.isArray(events) || events.length !== bankSize) throw new Error('Invalid sequencer lane.');
       for (const [index, word] of events.entries()) {
         if (word === 0) {
-          if (extended && track.offsets[lane][index]) throw new Error('Offset without a note.');
+          if ((extended && track.offsets[lane][index]) || (hasDurations && track.durations[lane][index]))
+            throw new Error('Timing or duration without a note.');
           continue;
         }
         const note = decodeNote(word);
@@ -63,15 +70,23 @@ export function validateProject(project) {
       }
     }
   }
-  if (extended) return { ...project, metronome: project.metronome ?? 0,
-    tracks: project.tracks.map(track => ({ ...track, fx: track.fx ?? [...defaultFx] })) };
-  return { ...project, version: 3, drumFilters: legacy ? 0 : project.drumFilters,
+  return { ...project, version: 5, drumFilters: legacy ? 0 : project.drumFilters,
     metronome: project.metronome ?? 0,
     tracks: project.tracks.map((track, i) => {
       const pad = lane => [...lane, ...Array(maxSteps - lane.length).fill(0)];
       const extra = legacy ? Array.from({ length: i === 4 ? 6 : 1 }, () => Array(64).fill(0)) : track.extra;
       const lanes = [track.steps, ...extra].map(pad);
-      return { ...track, fx: track.fx ?? [...defaultFx], steps: lanes[0].map(word => word & 0x7fff7fff), extra: lanes.slice(1).map(lane => lane.map(word => word & 0x7fff7fff)),
-        offsets: lanes.map(lane => lane.map(word => decodeNote(word).timing * 2)) };
+      const offsets = extended ? track.offsets.map(lane => [...lane]) :
+        lanes.map(lane => lane.map(word => decodeNote(word).timing * 2));
+      if (i !== 4 && !polyphonic) {
+        for (let lane = 0; lane < 2; lane++) {
+          lanes.push(Array(maxSteps).fill(0));
+          offsets.push(Array(maxSteps).fill(0));
+        }
+      }
+      return { ...track, fx: track.fx ?? [...defaultFx],
+        steps: lanes[0].map(word => word & 0x7fff7fff),
+        extra: lanes.slice(1).map(lane => lane.map(word => word & 0x7fff7fff)), offsets,
+        durations: hasDurations ? track.durations.map(lane => [...lane]) : lanes.map(() => Array(maxSteps).fill(0)) };
     }) };
 }

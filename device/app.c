@@ -2,6 +2,7 @@
 /* Copyright (C) 2026 Ziao */
 #include "fastmath.h"
 #include "synthesis.h"
+#include "oscillator.h"
 #include "effects.h"
 
 enum { TRACKS = 5, LEGACY_STEPS = 64, STEPS = 512, VOICES = 16, RATE = 44100 };
@@ -22,18 +23,27 @@ typedef struct {
     float drum_noise, drum_color, drum_body, drum_snap;
     uint32_t delay, rng;
     uint8_t lfo_wave, origin, kit, drum_family;
-    uint32_t remaining, age;
+    uint32_t remaining, age, sequence_note;
     uint8_t track, pitch, manual, releasing, struck;
 } Voice;
 
 static PLAT_POOL Track tracks[TRACKS];
 static PLAT_POOL volatile uint32_t extra_note[DRUMS][STEPS];
 static PLAT_POOL volatile uint32_t drum_lane[DRUM_LANES][STEPS];
-enum { SONG_LANES = DRUMS * 2 + DRUM_LANES + 1 };
+enum { MELODIC_LANES = 4, SONG5_LANES = DRUMS * 2 + DRUM_LANES + 1,
+       SONG_LANES = SONG5_LANES + DRUMS * (MELODIC_LANES - 2) };
+static PLAT_POOL volatile uint32_t poly_note[DRUMS][MELODIC_LANES - 2][STEPS];
+enum { NOTE_DURATION_UNIT = 128 };
+static PLAT_POOL uint16_t melodic_duration[DRUMS][MELODIC_LANES][STEPS];
+static unsigned triggered_sequence_note;
 /* Zero means V2–V4 eighth-step timing. Groups 1–4 hold the upper two
  * bits of a sixteenth-step offset; the event word holds its lower bits. */
 static PLAT_POOL uint8_t timing_group[SONG_LANES][STEPS];
-static unsigned pattern_row(unsigned track, unsigned lane) { return track * 2u + lane; }
+static unsigned pattern_row(unsigned track, unsigned lane)
+{
+    if (track == DRUMS || lane < 2u) return track * 2u + lane;
+    return SONG5_LANES + track * (MELODIC_LANES - 2u) + lane - 2u;
+}
 
 static const uint8_t lane_pitch[DRUM_LANES] = {36,38,42,37,39,49};
 #include "drum_patterns.h"
@@ -42,14 +52,23 @@ static unsigned gen_enabled = 1, gen_confirm, gen_count;
 static uint32_t gen_seed = 0xd14a1175u;
 static volatile uint32_t drum_filters;
 static volatile uint32_t scheduled_events;
-static volatile uint32_t recording, recorded_events, rec_begin_events;
+static volatile uint32_t recording, recorded_events, rec_begin_events, rec_rejected;
 static volatile uint32_t rec_running, rec_countdown;
-static unsigned rec_bars, rec_count_in, rec_unquantized, rec_replace;
-static unsigned rec_track, rec_length, rec_start_mode, rec_raw, rec_overwrite, rec_loop;
+static unsigned rec_bars, rec_count_in, rec_replace;
+// Zero is raw timing; each grid then has four strength settings.
+enum { REC_FULL_16 = 8, REC_NATURAL_16 = 6, REC_QUANT_MAX = 12 };
+static unsigned rec_quantize = REC_NATURAL_16;
+static const char *const rec_quant_labels[] = {
+    "OFF", "25% 1/8", "50% 1/8", "75% 1/8", "100% 1/8",
+    "25% 1/16", "50% 1/16", "75% 1/16", "100% 1/16",
+    "25% 1/32", "50% 1/32", "75% 1/32", "100% 1/32"
+};
+static unsigned rec_track, rec_length, rec_start_mode, rec_quant_setting, rec_overwrite, rec_loop;
 static unsigned rec_pressed_at, rec_gesture;
 static uint32_t record_clock;
 static struct {
     volatile uint32_t *cell;
+    uint16_t *duration;
     uint32_t start, step_ticks, word;
     unsigned pitch;
 } held_record[VOICES];
@@ -65,6 +84,8 @@ static volatile uint32_t dsp_avg_ticks, dsp_peak_ticks, dsp_budget_ticks;
 enum { DSP_BINS = 128, DSP_BIN_TICKS = 2400 };
 static volatile uint32_t dsp_histogram[DSP_BINS], dsp_callbacks;
 static volatile uint32_t dsp_reset_request, dsp_xrun_baseline;
+static unsigned global_details;
+static volatile uint32_t peak_voice_batch, peak_fx_batch, peak_worker_work, peak_worker_wait;
 
 static volatile uint32_t active_voices, voice_steals;
 static volatile uint8_t mixer_auto[TRACKS], mixer_proc[TRACKS];
@@ -96,25 +117,48 @@ static float meter_power[2], analysis_lp[SPECTRUM_BANDS - 1], analysis_power[SPE
 static float analysis_mono;
 static unsigned analysis_phase;
 
-static void analyze_audio(float left, float right)
+enum { ANALYSIS_QUEUE = 512, ANALYSIS_CHUNK = 128 };
+static float analysis_queue[ANALYSIS_QUEUE];
+static volatile unsigned analysis_write, analysis_read;
+
+static void capture_spectrum(float left, float right)
 {
     analysis_mono += (left + right) * 0.125f;
-    if (++analysis_phase == 4) {
-        static const float coefficient[] = {0.0336f, 0.0819f, 0.1809f, 0.3662f, 0.6412f, 0.8975f};
+    if (++analysis_phase != 4) return;
+    unsigned write = analysis_write;
+    if (write - analysis_read < ANALYSIS_QUEUE) {
+        analysis_queue[write % ANALYSIS_QUEUE] = analysis_mono;
+        __asm__ volatile("" ::: "memory");
+        analysis_write = write + 1;
+    }
+    analysis_mono = 0.0f;
+    analysis_phase = 0;
+}
+
+static void update_spectrum(void)
+{
+    static const float coefficient[] = {0.0336f, 0.0819f, 0.1809f, 0.3662f, 0.6412f, 0.8975f};
+    unsigned read = analysis_read, available = analysis_write - read;
+    if (available > ANALYSIS_CHUNK) available = ANALYSIS_CHUNK;
+    __asm__ volatile("" ::: "memory");
+    for (unsigned i = 0; i < available; ++i) {
+        float mono = analysis_queue[(read + i) % ANALYSIS_QUEUE];
         float previous = 0.0f;
         for (unsigned band = 0; band < SPECTRUM_BANDS; ++band) {
-            float next = analysis_mono;
+            float next = mono;
             if (band < SPECTRUM_BANDS - 1) {
-                analysis_lp[band] += (analysis_mono - analysis_lp[band]) * coefficient[band];
+                analysis_lp[band] += (mono - analysis_lp[band]) * coefficient[band];
                 next = analysis_lp[band];
             }
             float signal = next - previous;
             analysis_power[band] += (signal * signal - analysis_power[band]) * 0.0023f;
             previous = next;
         }
-        analysis_mono = 0.0f;
-        analysis_phase = 0;
     }
+    __asm__ volatile("" ::: "memory");
+    analysis_read = read + available;
+    for (unsigned band = 0; band < SPECTRUM_BANDS; ++band)
+        visual_band[band] = analysis_power[band];
 }
 static struct {
     uint32_t buttons, keys, frame_at, boot_at, booting;
@@ -253,7 +297,7 @@ static void trigger_voice(unsigned track, unsigned pitch, unsigned velocity, uin
     if (voice->age) ++voice_steals;
     *voice = (Voice) {
         .velocity = (float)velocity / 127.0f, .fall = 1.0f, .bend = 1.0f,
-        .remaining = duration, .age = ++ages,
+        .remaining = duration, .age = ++ages, .sequence_note = triggered_sequence_note,
         .track = (uint8_t)track, .pitch = (uint8_t)pitch, .manual = (uint8_t)manual,
         .origin = (uint8_t)origin, .delay = delay, .steal_tail = tail
     };
@@ -350,13 +394,37 @@ static unsigned note_timing(unsigned row, unsigned step, uint32_t word)
     return group ? (group - 1u) * 4u + timing_of(word) : timing_of(word) * 2u;
 }
 
+static unsigned melodic_lane_from_row(unsigned track, unsigned row)
+{
+    return row < SONG5_LANES ? row % 2u :
+        2u + row - SONG5_LANES - track * (MELODIC_LANES - 2u);
+}
+
 static void schedule_event(unsigned track, unsigned row, unsigned step, uint32_t word)
 {
     unsigned probability = (word >> 24) & 127u;
     if (!(word & ACTIVE) || probability <= random_word() % 100u) return;
     unsigned gate = until_step * ((word >> 16) & 255u) / 192u;
     unsigned delay = until_step * note_timing(row, step, word) / 16u;
-    trigger_delayed(track, word & NOTES, (word >> 8) & 127u, gate, 0, delay);
+    unsigned identity = 1u + row * STEPS + step;
+    if (track < DRUMS) {
+        unsigned lane = melodic_lane_from_row(track, row);
+        unsigned duration = melodic_duration[track][lane][step];
+        if (duration) {
+            gate = duration * NOTE_DURATION_UNIT;
+            for (unsigned slot = 0; slot < VOICES; ++slot)
+                if (voices[slot].age && !voices[slot].releasing &&
+                    voices[slot].sequence_note == identity &&
+                    voices[slot].remaining + voices[slot].delay > delay) return;
+        }
+        if (rec_running && track == rec_track)
+            for (unsigned slot = 0; slot < VOICES; ++slot)
+                if (held_record[slot].duration == &melodic_duration[track][lane][step] &&
+                    held_record[slot].cell) return;
+    }
+    triggered_sequence_note = identity;
+    trigger_delayed(track, word & NOTES, (word >> 8) & 127u, gate ? gate : 1u, 0, delay);
+    triggered_sequence_note = 0;
     ++scheduled_events;
 }
 
@@ -375,6 +443,11 @@ static void finish_record_note(unsigned slot, uint32_t now)
         unsigned span = held_record[slot].step_ticks;
         unsigned gate = elapsed >= span * 2u ? 255u :
             (unsigned)clamp((int)((elapsed * 192u + span / 2u) / span), 1, 255);
+        if (held_record[slot].duration) {
+            unsigned units = elapsed / NOTE_DURATION_UNIT +
+                ((elapsed % NOTE_DURATION_UNIT) >= NOTE_DURATION_UNIT / 2u);
+            *held_record[slot].duration = (uint16_t)clamp((int)units, 1, 65535);
+        }
         *cell = (*cell & ~(255u << 16)) | (gate << 16);
     }
     held_record[slot].cell = 0;
@@ -386,6 +459,7 @@ static unsigned lane_count(unsigned track);
 static PLAT_POOL struct {
     uint32_t cells[DRUM_LANES + 1][STEPS];
     uint8_t timing[DRUM_LANES + 1][STEPS];
+    uint16_t duration[MELODIC_LANES][STEPS];
     unsigned track, length, recorded_length, ready;
     uint32_t after;
 } take_undo;
@@ -400,6 +474,7 @@ static void undo_recording(void)
         for (unsigned step = 0; step < take_undo.recorded_length; ++step) {
             *event_cell(track, step, lane) = take_undo.cells[lane][step];
             timing_group[pattern_row(track, lane)][step] = take_undo.timing[lane][step];
+            if (track < DRUMS) melodic_duration[track][lane][step] = take_undo.duration[lane][step];
         }
     track_setting(track, 0, take_undo.length);
 }
@@ -423,18 +498,22 @@ static void begin_recording(void)
         for (unsigned step = 0; step < take_undo.recorded_length; ++step) {
             take_undo.cells[lane][step] = *event_cell(track, step, lane);
             take_undo.timing[lane][step] = timing_group[pattern_row(track, lane)][step];
+            if (track < DRUMS) take_undo.duration[lane][step] = melodic_duration[track][lane][step];
         }
     if (rec_overwrite) {
         for (unsigned step = 0; step < rec_length; ++step) {
             for (unsigned lane = 0; lane < lane_count(track); ++lane)
                 timing_group[pattern_row(track, lane)][step] = 0;
+            if (track < DRUMS)
+                for (unsigned lane = 0; lane < MELODIC_LANES; ++lane) melodic_duration[track][lane][step] = 0;
             tracks[track].steps[step] = 0;
-            if (track < DRUMS) extra_note[track][step] = 0;
-            else for (unsigned lane = 0; lane < DRUM_LANES; ++lane) drum_lane[lane][step] = 0;
+            for (unsigned lane = 1; lane < lane_count(track); ++lane)
+                *event_cell(track, step, lane) = 0;
         }
     }
     track_setting(track, 0, rec_length);
     rec_begin_events = recorded_events;
+    rec_rejected = 0;
     rec_running = 1;
 }
 
@@ -458,13 +537,23 @@ static void record_input(unsigned track, unsigned pitch, unsigned velocity)
     unsigned timing = 0;
     if (until_step) {
         unsigned progress = step_duration - until_step;
-        if (rec_raw) {
-            unsigned offset = (progress * 16u + step_duration / 2u) / step_duration;
-            if (offset < 16u) {
-                position = positions;
-                timing = offset;
-            }
-        } else if (until_step * 2u >= step_duration) position = positions;
+        unsigned strength = rec_quant_setting ? (rec_quant_setting - 1u) % 4u + 1u : 0u;
+        int grid = 0;
+        if (rec_quant_setting > REC_FULL_16) {
+            grid = progress * 4u < step_duration ? 0 :
+                   progress * 4u < step_duration * 3u ? 8 : 16;
+        } else if (rec_quant_setting && rec_quant_setting <= 4u) {
+            if (positions & 1u) grid = 16;
+        } else if (progress * 2u >= step_duration) {
+            grid = 16;
+        }
+        int blended = (int)(progress * 16u * (4u - strength)) +
+                      grid * (int)(step_duration * strength);
+        unsigned offset = ((unsigned)blended + step_duration * 2u) / (step_duration * 4u);
+        if (offset < 16u) {
+            position = positions;
+            timing = offset;
+        }
     }
     if (!rec_loop && position >= rec_length) return;
     unsigned step = position % rec_length;
@@ -475,29 +564,51 @@ static void record_input(unsigned track, unsigned pitch, unsigned velocity)
         lane = drum_family(pitch) + 1;
         cell = &drum_lane[lane - 1][step];
         pitch = lane_pitch[lane - 1];
-    } else if ((*cell & (ACTIVE | NOTES)) != (ACTIVE | pitch)) {
-        volatile uint32_t *second = &extra_note[track][step];
-        if ((*second & (ACTIVE | NOTES)) == (ACTIVE | pitch) || (*cell & ACTIVE)) {
-            if ((*second & ACTIVE) && (*second & NOTES) != pitch) return;
-            lane = 1;
-            cell = second;
+    } else {
+        unsigned empty = MELODIC_LANES;
+        for (lane = 0; lane < MELODIC_LANES; ++lane) {
+            cell = event_cell(track, step, lane);
+            uint32_t entry = *cell;
+            if (!(entry & ACTIVE)) {
+                if (empty == MELODIC_LANES) empty = lane;
+                continue;
+            }
+            if ((entry & NOTES) == pitch &&
+                note_timing(pattern_row(track, lane), step, entry) == timing) break;
+        }
+        if (lane == MELODIC_LANES) {
+            if (empty == MELODIC_LANES) {
+                ++rec_rejected;
+                return;
+            }
+            lane = empty;
+            cell = event_cell(track, step, lane);
         }
     }
     if (rec_loop && (*cell & ACTIVE)) return;
     record_note_off(track, source_pitch);
-    for (unsigned slot = 0; slot < VOICES; ++slot)
-        if (held_record[slot].cell == cell) held_record[slot].cell = 0;
-    timing_group[pattern_row(track, lane)][step] = rec_raw && timing ? (uint8_t)(timing / 4u + 1u) : 0;
-    *cell = cell_word(pitch, velocity, 144u, 100u) | timing_bits(timing);
+    unsigned available = VOICES;
     for (unsigned slot = 0; slot < VOICES; ++slot) {
-        if (held_record[slot].cell) continue;
-        held_record[slot].cell = cell;
-        held_record[slot].start = record_clock;
-        held_record[slot].step_ticks = step_duration && until_step ? step_duration : RATE * 15u / tempo;
-        held_record[slot].word = *cell;
-        held_record[slot].pitch = source_pitch;
-        break;
+        if (held_record[slot].cell == cell) {
+            available = slot;
+            break;
+        }
+        if (!held_record[slot].cell && available == VOICES) available = slot;
     }
+    if (available == VOICES) {
+        ++rec_rejected;
+        return;
+    }
+    timing_group[pattern_row(track, lane)][step] = timing ? (uint8_t)(timing / 4u + 1u) : 0;
+    *cell = cell_word(pitch, velocity, 144u, 100u) | timing_bits(timing);
+    uint16_t *duration = track < DRUMS ? &melodic_duration[track][lane][step] : 0;
+    if (duration) *duration = 0;
+    held_record[available].cell = cell;
+    held_record[available].duration = duration;
+    held_record[available].start = record_clock;
+    held_record[available].step_ticks = step_duration && until_step ? step_duration : RATE * 15u / tempo;
+    held_record[available].word = *cell;
+    held_record[available].pitch = source_pitch;
     /* The live input has already sounded. Skip its first sequencer pass only. */
     if (position == step_number) monitored_next_step[track] |= 1u << lane;
     ++recorded_events;
@@ -641,7 +752,9 @@ static void next_step(const uint32_t *mix)
         monitored_next_step[t] = 0;
         if (t < DRUMS) {
             if (!(monitored & 1u)) schedule_event(t, pattern_row(t, 0), step, word);
-            if (!(monitored & 2u)) schedule_event(t, pattern_row(t, 1), step, extra_note[t][step]);
+            for (unsigned lane = 1; lane < MELODIC_LANES; ++lane)
+                if (!(monitored & (1u << lane)))
+                    schedule_event(t, pattern_row(t, lane), step, *event_cell(t, step, lane));
         } else {
             unsigned muted = muted_drums();
             if (!(monitored & 1u) && !(muted & (1u << drum_family(word & NOTES)))) schedule_event(t, pattern_row(t, 0), step, word);
@@ -697,9 +810,9 @@ static float render_voice_signal(Voice *v, SlapSynth *s)
             v->bend *= 0.9988f;
             inc = 0.00108f + tone[kit] * v->bend;
             decay = 0.99966f - kit * 0.00008f;
-            float body = slap_sine(v->phase);
+            float body = slap_oscillator(v->phase);
             wave = body * (1.0f - 0.24f * v->drum_body) +
-                0.24f * v->drum_body * slap_sine(v->phase * 2.0f) * v->bend +
+                0.24f * v->drum_body * slap_oscillator(v->phase * 2.0f) * v->bend +
                 0.24f * v->drum_snap * air * v->bend * v->bend;
             if (layers & DRUM_SUB) {
                 // Saturated long sine body, with a rounded attack from the sweep.
@@ -713,17 +826,17 @@ static float render_voice_signal(Voice *v, SlapSynth *s)
             inc = tone[kit] * (family == 3 ? 3.17f : 1.0f);
             v->bend *= 0.9972f;
             decay = family == 3 ? 0.9977f : 0.99906f;
-            float skin = kit == 2 ? slap_sine(v->phase + 0.25f*v->bend*slap_sine(v->phase*3.371f))
-                                  : slap_sine(v->phase);
+            float skin = kit == 2 ? slap_oscillator(v->phase + 0.25f*v->bend*slap_oscillator(v->phase*3.371f))
+                                  : slap_oscillator(v->phase);
             float noise_mix = kit == 1 ? 0.91f : family == 3 ? 0.34f : 0.68f;
             noise_mix *= 1.0f - 0.28f * v->drum_body;
             wave = noise_mix * texture + (1.0f - noise_mix) * skin * v->bend;
             if (layers & DRUM_MEMBRANE) {
-                float head = slap_sine(v->phase * 2.13f) + 0.38f * slap_sine(v->phase * 3.91f);
+                float head = slap_oscillator(v->phase * 2.13f) + 0.38f * slap_oscillator(v->phase * 3.91f);
                 wave = 0.65f * wave + 0.25f * head * v->bend;
             }
             if (layers & DRUM_BRUSH)
-                wave = 0.52f * wave + 0.48f * v->drum_noise * (1.0f + slap_sine(v->phase));
+                wave = 0.52f * wave + 0.48f * v->drum_noise * (1.0f + slap_oscillator(v->phase));
         } else if (family == 4) {
             decay = 0.99902f;
             v->bend *= 0.999f;
@@ -739,12 +852,12 @@ static float render_voice_signal(Voice *v, SlapSynth *s)
         } else {
             inc = 0.052f * pitch_mul[kit];
             decay = family == 5 ? 0.99968f : kit == 1 ? 0.998f : 0.9969f;
-            float metal = slap_sine(v->phase) * slap_sine(v->phase*3.79f);
+            float metal = slap_oscillator(v->phase) * slap_oscillator(v->phase*3.79f);
             wave = (0.72f - 0.26f * v->drum_body) * air +
                 (0.09f + 0.46f * v->drum_body) * metal;
             if (layers & DRUM_PLATE) {
                 // Inharmonic beating modes give these hats and cymbals a pitched edge.
-                float plate = slap_sine(v->phase * 2.71f) * slap_sine(v->phase * 5.42f);
+                float plate = slap_oscillator(v->phase * 2.71f) * slap_oscillator(v->phase * 5.42f);
                 wave = 0.57f * wave + 0.37f * plate;
             }
         }
@@ -823,40 +936,85 @@ static unsigned render_voice_batch(unsigned frames, unsigned muted, unsigned all
 {
     if (frames < MIN_VOICE_BATCH || !plat_cpu2_on() || !voice_mailbox_ready(budget) ||
         plat_ticks24() - callback_start >= budget / 2u) return 0;
-    unsigned active = 0;
-    for (unsigned j = 0; j < VOICES; ++j) active += voices[j].age != 0;
-    unsigned target = active / 2u;
+    unsigned active_slots[VOICES], active = 0, total_cost = 0;
+    unsigned cost[VOICES];
+    int ordered_rng = 0;
+    static const uint8_t engine_cost[SLAP_ENGINES] = {
+        7, 4, 9, 4, 4, 6, 3, 10, 4, 5, 4, 4, 8,
+        4, 5, 6, 8, 9, 7, 6, 5, 4, 7, 6, 5
+    };
+    for (unsigned j = 0; j < VOICES; ++j) {
+        const Voice *voice = &voices[j];
+        if (!voice->age) continue;
+        active_slots[active++] = j;
+        if (voice->track == DRUMS) {
+            unsigned layers = drum_kits[voice->kit].layers;
+            cost[j] = (voice->drum_family == 0 ? 5u : 4u) + (layers != 0 ? 2u : 0u);
+        } else {
+            cost[j] = engine_cost[synths[j].engine] + (voice->lfo_wave ? 2u : 0u);
+            ordered_rng |= voice->lfo_wave == 5;
+        }
+        total_cost += cost[j];
+    }
+    unsigned assigned_cost = 0;
     unsigned remote = 0, local_only = 0;
     voice_worker.count = 0;
     voice_worker.muted = muted;
     // Take a suffix of the active slots on each track to preserve its float sum.
-    for (unsigned j = VOICES; j-- > 0 && voice_worker.count < target;) {
+    for (unsigned n = active; n-- > 0 && voice_worker.count < VOICES / 2;) {
+        unsigned j = active_slots[n];
         const Voice *voice = &voices[j];
-        if (!voice->age || (local_only & (1u << voice->track))) continue;
+        if (local_only & (1u << voice->track)) continue;
         if (voice->track != DRUMS &&
             (voice->lfo_wave == 5 || synths[j].engine == 4 || synths[j].engine == 6)) {
             // Sample-and-hold shares the scheduler RNG. String engines own long delay lines.
             local_only |= 1u << voice->track;
             continue;
         }
+        // A skipped voice blocks earlier voices on that track to preserve mix order.
+        unsigned next_cost = assigned_cost + cost[j];
+        if (next_cost >= total_cost || (next_cost * 2u > total_cost &&
+            next_cost * 2u - total_cost >= total_cost - assigned_cost * 2u)) {
+            local_only |= 1u << voice->track;
+            continue;
+        }
+        assigned_cost = next_cost;
         unsigned index = voice_worker.count++;
         voice_worker.slot[index] = j;
         voice_worker.voice[index] = *voice;
         if (voice->track != DRUMS)
             __builtin_memcpy(&worker_synth[index], &synths[j], SYNTH_STATE_BYTES);
         remote |= 1u << j;
+        if (assigned_cost * 2u >= total_cost) break;
     }
     unsigned split = remote && plat_cpu2_run(render_worker_voices, frames);
     if (!split && !allow_fx) return 0;
 
-    for (unsigned i = 0; i < frames; ++i) {
+    for (unsigned i = 0; i < frames; ++i)
         for (unsigned t = 0; t < TRACKS; ++t) voice_bus[i][t] = 0.0f;
-        for (unsigned j = 0; j < VOICES; ++j) {
+    unsigned local_mask = split ? remote : 0;
+    if (ordered_rng) {
+        // Shared sample-and-hold draws must retain sample/slot order.
+        for (unsigned i = 0; i < frames; ++i)
+            for (unsigned n = 0; n < active; ++n) {
+                unsigned j = active_slots[n];
+                Voice *voice = &voices[j];
+                if (!voice->age || (local_mask & (1u << j))) continue;
+                float sample = render_voice(voice, &synths[j]);
+                if (voice->track != DRUMS || !(muted & (1u << voice->drum_family)))
+                    voice_bus[i][voice->track] += sample;
+            }
+    } else {
+        for (unsigned n = 0; n < active; ++n) {
+            unsigned j = active_slots[n];
+            if (local_mask & (1u << j)) continue;
             Voice *voice = &voices[j];
-            if (!voice->age || (split && (remote & (1u << j)))) continue;
-            float sample = render_voice(voice, &synths[j]);
-            if (voice->track != DRUMS || !(muted & (1u << voice->drum_family)))
-                voice_bus[i][voice->track] += sample;
+            unsigned track = voice->track;
+            unsigned audible = track != DRUMS || !(muted & (1u << voice->drum_family));
+            for (unsigned i = 0; i < frames && voice->age; ++i) {
+                float sample = render_voice(voice, &synths[j]);
+                if (audible) voice_bus[i][track] += sample;
+            }
         }
     }
 
@@ -1005,6 +1163,7 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
     uint32_t audio_started = plat_ticks24();
     if (dsp_reset_request) {
         dsp_peak_ticks = dsp_avg_ticks = dsp_overruns = dsp_callbacks = 0;
+        peak_voice_batch = peak_fx_batch = peak_worker_work = peak_worker_wait = 0;
         dsp_xrun_baseline = plat_xruns();
 #if FM1B_CPU2 && !defined(PLAT_WEB)
         worker_jobs = worker_fallbacks = worker_ticks = worker_wait_ticks = 0;
@@ -1045,12 +1204,16 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
     const unsigned muted = muted_drums();
     unsigned measure_fx = slap_ui.page == FX && slap_ui.fx_page == 4;
     const unsigned analyze = slap_ui.page == VISUAL;
+    const unsigned inspect_fx = slap_ui.page == FX || slap_ui.page == PATCH;
+    const unsigned effect_mask = inspect_fx ? (1u << TRACKS) - 1u : slap_fx_active_mask();
     float meter_sum[2] = {0}, meter_peak[2] = {0};
     float target = master_q12 * (1.0f / 4096.0f);
 #if FM1B_CPU2 && !defined(PLAT_WEB)
     unsigned batch_start = 0, batch_end = 0, fx_batch_end = 0, next_batch = 0;
     unsigned fx_mask = measure_fx || !plat_cpu2_on() ? 0 : select_fx_worker_tracks();
     uint32_t callback_budget = (24000000u / RATE) * frames;
+    uint32_t voice_batch_ticks = 0, fx_batch_ticks = 0;
+    uint32_t remote_start = worker_ticks + fx_worker_ticks, wait_start = worker_wait_ticks;
 #endif
     for (uint32_t i = 0; i < frames; ++i) {
         if (playing && until_step == 0) {
@@ -1080,14 +1243,19 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
         if (i == next_batch) {
             unsigned amount = frames - i;
             if (amount > VOICE_BATCH) amount = VOICE_BATCH;
-            if (playing && until_step && amount > until_step + 1u) amount = until_step + 1u;
+            if (playing && amount > until_step + 1u) amount = until_step + 1u;
             // A held arpeggio can create a voice before the next sequencer step.
             if (old_keys && input_track < DRUMS && (arp_setup[input_track] & 255u)) amount = 0;
             batch_start = i;
+            uint32_t stage_start = plat_ticks24();
             batch_end = i + render_voice_batch(amount, muted, fx_mask, audio_started, callback_budget);
+            uint32_t voice_end = plat_ticks24();
+            voice_batch_ticks += voice_end - stage_start;
             fx_batch_end = i;
-            if (batch_end > i)
+            if (batch_end > i && fx_mask) {
                 fx_batch_end += render_fx_batch(batch_end - i, fx_mask, audio_started, callback_budget);
+                fx_batch_ticks += plat_ticks24() - voice_end;
+            }
             next_batch = batch_end > i ? batch_end : i + VOICE_BATCH;
         }
         if (i < batch_end)
@@ -1110,7 +1278,7 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
             if (i < fx_batch_end) processed = fx_bus[t][i - batch_start];
             else
 #endif
-            processed = slap_fx_sample(t, dry[t]);
+            processed = (effect_mask & (1u << t)) ? slap_fx_sample(t, dry[t]) : dry[t];
             if (sample_cost) {
                 uint32_t ticks = plat_ticks24() - started;
                 fx_cost_ticks[t] = (7u * fx_cost_ticks[t] + ticks + 4u) / 8u;
@@ -1154,7 +1322,7 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
             meter_sum[1] += r * r;
             meter_peak[0] = fm_maxf(meter_peak[0], fm_fabsf(l));
             meter_peak[1] = fm_maxf(meter_peak[1], fm_fabsf(r));
-            analyze_audio(l, r);
+            capture_spectrum(l, r);
         }
     }
     record_clock += frames;
@@ -1166,8 +1334,6 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
             float decay = fm_maxf(0.0f, 1.0f - frames * (1.0f / (RATE * 0.40f)));
             visual_peak[channel] = fm_maxf(visual_peak[channel] * decay, meter_peak[channel]);
         }
-        for (unsigned band = 0; band < SPECTRUM_BANDS; ++band)
-            visual_band[band] = analysis_power[band];
     }
     step_progress = playing && step_duration && until_step <= step_duration ? 14u - until_step * 14u / step_duration : 0u;
     for (unsigned t = 0; t < TRACKS; ++t) {
@@ -1185,7 +1351,15 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
         ++dsp_histogram[bin];
         ++dsp_callbacks;
         if (elapsed > budget) ++dsp_overruns;
-        if (elapsed > dsp_peak_ticks) dsp_peak_ticks = elapsed;
+        if (elapsed > dsp_peak_ticks) {
+#if FM1B_CPU2 && !defined(PLAT_WEB)
+            peak_voice_batch = voice_batch_ticks;
+            peak_fx_batch = fx_batch_ticks;
+            peak_worker_work = worker_ticks + fx_worker_ticks - remote_start;
+            peak_worker_wait = worker_wait_ticks - wait_start;
+#endif
+            dsp_peak_ticks = elapsed;
+        }
         dsp_avg_ticks = dsp_avg_ticks - dsp_avg_ticks / 8u + elapsed / 8u;
         unsigned active = 0;
         for (unsigned v = 0; v < VOICES; ++v) active += voices[v].age != 0;
@@ -1243,7 +1417,10 @@ static void song_put32(unsigned at, uint32_t value)
 
 static volatile uint32_t *song_cell(unsigned row, unsigned step)
 {
-    return row < 8u ? event_cell(row / 2u, step, row % 2u) : event_cell(DRUMS, step, row - 8u);
+    if (row < 8u) return event_cell(row / 2u, step, row % 2u);
+    if (row < SONG5_LANES) return event_cell(DRUMS, step, row - 8u);
+    unsigned extra = row - SONG5_LANES;
+    return event_cell(extra / (MELODIC_LANES - 2u), step, 2u + extra % (MELODIC_LANES - 2u));
 }
 
 static unsigned song5_fields(int writing)
@@ -1266,22 +1443,27 @@ static unsigned song5_fields(int writing)
 
 static unsigned song5_bytes;
 
-static int prepare_song5(unsigned bytes)
+static int prepare_sparse_song(unsigned bytes, unsigned version)
 {
-    if (bytes < SONG5_HEADER || (bytes - SONG5_HEADER) % SONG5_EVENT) return 0;
+    unsigned stride = version == 7u ? 8u : SONG5_EVENT;
+    if (bytes < SONG5_HEADER || (bytes - SONG5_HEADER) % stride) return 0;
     unsigned previous = 0;
-    for (unsigned at = SONG5_HEADER; at < bytes; at += SONG5_EVENT) {
+    for (unsigned at = SONG5_HEADER; at < bytes; at += stride) {
         unsigned packed = song_bytes[at] | (unsigned)song_bytes[at + 1] << 8;
-        unsigned index = packed & 8191u;
+        unsigned bits = version >= 6u ? 14u : 13u;
+        unsigned index = packed & ((1u << bits) - 1u);
         uint32_t word = song_get32(at + 2);
         unsigned row = index / STEPS;
-        if ((packed >> 13) > 4u || row >= SONG_LANES || (at != SONG5_HEADER && index <= previous) || !word || !step_valid(word))
+        if ((packed >> bits) > 4u || row >= (version >= 6u ? SONG_LANES : SONG5_LANES) ||
+            (at != SONG5_HEADER && index <= previous) || !word || !step_valid(word))
             return 0;
-        if (row > 8u && (word & NOTES) != lane_pitch[row - 9u]) return 0;
+        if (row > 8u && row < SONG5_LANES && (word & NOTES) != lane_pitch[row - 9u]) return 0;
+        if (version == 7u && row >= 8u && row < SONG5_LANES &&
+            (song_bytes[at + 6] || song_bytes[at + 7])) return 0;
         previous = index;
     }
     song_io.magic = song_get32(0);
-    song_io.version = 5;
+    song_io.version = version;
     song_io.bpm = song_get32(8);
     song_io.swing = song_get32(12);
     if (song5_fields(0) != SONG5_HEADER) return 0;
@@ -1289,23 +1471,38 @@ static int prepare_song5(unsigned bytes)
     return 1;
 }
 
-static unsigned encode_song5(void)
+static unsigned encode_sparse_song(unsigned version)
 {
+    unsigned stride = version == 7u ? 8u : SONG5_EVENT;
     song_put32(0, SONG_MAGIC);
-    song_put32(4, 5u);
+    song_put32(4, version);
     song_put32(8, song_io.bpm);
     song_put32(12, song_io.swing);
     unsigned at = song5_fields(1);
-    for (unsigned row = 0; row < SONG_LANES; ++row) {
+    for (unsigned row = 0; row < (version >= 6u ? SONG_LANES : SONG5_LANES); ++row) {
         for (unsigned step = 0; step < STEPS; ++step) {
             uint32_t word = *song_cell(row, step);
             if (!word) continue;
-            if (at > SONG_MAX - SONG5_EVENT) return 0;
-            unsigned index = (row * STEPS + step) | ((unsigned)timing_group[row][step] << 13);
+            if (at > SONG_MAX - stride) return 0;
+            unsigned index = row * STEPS + step;
+            if (version >= 6u) {
+                unsigned offset = note_timing(row, step, word);
+                index |= (offset / 4u) << 14;
+                word = (word & ~timing_bits(3u)) | timing_bits(offset);
+            } else index |= (unsigned)timing_group[row][step] << 13;
             song_bytes[at] = (uint8_t)index;
             song_bytes[at + 1] = (uint8_t)(index >> 8);
             song_put32(at + 2, word);
-            at += SONG5_EVENT;
+            if (version == 7u) {
+                unsigned duration = 0;
+                if (row < 8u || row >= SONG5_LANES) {
+                    unsigned track = row < 8u ? row / 2u : (row - SONG5_LANES) / 2u;
+                    duration = melodic_duration[track][melodic_lane_from_row(track, row)][step];
+                }
+                song_bytes[at + 6] = (uint8_t)duration;
+                song_bytes[at + 7] = (uint8_t)(duration >> 8);
+            }
+            at += stride;
         }
     }
     return at;
@@ -1315,8 +1512,9 @@ static int read_song(unsigned slot)
 {
     int bytes = plat_store_load(OBJ_SONG1 + slot, song_bytes, sizeof(song_bytes));
     if (bytes < 8) return 0;
-    if (song_get32(4) == 5u) {
-        if (!prepare_song5((unsigned)bytes)) return 0;
+    unsigned version = song_get32(4);
+    if (version >= 5u && version <= 7u) {
+        if (!prepare_sparse_song((unsigned)bytes, version)) return 0;
     } else {
         if ((unsigned)bytes > sizeof(song_io)) return 0;
         for (int i = 0; i < bytes; ++i) ((uint8_t *)&song_io)[i] = song_bytes[i];
@@ -1326,17 +1524,17 @@ static int read_song(unsigned slot)
     if (song_io.magic != SONG_MAGIC ||
         !((song_io.version == 2 && bytes == v2bytes) ||
           (song_io.version == 3 && bytes == v3bytes) ||
-          (song_io.version == 4 && bytes == (int)sizeof(song_io)) || song_io.version == 5u) ||
+          (song_io.version == 4 && bytes == (int)sizeof(song_io)) || (song_io.version >= 5u && song_io.version <= 7u)) ||
         song_io.bpm < 40 || song_io.bpm > 240 || song_io.swing > 70) return 0;
     for (unsigned t = 0; t < TRACKS; ++t) {
         uint32_t mix = song_io.track[t].mix;
-        if (!pattern_length(mix) || pattern_length(mix) > (song_io.version == 5u ? STEPS : LEGACY_STEPS) || (mix >> 27) ||
+        if (!pattern_length(mix) || pattern_length(mix) > (song_io.version >= 5u ? STEPS : LEGACY_STEPS) || (mix >> 27) ||
             song_io.track[t].patch >= (t == DRUMS ? DRUM_KITS : SLAP_PATCHES) || (song_io.track[t].envelope & 0x80808080u)) return 0;
         uint32_t h = song_io.track[t].harmony, l = song_io.track[t].lfo;
         if ((h & 255u) >= HARMONY_KEYS || ((h >> 8) & 255u) >= HARMONY_SCALES ||
             ((h >> 16) & 255u) >= HARMONY_CHORDS || (h >> 24) > 101u ||
             (l & 0x80808080u) || (l & 255u) > 5u) return 0;
-        if (song_io.version != 5u)
+        if (song_io.version < 5u)
             for (unsigned i = 0; i < LEGACY_STEPS; ++i)
                 if (!step_valid(song_io.track[t].steps[i])) return 0;
         for (unsigned i = 0; i < SLAP_FX_PAGES; ++i)
@@ -1378,7 +1576,7 @@ static void load_song(unsigned slot)
         tracks[t].harmony = song_io.track[t].harmony;
         tracks[t].lfo = song_io.track[t].lfo;
         for (unsigned i = 0; i < LEGACY_STEPS; ++i)
-            tracks[t].steps[i] = song_io.version == 5u ? 0u : song_io.track[t].steps[i];
+            tracks[t].steps[i] = song_io.version >= 5u ? 0u : song_io.track[t].steps[i];
         for (unsigned i = 0; i < SLAP_FX_PAGES; ++i)
             slap_fx_restore(t, i, song_io.track[t].fx[i]);
     }
@@ -1399,14 +1597,27 @@ static void load_song(unsigned slot)
     for (unsigned row = 0; row < SONG_LANES; ++row)
         for (unsigned step = 0; step < STEPS; ++step) {
             timing_group[row][step] = 0;
-            if (step >= LEGACY_STEPS) *song_cell(row, step) = 0;
+            if (step >= LEGACY_STEPS || row >= SONG5_LANES) *song_cell(row, step) = 0;
         }
-    if (song_io.version == 5u) {
-        for (unsigned at = SONG5_HEADER; at < song5_bytes; at += SONG5_EVENT) {
+    for (unsigned track = 0; track < DRUMS; ++track)
+        for (unsigned lane = 0; lane < MELODIC_LANES; ++lane)
+            for (unsigned step = 0; step < STEPS; ++step)
+                melodic_duration[track][lane][step] = 0;
+    if (song_io.version >= 5u) {
+        unsigned stride = song_io.version == 7u ? 8u : SONG5_EVENT;
+        for (unsigned at = SONG5_HEADER; at < song5_bytes; at += stride) {
             unsigned packed = song_bytes[at] | (unsigned)song_bytes[at + 1] << 8;
-            unsigned index = packed & 8191u;
-            timing_group[index / STEPS][index % STEPS] = (uint8_t)(packed >> 13);
-            *song_cell(index / STEPS, index % STEPS) = song_get32(at + 2);
+            unsigned bits = song_io.version >= 6u ? 14u : 13u;
+            unsigned index = packed & ((1u << bits) - 1u);
+            timing_group[index / STEPS][index % STEPS] =
+                (uint8_t)((packed >> bits) + (song_io.version >= 6u));
+            unsigned row = index / STEPS, step = index % STEPS;
+            *song_cell(row, step) = song_get32(at + 2);
+            if (song_io.version == 7u && (row < 8u || row >= SONG5_LANES)) {
+                unsigned track = row < 8u ? row / 2u : (row - SONG5_LANES) / 2u;
+                melodic_duration[track][melodic_lane_from_row(track, row)][step] =
+                    (uint16_t)(song_bytes[at + 6] | (unsigned)song_bytes[at + 7] << 8);
+            }
         }
     }
     take_undo.ready = 0;
@@ -1443,17 +1654,28 @@ static void write_song(unsigned slot)
     }
     song_io.filters = drum_filters;
     for (unsigned t = 0; t < DRUMS; ++t) song_io.arp[t] = arp_setup[t];
-    unsigned extended = 0;
-    for (unsigned t = 0; t < TRACKS; ++t) extended |= pattern_length(tracks[t].mix) > LEGACY_STEPS;
-    for (unsigned row = 0; row < SONG_LANES && !extended; ++row)
-        for (unsigned step = 0; step < STEPS; ++step)
-            if (*song_cell(row, step) && (step >= LEGACY_STEPS || timing_group[row][step])) {
-                extended = 1;
+    unsigned version = 4u;
+    for (unsigned t = 0; t < TRACKS; ++t)
+        if (pattern_length(tracks[t].mix) > LEGACY_STEPS) version = 5u;
+    for (unsigned row = 0; row < SONG_LANES && version < 6u; ++row)
+        for (unsigned step = 0; step < STEPS; ++step) {
+            if (!*song_cell(row, step)) continue;
+            if (row >= SONG5_LANES) {
+                version = 6u;
                 break;
             }
-    unsigned bytes = extended ? encode_song5() : sizeof(song_io);
+            if (step >= LEGACY_STEPS || timing_group[row][step]) version = 5u;
+        }
+    for (unsigned track = 0; track < DRUMS && version < 7u; ++track)
+        for (unsigned lane = 0; lane < MELODIC_LANES && version < 7u; ++lane)
+            for (unsigned step = 0; step < STEPS; ++step)
+                if (melodic_duration[track][lane][step] && (*event_cell(track, step, lane) & ACTIVE)) {
+                    version = 7u;
+                    break;
+                }
+    unsigned bytes = version > 4u ? encode_sparse_song(version) : sizeof(song_io);
     if (!bytes) { slap_ui.notice = "BANK TOO DENSE"; return; }
-    const void *payload = extended ? (const void *)song_bytes : (const void *)&song_io;
+    const void *payload = version > 4u ? (const void *)song_bytes : (const void *)&song_io;
     int result = plat_store_save(OBJ_SONG1 + slot, payload, bytes);
     slap_ui.notice = result == 0 && read_song(slot) ? "SAVED" : "SAVE FAILED";
 }
@@ -1492,12 +1714,13 @@ static void save_input(uint32_t buttons, uint32_t pressed, uint32_t keys, uint32
 static volatile uint32_t *event_cell(unsigned track, unsigned step, unsigned lane)
 {
     if (!lane) return &tracks[track].steps[step];
-    return track == DRUMS ? &drum_lane[lane - 1u][step] : &extra_note[track][step];
+    if (track == DRUMS) return &drum_lane[lane - 1u][step];
+    return lane == 1u ? &extra_note[track][step] : &poly_note[track][lane - 2u][step];
 }
 
 static unsigned lane_count(unsigned track)
 {
-    return track == DRUMS ? DRUM_LANES + 1u : 2u;
+    return track == DRUMS ? DRUM_LANES + 1u : MELODIC_LANES;
 }
 
 static void generate_drums(void)
@@ -1590,7 +1813,7 @@ void app_input_only(void)
             rec_track = (unsigned)slap_ui.track;
             rec_length = pattern_length(tracks[rec_track].mix);
             rec_start_mode = !playing;
-            rec_raw = rec_unquantized;
+            rec_quant_setting = rec_quantize;
             rec_overwrite = 0;
             rec_loop = 1;
             if (!playing) {
@@ -1608,7 +1831,7 @@ void app_input_only(void)
             rec_track = (unsigned)slap_ui.track;
             rec_length = 16u << rec_bars;
             rec_start_mode = rec_count_in;
-            rec_raw = rec_unquantized;
+            rec_quant_setting = rec_quantize;
             rec_overwrite = rec_replace;
             rec_loop = 0;
             recording = 1;
@@ -1636,7 +1859,10 @@ void app_input_only(void)
     if ((buttons & (1u << B_GLO)) && (pressed & (1u << B_SEL))) {
         slap_ui.page = MIXER;
         pressed &= ~(1u << B_SEL);
-    } else if (pressed & (1u << B_GLO)) slap_ui.page = GLOBAL;
+    } else if (pressed & (1u << B_GLO)) {
+        global_details = slap_ui.page == GLOBAL ? !global_details : 0;
+        slap_ui.page = GLOBAL;
+    }
     if (pressed & (1u << B_SAVE)) {
         slap_ui.page = SAVE;
         slap_ui.save_armed = 0;
@@ -1701,7 +1927,7 @@ void app_input_only(void)
     } else if (slap_ui.page == RECORD && !recording) {
         rec_bars = (unsigned)clamp((int)rec_bars + knob[0], 0, 5);
         rec_count_in = (unsigned)clamp((int)rec_count_in + knob[1], 0, 1);
-        rec_unquantized = (unsigned)clamp((int)rec_unquantized + knob[2], 0, 1);
+        rec_quantize = (unsigned)clamp((int)rec_quantize - knob[2], 0, REC_QUANT_MAX);
         rec_replace = (unsigned)clamp((int)rec_replace + knob[3], 0, 1);
     } else if (slap_ui.page == MIXER) {
         unsigned t = (unsigned)slap_ui.track;
@@ -1762,6 +1988,8 @@ void app_input_only(void)
                 timing_bits(timing);
         }
         *cell = word;
+        if (slap_ui.track < DRUMS && (notes || knob[2]))
+            melodic_duration[slap_ui.track][slap_ui.lane][slap_ui.step] = 0;
         if (word != original_word || timing_group[row][slap_ui.step] != original_timing)
             ++pattern_revision[slap_ui.track];
     } else if (slap_ui.page == ARP) {
@@ -1919,7 +2147,7 @@ static void draw_panel(void)
         cv_text(8, 4, &FONT_M, slap_ui.page == GLOBAL ? "SYSTEM" : patch_name, c);
         cv_text(8, 25, slap_ui.page == RECORD ? &FONT_S : &FONT_XS, slap_ui.page == MIXER ? "SEL MUTE  /  ARP SOLO" :
             slap_ui.page == RECORD ? (recording ? "SEL END TAKE  /  PLAY STOP" : playing ? "STOP TO ARM A TAKE" : "SEL ARM  /  PLAY TO START") :
-            "SLAP-5 " APP_VERSION "  /  FM-1", C_WHITE);
+            global_details ? "PEAK BREAKDOWN  /  GLO BACK" : "SLAP-5 " APP_VERSION "  /  GLO FOR PEAK", C_WHITE);
         cv_blit(0, 48);
         for (int strip = 0; strip < 3; ++strip) {
             cv_begin(240, 36, background);
@@ -1941,15 +2169,25 @@ static void draw_panel(void)
                     {"AVG DSP %", "PEAK US"}, {"P95 US", "P99 US"},
                     {"DEADLINE MISS", "BUDGET US"}
                 };
+                static const char *const detail_labels[3][2] = {
+                    {"PEAK CALLBACK US", "OTHER US"}, {"VOICE BATCH US", "FX BATCH US"},
+                    {"C1 WORK US", "WORKER WAIT US"}
+                };
                 unsigned avg = dsp_avg_ticks, budget = dsp_budget_ticks;
+                unsigned peak = dsp_peak_ticks, voice_ticks = peak_voice_batch, fx_ticks = peak_fx_batch;
+                unsigned other = peak > voice_ticks + fx_ticks ? peak - voice_ticks - fx_ticks : 0;
                 unsigned values[3][2] = {
-                    {budget ? avg * 100u / budget : 0u, dsp_peak_ticks / 24u},
+                    {budget ? avg * 100u / budget : 0u, peak / 24u},
                     {callback_percentile(95), callback_percentile(99)}, {dsp_overruns, budget / 24u}
+                };
+                unsigned detail_values[3][2] = {
+                    {peak / 24u, other / 24u}, {voice_ticks / 24u, fx_ticks / 24u},
+                    {peak_worker_work / 24u, peak_worker_wait / 24u}
                 };
                 for (unsigned col = 0; col < 2; ++col) {
                     int x = 8 + (int)col * 116;
-                    cv_text(x, 0, &FONT_XS, labels[strip][col], C_WHITE);
-                    unsigned value = values[strip][col];
+                    cv_text(x, 0, &FONT_XS, global_details ? detail_labels[strip][col] : labels[strip][col], C_WHITE);
+                    unsigned value = global_details ? detail_values[strip][col] : values[strip][col];
                     decimal(number, value > 9999 ? 9999 : value);
                     cv_text(x, 13, &FONT_M, number, c);
                 }
@@ -1976,7 +2214,7 @@ static void draw_panel(void)
                     }
                 }
                 if (strip == 2) {
-                    cv_text(8, 0, &FONT_XS, "NOTES THIS TAKE", C_WHITE);
+                    cv_text(8, 0, &FONT_XS, rec_rejected ? "STEP CAPACITY REACHED" : "NOTES THIS TAKE", C_WHITE);
                     unsigned count = recorded_events - rec_begin_events;
                     decimal(number, count > 999 ? 999 : count);
                     cv_text(174, 1, &FONT_B, number, c);
@@ -2021,7 +2259,7 @@ static void draw_panel(void)
             char bars[5];
             decimal(bars, 1u << rec_bars);
             const char *values[] = {bars, rec_count_in ? "COUNT-IN" : "1ST NOTE",
-                rec_unquantized ? "OFF" : "ON", rec_replace ? "REPLACE" : "OVERDUB"};
+                rec_quant_labels[rec_quantize], rec_replace ? "REPLACE" : "OVERDUB"};
             for (unsigned k = 0; k < 4; ++k) {
                 int x = 8 + (int)k * 58;
                 cv_text(x, 0, &FONT_XS, labels[k], c);
@@ -2037,9 +2275,10 @@ static void draw_panel(void)
     cv_begin(240, 32, background);
     const SlapPatch *patch = &slap_patches[tracks[selected].patch];
     static const char *const drum_names[] = {"KICK","SNARE","HAT","RIM","CLAP","CYMBAL"};
+    static const char *const melodic_names[] = {"NOTE A", "NOTE B", "NOTE C", "NOTE D"};
     const char *lane_name = selected == DRUMS ?
         (slap_ui.lane ? drum_names[slap_ui.lane-1] : "DRUM NOTES") :
-        (slap_ui.lane ? "NOTE B" : "NOTE A");
+        melodic_names[slap_ui.lane];
     const char *name = slap_ui.page == SEQ ? lane_name : slap_ui.page == SAVE ? "SONG SLOTS" : slap_ui.page == FX ? slap_fx_pages[slap_ui.fx_page] :
                        selected == DRUMS ? drum_kits[tracks[DRUMS].patch].name : patch->name;
     unsigned drum_sequence = selected == DRUMS && slap_ui.page == SEQ;
@@ -2291,6 +2530,8 @@ static void draw_panel(void)
 void app_frame(void)
 {
     app_input_only();
+    if (slap_ui.page == VISUAL) update_spectrum();
+    else analysis_read = analysis_write;
     uint32_t now = plat_ms();
     unsigned frame_interval = slap_ui.page == VISUAL && dsp_budget_ticks &&
                               dsp_avg_ticks > dsp_budget_ticks * 3u / 4u ? 85u : 45u;
@@ -2334,6 +2575,10 @@ int app_expect(const char *name, int *result)
     else if (name_matches(name, "tempo")) *result = (int)tempo;
     else if (name_matches(name, "boot")) *result = (int)slap_ui.booting;
     else if (name_matches(name, "recording")) *result = (int)recording;
+    else if (name_matches(name, "rec_rejected")) *result = (int)rec_rejected;
+    else if (name_matches(name, "note_ms"))
+        *result = slap_ui.track < DRUMS && (unsigned)slap_ui.lane < MELODIC_LANES ?
+            (int)(melodic_duration[slap_ui.track][slap_ui.lane][slap_ui.step] * NOTE_DURATION_UNIT * 10u / (RATE / 100u)) : 0;
     else if (name_matches(name, "level")) *result = (int)((tracks[slap_ui.track].mix >> 16) & 255u);
     else if (name_matches(name, "visual_left")) *result = visual_rms[0] > 0.000001f;
     else if (name_matches(name, "visual_right")) *result = visual_rms[1] > 0.000001f;
@@ -2341,6 +2586,11 @@ int app_expect(const char *name, int *result)
         float power = 0.0f;
         for (unsigned band = 0; band < SPECTRUM_BANDS; ++band) power += visual_band[band];
         *result = power > 0.000001f;
+    }
+    else if (name_matches(name, "held_sequenced")) {
+        *result = 0;
+        for (unsigned slot = 0; slot < VOICES; ++slot)
+            *result += voices[slot].age && !voices[slot].releasing && voices[slot].sequence_note;
     }
     else if (name_matches(name, "metronome")) *result = (int)metronome;
 #if FM1B_CPU2 && !defined(PLAT_WEB)
@@ -2406,7 +2656,7 @@ STUDIO_EXPORT uint32_t studio_begin_take(uint32_t track, uint32_t bars,
     rec_track = track;
     rec_length = 16u << bars;
     rec_start_mode = !!count_in;
-    rec_raw = !!unquantized;
+    rec_quant_setting = unquantized ? 0u : REC_FULL_16;
     rec_overwrite = !!replace;
     rec_loop = 0;
     rec_countdown = 0;
@@ -2421,13 +2671,18 @@ STUDIO_EXPORT uint32_t studio_quick_take(uint32_t track, uint32_t unquantized)
     rec_track = track;
     rec_length = pattern_length(tracks[track].mix);
     rec_start_mode = !playing;
-    rec_raw = !!unquantized;
+    rec_quant_setting = unquantized ? 0u : REC_FULL_16;
     rec_overwrite = 0;
     rec_loop = 1;
     rec_countdown = 0;
     if (!playing) ++sequence_epoch;
     recording = playing = 1;
     return 1;
+}
+
+STUDIO_EXPORT void studio_take_quantization(uint32_t setting)
+{
+    if (recording && setting <= REC_QUANT_MAX) rec_quant_setting = setting;
 }
 
 STUDIO_EXPORT uint32_t studio_is_playing(void) { return playing; }
@@ -2476,6 +2731,7 @@ STUDIO_EXPORT void studio_set_event(uint32_t track, uint32_t step, uint32_t lane
     if (word && track == DRUMS && lane && (word & NOTES) != lane_pitch[lane-1u]) return;
     timing_group[pattern_row(track, lane)][step] = 0;
     *event_cell(track, step, lane) = word;
+    if (track < DRUMS) melodic_duration[track][lane][step] = 0;
     ++pattern_revision[track];
 }
 
@@ -2492,6 +2748,20 @@ STUDIO_EXPORT void studio_set_note_offset(uint32_t track, uint32_t step, uint32_
     if (!*cell) return;
     timing_group[pattern_row(track, lane)][step] = offset ? (uint8_t)(offset / 4u + 1u) : 0;
     *cell = (*cell & ~timing_bits(3u)) | timing_bits(offset);
+    ++pattern_revision[track];
+}
+
+STUDIO_EXPORT uint32_t studio_note_duration(uint32_t track, uint32_t lane, uint32_t step)
+{
+    if (track >= DRUMS || lane >= MELODIC_LANES || step >= STEPS) return 0;
+    return melodic_duration[track][lane][step];
+}
+
+STUDIO_EXPORT void studio_set_note_duration(uint32_t track, uint32_t lane, uint32_t step, uint32_t units)
+{
+    if (track >= DRUMS || lane >= MELODIC_LANES || step >= STEPS || units > 65535 ||
+        !(*event_cell(track, step, lane) & ACTIVE)) return;
+    melodic_duration[track][lane][step] = (uint16_t)units;
     ++pattern_revision[track];
 }
 
@@ -2521,6 +2791,7 @@ STUDIO_EXPORT void studio_set_step(uint32_t track, uint32_t step, uint32_t word)
     if (!step_valid(word)) return;
     timing_group[pattern_row(track, 0)][step] = 0;
     tracks[track].steps[step] = word;
+    if (track < DRUMS) melodic_duration[track][0][step] = 0;
     ++pattern_revision[track];
 }
 

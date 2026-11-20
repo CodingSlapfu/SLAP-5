@@ -272,6 +272,18 @@ static float insert_sample(Fx *f, float x, float lfo, float flange)
     return x + (f->fx_lp - x) * f->mix;
 }
 
+unsigned slap_fx_active_mask(void)
+{
+    unsigned mask = 0;
+    for (unsigned track = 0; track < SLAP_FX_TRACKS; ++track) {
+        const Fx *f = &fx[track];
+        if (f->filter_scale > 0.0f || f->dr[0] > 0.0f || f->ch[0] > 0.0f ||
+            f->insert || f->mode || f->rv[0] > 0.0f || f->dp[0] > 0.0f)
+            mask |= 1u << track;
+    }
+    return mask;
+}
+
 float slap_fx_sample(unsigned track, float dry)
 {
     Fx *f = &fx[track];

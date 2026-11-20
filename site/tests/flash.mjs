@@ -45,7 +45,7 @@ await assert.rejects(transport.serve({ ...link, read: async () => request(valid.
   valid, 0xf0000000, 1000), /bad request/);
 console.log('Checked packaged bytes, corruption, source and target identities, ambiguous ports, and simulated pull requests.');
 
-if (['0.1.4', '0.1.7', '0.1.11', '0.1.12', '0.1.13'].includes(version)) {
+if (['0.1.4', '0.1.7', '0.1.11', '0.1.12', '0.1.13', '0.1.14'].includes(version)) {
   const manifest = validateRelease(JSON.parse(await readFile(new URL('../release.json', import.meta.url))));
   await verifyPackage(manifest, raw);
   for (const source of ['FM-1_73000738', 'FM-1_75000102', 'FM-1_015'])
@@ -89,6 +89,7 @@ if (['0.1.4', '0.1.7', '0.1.11', '0.1.12', '0.1.13'].includes(version)) {
     simulate('FM-1_73000738'), simulate('FM-1_75000102'), simulate('FM-1_75000104'), simulate('FM-1_75000107'), simulate('FM-1_015'),
     ...(manifest.sources.includes('FM-1_75000111') ? [simulate('FM-1_75000111')] : []),
     ...(manifest.sources.includes('FM-1_75000112') ? [simulate('FM-1_75000112')] : []),
+    ...(manifest.sources.includes('FM-1_75000113') ? [simulate('FM-1_75000113')] : []),
     simulate('FM-1_73000738', { loader: 'ota-FM1C_014' }),
     simulate('FM-1_73000738', { disconnect: true }),
     simulate('FM-1_73000738', { result: 'FM-1_73000738' }),

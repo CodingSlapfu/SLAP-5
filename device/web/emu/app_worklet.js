@@ -13,7 +13,7 @@ globalThis.fm1App = {
         names: namesFor(128, ex.studio_patch_name),
         kitNames: namesFor(32, ex.studio_kit_name),
         project: {
-          version: 3,
+          version: 5,
           drumFilters: ex.studio_drum_filters(),
           bpm: ex.studio_bpm(),
           metronome: ex.studio_metronome(),
@@ -23,9 +23,11 @@ globalThis.fm1App = {
             patch: ex.studio_patch(t),
             fx: Array.from({ length: 9 }, (_, page) => ex.studio_fx(t, page) >>> 0),
             steps: Array.from({ length: 512 }, (_, s) => (ex.studio_event(t, s, 0) & 0x7fff7fff) >>> 0),
-            offsets: Array.from({ length: t === 4 ? 7 : 2 }, (_, lane) =>
+            offsets: Array.from({ length: t === 4 ? 7 : 4 }, (_, lane) =>
               Array.from({ length: 512 }, (_, s) => ex.studio_note_offset(t, s, lane))),
-            extra: Array.from({ length: t === 4 ? 6 : 1 }, (_, lane) =>
+            durations: Array.from({ length: t === 4 ? 7 : 4 }, (_, lane) =>
+              Array.from({ length: 512 }, (_, s) => ex.studio_note_duration(t, lane, s))),
+            extra: Array.from({ length: t === 4 ? 6 : 3 }, (_, lane) =>
               Array.from({ length: 512 }, (_, s) => (ex.studio_event(t, s, lane + 1) & 0x7fff7fff) >>> 0))
           }))
         }
@@ -35,15 +37,16 @@ globalThis.fm1App = {
       ex.studio_set_metronome(metronome ?? 0);
       ex.studio_set_drum_filters(drumFilters ?? 0);
       ex.studio_set_clock(bpm, swing);
-      tracks.forEach(({ mix, patch, steps, extra, fx, offsets }, t) => {
+      tracks.forEach(({ mix, patch, steps, extra, fx, offsets, durations }, t) => {
         ex.studio_set_track(t, mix, patch);
         fx?.forEach((word, page) => ex.studio_set_fx(t, page, word));
-        for (let lane = 0; lane <= (t === 4 ? 6 : 1); lane++) {
+        for (let lane = 0; lane <= (t === 4 ? 6 : 3); lane++) {
           const events = lane ? extra?.[lane - 1] : steps;
           for (let s = 0; s < 512; s++) {
             const word = events?.[s] ?? 0;
             ex.studio_set_event(t, s, lane, word);
             if (word && offsets) ex.studio_set_note_offset(t, s, lane, offsets[lane][s]);
+            if (word && durations?.[lane]?.[s]) ex.studio_set_note_duration(t, lane, s, durations[lane][s]);
           }
         }
       });
@@ -59,6 +62,7 @@ globalThis.fm1App = {
     } else if (m.command === 'record-start') {
       const ok = m.quick ? ex.studio_quick_take(m.track, m.unquantized) :
         ex.studio_begin_take(m.track, m.bars, m.countIn, m.unquantized, m.replace);
+      if (ok && Number.isInteger(m.quantization)) ex.studio_take_quantization(m.quantization);
       port.postMessage({ type: 'studio-take', state: ok ? ex.studio_record_state() : 0 });
     } else if (m.command === 'record-stop' || m.command === 'record-status') {
       if (m.command === 'record-stop') ex.studio_end_take();
