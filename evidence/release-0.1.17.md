@@ -16,6 +16,14 @@ The original photographs establish zero recorded DSP worker activity on v0.1.16.
 
 The threaded host completed 4,187 jobs with 10,104 µs aggregate overlap in the 112 BPM dry chord fixture and 5,060 jobs with 5,277 µs overlap in the 137 BPM wet fixture. Both had one host scheduling timeout and passed the single-core PCM comparison after recovery. Neither run measures two-core execution on an FM-1. The synchronous host forced-late, rejected-output and FX rollback tests passed. Studio auditioned all 128 patches and all 56 kit IDs, and the visualizer test passed all eight scenes at four master levels.
 
+An isolated desktop test compared 242 matching 16-voice callbacks and included
+only paired threaded samples with completed mailbox work. The single-thread
+mean/P95/P99/peak was 49.30/60.69/83.75/95.19 µs, versus
+32.14/43.77/78.31/109.86 µs with a real second host thread. The peak increased.
+The pre- and post-change drum recording WAVs were byte-identical with the
+same single-core fixture. All scripted host cases passed. Chromium CI passed
+on the exact candidate source. [CI run](https://github.com/CodingSlapfu/SLAP-5/actions/runs/44701529878)
+
 The interim host revision, before final FX placement, improved wet simulated-worker P99 from 236.56 to 189.51 µs, with mixed dry and single-core results. The desktop peak is noisy. Native SRAM placement reduces flash instruction fetches in the two busiest kernels and awaits direct timing on the unit. There is no measured native speedup or guaranteed headroom yet.
 
 The 611,488-byte package SHA-256 is `090cc3d822095a89e53b18982b023f7c23c3d1a280a4479359bcaac11df33167`. The pinned packaging inputs were recovered from the verified v0.1.16 image and individually matched all three existing SDK hashes. The package audit regenerated and matched every byte using those inputs. The 0.1.14 and 0.1.16 rollback archives are retained.
