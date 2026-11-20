@@ -74,6 +74,8 @@ def main():
     parser.add_argument("--cpu-time", action="store_true", help="Measure synchronous host thread CPU time")
     parser.add_argument("--full", action="store_true", help="Include recording and playback in the timing window")
     parser.add_argument("--chords", action="store_true")
+    parser.add_argument("--workload", choices=("dry", "wet", "arrangement"))
+    parser.add_argument("--modulated", action="store_true", help="Enable sine LFOs in the wet fixture")
     args = parser.parse_args()
     if args.runs < 1:
         parser.error("--runs must be positive")
@@ -89,10 +91,12 @@ def main():
         workloads = [("dry", 519331, 112, False), ("wet", 220507, 137, True),
                      ("arrangement", 519331, 160, False)]
         for name, seed, bpm, fx in workloads:
+            if args.workload and name != args.workload:
+                continue
             script = scratch / f"{name}.txt"
             arrangement = name == "arrangement"
             script.write_text("\n".join(fixture(seed, bpm, 1, fx, fx, chords=args.chords or arrangement,
-                                                 arrangement=arrangement)) + "\n")
+                                                 arrangement=arrangement, modulated=fx and args.modulated)) + "\n")
             for single in (False, True):
                 mode = "single" if single else "worker"
                 results = {label: [] for label in binaries}
