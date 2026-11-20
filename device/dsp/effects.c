@@ -53,7 +53,6 @@ static Fx fx[SLAP_FX_TRACKS];
 typedef struct {
     float room_damping, room_feedback, echo_damping, echo_feedback;
     float drive_gain, drive_damping, chorus_damping;
-    float fold_mix, chorus_mix, chorus_depth, gate_closed;
 } FxCoefficients;
 static FxCoefficients coefficients[SLAP_FX_TRACKS];
 static volatile uint32_t settings_revision[SLAP_FX_TRACKS];
@@ -234,11 +233,7 @@ void slap_fx_begin(unsigned bpm)
             .echo_feedback = 0.12f + 0.80f * f->dp[2],
             .drive_gain = 1.0f + 16.0f * f->dr[1],
             .drive_damping = 0.009f + f->dr[2] * 0.9f,
-            .chorus_damping = 0.025f + 0.7f * f->ch[3],
-            .fold_mix = 0.32f * f->dr[3],
-            .chorus_mix = 0.7f * f->ch[0],
-            .chorus_depth = 0.1f + 0.9f * f->ch[1],
-            .gate_closed = 1.0f - f->depth
+            .chorus_damping = 0.025f + 0.7f * f->ch[3]
         };
         f->phase_step = (0.18f + 3.5f * fm_maxf(f->ch[2], f->speed)) / 44100.0f;
         f->room_long = 300u + (unsigned)(f->rv[2] * 1100.0f);
@@ -323,7 +318,7 @@ float slap_fx_sample(unsigned track, float dry)
     }
     if (f->dr[0] > 0.0f) {
         float driven = x * c->drive_gain;
-        driven = 0.68f * soft(driven) + c->fold_mix * fold(driven);
+        driven = 0.68f * soft(driven) + 0.32f * f->dr[3] * fold(driven);
         f->drive_lp += (driven - f->drive_lp) * c->drive_damping;
         x += f->dr[0] * (f->drive_lp - x);
     }
@@ -334,13 +329,13 @@ float slap_fx_sample(unsigned track, float dry)
         if (f->ch[0] > 0.0f || f->insert == 7) {
             unsigned pos = f->chorus_pos;
             unsigned tap = 12u + (unsigned)(lfo * (f->insert == 7 ? 105.0f : 500.0f) *
-                            c->chorus_depth);
+                            (0.1f + 0.9f*f->ch[1]));
             float ch = unpack(chorus_line[track][preceding(pos, tap, CHORUS)]);
             chorus_line[track][pos] = pack(x);
             f->chorus_pos = (pos + 1u) & (CHORUS - 1u);
             if (f->insert) x = insert_sample(f, x, lfo, ch);
             f->chorus_lp += (ch - f->chorus_lp) * c->chorus_damping;
-            x += c->chorus_mix * f->chorus_lp;
+            x += 0.7f * f->ch[0] * f->chorus_lp;
         } else {
             x = insert_sample(f, x, lfo, 0.0f);
         }
@@ -357,7 +352,7 @@ float slap_fx_sample(unsigned track, float dry)
             ++f->gate_step;
             f->gate_boundary += f->clock_step;
         }
-        f->gate += ((open ? 1.0f : c->gate_closed) - f->gate) * 0.032f;
+        f->gate += ((open ? 1.0f : 1.0f - f->depth) - f->gate) * 0.032f;
         if (f->mode == 2) {
             if (open) f->slice[in_slice] = pack(x);
             else x += (unpack(f->slice[in_slice]) - x) * f->depth;
