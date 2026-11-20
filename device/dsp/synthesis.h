@@ -16,13 +16,13 @@ typedef struct {
     uint32_t rng;
     uint16_t length, index;
     uint8_t engine;
-    int16_t string[SLAP_STRING_CAPACITY];
+    int16_t *string;
 } SlapSynth;
 
 extern const char *const slap_engine_names[SLAP_ENGINES];
 extern const SlapPatch slap_patches[SLAP_PATCHES];
 
 float slap_pitch_increment(unsigned pitch);
-void slap_synth_start(SlapSynth *synth, unsigned engine, unsigned pitch,
+void slap_synth_start(SlapSynth *synth, int16_t *string, unsigned engine, unsigned pitch,
                       unsigned color, unsigned motion, uint32_t seed);
 float slap_synth_sample(SlapSynth *synth);

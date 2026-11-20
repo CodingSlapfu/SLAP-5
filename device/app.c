@@ -17,7 +17,7 @@ typedef struct {
 
 typedef struct {
     float phase, inc, env, velocity, fall, bend;
-    float attack, decay, sustain, release, drum_tune, drum_tail;
+    float attack, decay, sustain, release, drum_tune, drum_decay;
     float lfo_phase, lfo_inc, lfo_fade, lfo_gain, lfo_hold;
     float last_sample, steal_tail;
     float drum_noise, drum_color, drum_body, drum_snap;
@@ -96,6 +96,7 @@ static float mixer_envelope[TRACKS], mixer_gain[TRACKS];
 static volatile uint32_t track_peak[TRACKS], fx_cost_ticks[TRACKS];
 static Voice voices[VOICES];
 static PLAT_POOL SlapSynth synths[VOICES];
+static PLAT_POOL int16_t synth_strings[VOICES][SLAP_STRING_CAPACITY];
 static volatile uint32_t tempo = 112, swing, playing, positions, sequence_epoch;
 static volatile uint32_t keys_audio, input_track, input_octave;
 static uint32_t old_keys, key_pitches[27], key_tracks[27], ages, noise = 13579;
@@ -283,6 +284,22 @@ static const uint8_t factory_trim[SLAP_PATCHES] = {
     [122] = 116                        /* Slow Granules */
 };
 
+static float drum_decay(unsigned family, const struct DrumKit *kit, unsigned identity)
+{
+    float decay;
+    if (family == 0)
+        decay = kit->layers & DRUM_SUB ? 0.99976f : 0.99966f - kit->circuit * 0.00008f;
+    else if (family == 1 || family == 3)
+        decay = family == 3 ? 0.9977f : 0.99906f;
+    else if (family == 4)
+        decay = 0.99902f;
+    else
+        decay = family == 5 ? 0.99968f : kit->circuit == 1 ? 0.998f : 0.9969f;
+    if (identity >= 4u)
+        decay = 1.0f - (1.0f - decay) * (100.0f / kit->decay);
+    return decay;
+}
+
 static void trigger_voice(unsigned track, unsigned pitch, unsigned velocity, uint32_t duration,
                           int manual, unsigned origin, unsigned delay)
 {
@@ -324,9 +341,10 @@ static void trigger_voice(unsigned track, unsigned pitch, unsigned velocity, uin
             voice->lfo_fade = 1.0f / (1.0f + (lfo >> 24) * 690.0f);
             voice->lfo_hold = (int16_t)(random_word() & 65535u) * (1.0f / 32768.0f);
         }
-        slap_synth_start(&synths[voice - voices], patch->engine, pitch,
+        unsigned slot = (unsigned)(voice - voices);
+        slap_synth_start(&synths[slot], synth_strings[slot], patch->engine, pitch,
                          patch->color, patch->motion, random_word());
-        voice->inc = synths[voice - voices].inc;
+        voice->inc = synths[slot].inc;
     } else {
         voice->rng = random_word();
         voice->kit = (uint8_t)tracks[track].patch;
@@ -336,7 +354,7 @@ static void trigger_voice(unsigned track, unsigned pitch, unsigned velocity, uin
             voice->drum_family == 1 || voice->drum_family == 3 ? kit->snare_pitch :
             voice->drum_family == 4 ? kit->clap_rate : kit->metal_pitch;
         voice->drum_tune = tune * 0.01f;
-        voice->drum_tail = 100.0f / kit->decay;
+        voice->drum_decay = drum_decay(voice->drum_family, kit, voice->kit);
         voice->drum_color = 0.04f + kit->noise_color * 0.0065f;
         voice->drum_body = kit->resonance * (1.0f / 127.0f);
         voice->drum_snap = kit->transient * (1.0f / 127.0f);
@@ -808,11 +826,9 @@ static float render_voice_signal(Voice *v, SlapSynth *s)
         unsigned family = v->drum_family;
         unsigned kit = drum_kits[v->kit].circuit;
         unsigned layers = drum_kits[v->kit].layers;
-        float decay;
         if (family == 0) {
             v->bend *= 0.9988f;
             inc = 0.00108f + tone[kit] * v->bend;
-            decay = 0.99966f - kit * 0.00008f;
             float body = slap_oscillator(v->phase);
             wave = body * (1.0f - 0.24f * v->drum_body) +
                 0.24f * v->drum_body * slap_oscillator(v->phase * 2.0f) * v->bend +
@@ -821,14 +837,12 @@ static float render_voice_signal(Voice *v, SlapSynth *s)
                 // Saturated long sine body, with a rounded attack from the sweep.
                 float sub = body * (1.45f - 0.45f * body * body);
                 wave = 0.76f * sub + 0.24f * wave;
-                decay = 0.99976f;
             }
             if (layers & DRUM_BEATER)
                 wave += 0.20f * air * v->bend * v->bend * v->bend;
         } else if (family == 1 || family == 3) {
             inc = tone[kit] * (family == 3 ? 3.17f : 1.0f);
             v->bend *= 0.9972f;
-            decay = family == 3 ? 0.9977f : 0.99906f;
             float skin = kit == 2 ? slap_oscillator(v->phase + 0.25f*v->bend*slap_oscillator(v->phase*3.371f))
                                   : slap_oscillator(v->phase);
             float noise_mix = kit == 1 ? 0.91f : family == 3 ? 0.34f : 0.68f;
@@ -841,7 +855,6 @@ static float render_voice_signal(Voice *v, SlapSynth *s)
             if (layers & DRUM_BRUSH)
                 wave = 0.52f * wave + 0.48f * v->drum_noise * (1.0f + slap_oscillator(v->phase));
         } else if (family == 4) {
-            decay = 0.99902f;
             v->bend *= 0.999f;
             inc = 0.008f * pitch_mul[kit];
             float burst_width = 0.07f + 0.23f * v->drum_snap;
@@ -854,7 +867,6 @@ static float render_voice_signal(Voice *v, SlapSynth *s)
             }
         } else {
             inc = 0.052f * pitch_mul[kit];
-            decay = family == 5 ? 0.99968f : kit == 1 ? 0.998f : 0.9969f;
             float metal = slap_oscillator(v->phase) * slap_oscillator(v->phase*3.79f);
             wave = (0.72f - 0.26f * v->drum_body) * air +
                 (0.09f + 0.46f * v->drum_body) * metal;
@@ -864,11 +876,8 @@ static float render_voice_signal(Voice *v, SlapSynth *s)
                 wave = 0.57f * wave + 0.37f * plate;
             }
         }
-        if (v->kit >= 4u) {
-            inc *= v->drum_tune;
-            decay = 1.0f - (1.0f - decay) * v->drum_tail;
-        }
-        v->fall *= decay;
+        if (v->kit >= 4u) inc *= v->drum_tune;
+        v->fall *= v->drum_decay;
     }
     v->phase += inc;
     if (v->phase >= 1.0f) v->phase -= 1.0f;
@@ -889,26 +898,22 @@ static float render_voice(Voice *v, SlapSynth *s)
 }
 
 #if FM1B_CPU2 && !defined(PLAT_WEB)
-enum { VOICE_BATCH = SLAP_FX_BATCH, MIN_VOICE_BATCH = 32 };
+enum { VOICE_BATCH = SLAP_FX_BATCH, MIN_VOICE_BATCH = 32, REMOTE_VOICES = VOICES / 2 };
 static struct {
-    Voice voice[VOICES];
-    unsigned slot[VOICES];
+    Voice voice[REMOTE_VOICES];
+    unsigned slot[REMOTE_VOICES];
     unsigned count, muted;
-    float output[VOICES][VOICE_BATCH];
+    float output[REMOTE_VOICES][VOICE_BATCH];
     uint32_t ticks;
 } voice_worker __attribute__((aligned(32)));
-static PLAT_POOL SlapSynth worker_synth[VOICES / 2];
-enum { SYNTH_STATE_BYTES = __builtin_offsetof(SlapSynth, string) };
+static PLAT_POOL SlapSynth worker_synth[REMOTE_VOICES];
 static float voice_bus[VOICE_BATCH][TRACKS];
 static float fx_bus[TRACKS][VOICE_BATCH] __attribute__((aligned(32)));
 static unsigned fx_worker_tracks[SLAP_FX_WORKER_TRACKS], fx_worker_count;
 static volatile uint32_t fx_worker_jobs, fx_worker_fallbacks, fx_worker_ticks;
-static uint32_t fx_job_ticks, late_voice_tick;
-static unsigned late_voice_pending;
+static uint32_t fx_job_ticks;
 static volatile uint32_t worker_jobs, worker_fallbacks, worker_ticks, worker_wait_ticks;
 static volatile uint32_t voice_late_jobs, voice_rejected_jobs, voice_busy_jobs, fx_late_jobs;
-enum { VOICE_SHARE_MAX = 8, VOICE_SHARE_MIN = 3, VOICE_SHARE_RECOVERY = 64 };
-static unsigned worker_share = VOICE_SHARE_MAX, worker_healthy_jobs;
 
 static void render_worker_voices(uint32_t frames)
 {
@@ -926,24 +931,16 @@ static void render_worker_voices(uint32_t frames)
     voice_worker.ticks = plat_ticks24() - started;
 }
 
-static unsigned voice_mailbox_ready(uint32_t budget)
-{
-    if (!late_voice_pending) return 1;
-    if (plat_cpu2_busy()) {
-        ++voice_busy_jobs;
-        if (plat_ticks24() - late_voice_tick >= budget) plat_cpu2_set(0);
-        return 0;
-    }
-    late_voice_pending = 0;
-    return plat_cpu2_wait() == 0;
-}
-
 static unsigned render_voice_batch(unsigned frames, unsigned muted, unsigned allow_fx,
                                    uint32_t callback_start, uint32_t budget)
 {
     if (!frames) return 0;
     unsigned can_dispatch = frames >= MIN_VOICE_BATCH && plat_cpu2_on() &&
-        voice_mailbox_ready(budget) && plat_ticks24() - callback_start < budget / 2u;
+        plat_ticks24() - callback_start < budget / 2u;
+    if (can_dispatch && plat_cpu2_busy()) {
+        ++voice_busy_jobs;
+        can_dispatch = 0;
+    }
     unsigned active_slots[VOICES], active = 0, total_cost = 0;
     unsigned cost[VOICES];
     int ordered_rng = 0;
@@ -965,14 +962,14 @@ static unsigned render_voice_batch(unsigned frames, unsigned muted, unsigned all
         total_cost += cost[j];
     }
     unsigned assigned_cost = 0;
-    unsigned target_cost = (total_cost * worker_share + VOICE_SHARE_MAX) / (VOICE_SHARE_MAX * 2u);
+    unsigned target_cost = (total_cost + 1u) / 2u;
     unsigned remote = 0, local_only = 0;
     if (can_dispatch) {
         voice_worker.count = 0;
         voice_worker.muted = muted;
     }
     // Take a suffix of the active slots on each track to preserve its float sum.
-    for (unsigned n = active; can_dispatch && n-- > 0 && voice_worker.count < VOICES / 2;) {
+    for (unsigned n = active; can_dispatch && n-- > 0 && voice_worker.count < REMOTE_VOICES;) {
         unsigned j = active_slots[n];
         const Voice *voice = &voices[j];
         if (local_only & (1u << voice->track)) continue;
@@ -993,8 +990,10 @@ static unsigned render_voice_batch(unsigned frames, unsigned muted, unsigned all
         unsigned index = voice_worker.count++;
         voice_worker.slot[index] = j;
         voice_worker.voice[index] = *voice;
-        if (voice->track != DRUMS)
-            __builtin_memcpy(&worker_synth[index], &synths[j], SYNTH_STATE_BYTES);
+        if (voice->track != DRUMS) {
+            worker_synth[index] = synths[j];
+            worker_synth[index].string = 0;
+        }
         remote |= 1u << j;
         if (assigned_cost >= target_cost) break;
     }
@@ -1043,19 +1042,14 @@ static unsigned render_voice_batch(unsigned frames, unsigned muted, unsigned all
     int unusable = busy;
 #ifdef PLAT_HOST
     // Simulate a rejected result after the worker has modified its private copy.
-    if (host_discard_worker_result) {
-        unusable = 1;
-        if (!busy) plat_cpu2_set(0);
-    }
+    if (host_discard_worker_result) unusable = 1;
 #endif
     if (unusable || plat_cpu2_wait() != 0) {
-        if (busy) {
-            late_voice_pending = 1;
-            late_voice_tick = wait_start;
-            ++voice_late_jobs;
-            if (worker_share > VOICE_SHARE_MIN) --worker_share;
-        } else ++voice_rejected_jobs;
-        worker_healthy_jobs = 0;
+        if (busy) ++voice_late_jobs;
+        else ++voice_rejected_jobs;
+        // Retire the worker after a missed deadline or invalid result.
+        // Recover this suffix once from its untouched Core 0 state.
+        plat_cpu2_set(0);
         ++worker_fallbacks;
         // Only independent voices can be assigned remotely. Replay their
         // suffix in slot order without scanning every slot on every sample.
@@ -1073,16 +1067,14 @@ static unsigned render_voice_batch(unsigned frames, unsigned muted, unsigned all
         return frames;
     }
     ++worker_jobs;
-    if (worker_share < VOICE_SHARE_MAX && ++worker_healthy_jobs >= VOICE_SHARE_RECOVERY) {
-        ++worker_share;
-        worker_healthy_jobs = 0;
-    }
     worker_ticks += voice_worker.ticks;
     for (unsigned j = voice_worker.count; j-- > 0;) {
         unsigned slot = voice_worker.slot[j], track = voice_worker.voice[j].track;
         voices[slot] = voice_worker.voice[j];
-        if (track != DRUMS)
-            __builtin_memcpy(&synths[slot], &worker_synth[j], SYNTH_STATE_BYTES);
+        if (track != DRUMS) {
+            synths[slot] = worker_synth[j];
+            synths[slot].string = synth_strings[slot];
+        }
         for (unsigned i = 0; i < frames; ++i)
             voice_bus[i][track] += voice_worker.output[j][i];
     }
@@ -1129,7 +1121,7 @@ static void render_worker_fx(uint32_t frames)
 
 static unsigned render_fx_batch(unsigned frames, unsigned mask, uint32_t start, uint32_t budget)
 {
-    if (!mask || !plat_cpu2_on() || late_voice_pending || plat_ticks24() - start >= budget * 3u / 4u) return 0;
+    if (!mask || !plat_cpu2_on() || plat_cpu2_busy() || plat_ticks24() - start >= budget * 3u / 4u) return 0;
     fx_worker_count = 0;
     for (unsigned t = 1; t < TRACKS; ++t) {
         if (!(mask & (1u << t))) continue;
@@ -2691,7 +2683,6 @@ int app_expect(const char *name, int *result)
     else if (name_matches(name, "worker_jobs")) *result = (int)worker_jobs;
     else if (name_matches(name, "worker_fallbacks")) *result = (int)worker_fallbacks;
     else if (name_matches(name, "voice_late_jobs")) *result = (int)voice_late_jobs;
-    else if (name_matches(name, "worker_share")) *result = (int)worker_share;
     else if (name_matches(name, "fx_worker_jobs")) *result = (int)fx_worker_jobs;
     else if (name_matches(name, "fx_worker_fallbacks")) *result = (int)fx_worker_fallbacks;
 #endif

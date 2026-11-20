@@ -101,10 +101,9 @@ for mode in worker single; do
 done
 cmp "$tmp/synth-single/synth.wav" "$tmp/synth-worker/synth.wav"
 
-# Late voice output is discarded once. Subsequent jobs recover and produce
-# the same audio without retiring the worker.
+# Late voice output retires the worker. Single-core recovery preserves PCM.
 mkdir "$tmp/late"
 cp tests/dual-core.txt "$tmp/late/input.txt"
-printf '%s\n' 'expect voice_late_jobs 1' 'expect worker_jobs >64'     'expect worker_fallbacks 1' 'expect worker_share 8' >> "$tmp/late/input.txt"
+printf '%s\n' 'expect voice_late_jobs 1' 'expect worker_jobs 4' 'expect worker_fallbacks 1' >> "$tmp/late/input.txt"
 SLAP_TEST_LATE_VOICE=1 build/host/slap-5_host "$tmp/late/input.txt" "$tmp/late"
 cmp "$tmp/single/dual-core.wav" "$tmp/late/dual-core.wav"

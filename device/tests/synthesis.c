@@ -20,7 +20,8 @@ int main(void)
         float energy = 0.0f;
         for (unsigned pitch = 36; pitch <= 96; pitch += 24) {
             SlapSynth synth;
-            slap_synth_start(&synth, patch->engine, pitch, patch->color, patch->motion, 0x51616942u);
+            int16_t string[SLAP_STRING_CAPACITY];
+            slap_synth_start(&synth, string, patch->engine, pitch, patch->color, patch->motion, 0x51616942u);
             for (int f = 0; f < 8192; ++f) {
                 const float sample = slap_synth_sample(&synth);
                 assert(isfinite(sample) && fabsf(sample) <= 2.8f);

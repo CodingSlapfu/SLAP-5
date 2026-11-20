@@ -67,7 +67,7 @@ float slap_pitch_increment(unsigned pitch)
     return (440.0f / 44100.0f) * fm_exp2f(((float)pitch - 69.0f) / 12.0f);
 }
 
-void slap_synth_start(SlapSynth *s, unsigned engine, unsigned pitch,
+void slap_synth_start(SlapSynth *s, int16_t *string, unsigned engine, unsigned pitch,
                       unsigned color, unsigned motion, uint32_t seed)
 {
     s->phase = s->second = s->third = s->slow = s->pole = s->feedback = 0.0f;
@@ -77,6 +77,7 @@ void slap_synth_start(SlapSynth *s, unsigned engine, unsigned pitch,
     s->motion = motion * (1.0f / 127.0f);
     s->rng = seed | 1u;
     s->engine = (uint8_t)engine;
+    s->string = string;
     if (engine == 4 || engine == 6) {
         unsigned period = (unsigned)(1.0f / s->inc + 0.25f);
         s->length = period > SLAP_STRING_CAPACITY ? SLAP_STRING_CAPACITY :
