@@ -2438,6 +2438,8 @@ void app_input_only(void)
     else if (slap_ui.page == HOME || slap_ui.page == MIXER || (slap_ui.page == RECORD && !recording) ||
              slap_ui.page == PATCH || slap_ui.page == ENV || slap_ui.page == LFO || slap_ui.page == FX)
         slap_ui.track = clamp(slap_ui.track + delta, 0, TRACKS - 1);
+    if (recording && (unsigned)slap_ui.track != rec_track)
+        recording = 0;
     int algorithm = plat_enc(EN_ALGO);
     if (slap_ui.page == FX) slap_ui.fx_page = clamp(slap_ui.fx_page + algorithm, 0, SLAP_FX_PAGES - 1);
     else tempo = (uint32_t)clamp((int)tempo + algorithm, 40, 240);
@@ -2618,7 +2620,7 @@ static unsigned callback_percentile(unsigned percentile)
 
 static void draw_panel(void)
 {
-    static const char *const page_names[] = {"SLAP-5", "SEQUENCE", "GLOBAL", "PATCH", "ENV", "FX", "VISUAL", "SAVE", "HARMONY", "LFO", "ARP", "MIXER", "RECORD", "GEN DRUMS"};
+    static const char *const page_names[] = {"SLAP-5", "SEQUENCE", "GLOBAL", "PATCH", "ENV", "FX", "VISUAL", "SAVE", "KEY & CHORDS", "LFO", "ARP", "MIXER", "RECORD", "GEN DRUMS"};
     static const char *const arp_labels[] = {"MODE", "RATE", "OCT", "GATE"};
     static const char *const arp_modes[] = {"OFF","UP","DOWN","UP/DN","RANDOM","CHORD","PLAYED"};
     static const char *const arp_rates[] = {"1/4","1/8","1/16","1/32","1/8T","1/16T"};
@@ -2638,7 +2640,7 @@ static void draw_panel(void)
     uint16_t c = track_color[selected], background = C_BLACK;
     cv_begin(240, 48, background);
     if (slap_ui.page == HOME) cv_text(8, 1, &FONT_M, "SLAP-5", C_WHITE);
-    else cv_text(8, 1, &FONT_M, page_names[slap_ui.page], c);
+    else cv_text(8, 1, slap_ui.page == HARMONY ? &FONT_B : &FONT_M, page_names[slap_ui.page], c);
     decimal(number, tempo);
     cv_text(164, 1, &FONT_M, number, C_WHITE);
     cv_text(210, 10, &FONT_XS, "BPM", C_WHITE);
@@ -2961,7 +2963,7 @@ static void draw_panel(void)
         (slap_ui.lane ? drum_names[slap_ui.lane-1] : "DRUM NOTES") :
         melodic_names[slap_ui.lane];
     const char *name = slap_ui.page == SEQ ? lane_name : slap_ui.page == SAVE ? "SONG SLOTS" : slap_ui.page == FX ? slap_fx_pages[slap_ui.fx_page] :
-                       selected == DRUMS ? drum_kits[tracks[DRUMS].patch].name : patch->name;
+                       slap_ui.page == HARMONY ? "PERFORMANCE" : selected == DRUMS ? drum_kits[tracks[DRUMS].patch].name : patch->name;
     unsigned drum_sequence = selected == DRUMS && slap_ui.page == SEQ;
     const felucca_font_t *name_font = drum_sequence || text_w(&FONT_M, name) > 150 ? &FONT_B : &FONT_M;
     cv_text(8, 1, name_font, name, C_WHITE);
@@ -3123,20 +3125,54 @@ static void draw_panel(void)
                 cv_rect(8 + x, y - strip * 36, 1, 3, c);
             }
         } else {
-            for (unsigned s = 0; s < (scroll ? 19u : 16u); ++s) {
-                if (!scroll && bank + s >= length) break;
-                unsigned index = scroll ? (play_step + length * 3u - 3u + s) % length : bank + s;
-                int x = 8 + (int)s * 14 - (scroll ? (int)substep : 0);
-                uint32_t word = tracks[selected].steps[index];
+            int first_step = scroll ? (int)play_step - 3 : (int)bank;
+            int left = 8 - (scroll ? (int)substep : 0);
+            int columns = scroll ? 19 : 16;
+            for (int column = 0; column < columns; ++column) {
+                int step = first_step + column;
+                if (!scroll && step >= (int)length) break;
+                unsigned index = (unsigned)((step + (int)length * 3) % (int)length);
+                int x = left + column * 14;
                 cv_rect(x, 0, 12, 36, index % 4 == 0 ? track_rule[selected] : track_surface[selected]);
+                if (index == 0) cv_rect(x, 0, 1, 36, c);
                 if (!scroll && index == play_step && playing) cv_rect(x, 0, 2, 36, C_WHITE);
                 if (slap_ui.page == SEQ && index == (unsigned)slap_ui.step) cv_rect(x + 9, 0, 3, 36, c);
+            }
+            unsigned step_samples = RATE * 15u / tempo;
+            int graph_end = scroll ? 240 : clamp(left + ((int)length - first_step) * 14, 0, 240);
+            for (unsigned index = 0; index < length; ++index) {
                 for (unsigned lane = 0; lane < lane_count(selected); ++lane) {
-                    word = *event_cell(selected, index, lane);
+                    unsigned row = pattern_row(selected, lane);
+                    uint32_t word = *event_cell(selected, index, lane);
                     if (!(word & ACTIVE)) continue;
                     int y = 100 - (int)((word & NOTES) % 24u) * 4 - strip * 36;
-                    int width = 2 + (int)((word >> 16) & 255u) * 13 / 192;
-                    cv_rect(x + 2 + (int)timing_of(word), y, width, 5, c);
+                    if (y <= -5 || y >= 36) continue;
+                    unsigned duration = selected < DRUMS ? melodic_duration[selected][lane][index] : 0;
+                    int width = duration ? (int)(duration * NOTE_DURATION_UNIT * 14u / step_samples) :
+                        (int)(((word >> 16) & 255u) * 14u / 192u);
+                    if (width < 2) width = 2;
+                    int offset = (int)(note_timing(row, index, word) * 14u / 16u);
+                    int period = (int)length * 14;
+                    int x = left + ((int)index - first_step) * 14 + offset;
+                    if (width >= period) {
+                        cv_rect(0, y, graph_end, 5, c);
+                        if (scroll) cv_rect(0, y, 240, 1, C_WHITE);
+                        continue;
+                    }
+                    // Start at the oldest repetition that still reaches the graph.
+                    while (x + width <= 0) x += period;
+                    while (x - period + width > 0) x -= period;
+                    for (; x < graph_end; x += period) {
+                        int end = x + width;
+                        int from = x < 0 ? 0 : x;
+                        int to = end > graph_end ? graph_end : end;
+                        if (to <= from) continue;
+                        cv_rect(from, y, to - from, 5, c);
+                        if (scroll && x <= 50 && end > 50) {
+                            cv_rect(from, y, to - from, 1, C_WHITE);
+                            cv_rect(50, y, 2, 5, C_WHITE);
+                        }
+                    }
                 }
             }
             if (scroll) cv_rect(50, 0, 1, 36, C_WHITE);

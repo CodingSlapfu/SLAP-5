@@ -126,7 +126,7 @@ const SlapPatch slap_patches[SLAP_PATCHES] = {
     {"TIDE CLUSTER", 23, 72, 58, 68, 80, 95, 95},
     {"GRAIN CHORD", 23, 51, 83, 52, 71, 113, 87},
     {"GRAIN DRFT", 23, 25, 10, 100, 90, 109, 115},
-    {"SPECK INK", 24, 53, 42, 41, 70, 91, 69},
+    {"GRAIN BLOOM", 24, 53, 42, 41, 70, 91, 69},
     {"ODD ORBITS", 24, 109, 56, 19, 73, 106, 75},
     {"FAR RADIO", 24, 79, 119, 32, 57, 100, 70},
     {"RF BLOOM", 24, 91, 87, 71, 83, 110, 92},

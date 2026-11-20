@@ -32,3 +32,22 @@ expect page 0
 tap REC
 expect recording 0
 expect playing 1
+tap REC
+expect rec_running 1
+key 4 down
+wait 70
+turn SELECT 1
+expect track 2
+expect recording 0
+expect rec_running 0
+expect playing 1
+key 4 up
+tap REC
+expect rec_running 1
+key 7 down
+wait 80
+key 7 up
+expect recorded >0
+tap REC
+expect recording 0
+expect playing 1
