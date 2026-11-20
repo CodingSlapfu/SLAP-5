@@ -2219,7 +2219,7 @@ static void draw_panel(void)
         }
         cv_blit(0, 80 + strip * 36);
     }
-    cv_begin(240, 48, background);
+    cv_begin(240, 52, background);
     if (slap_ui.page == FX && slap_ui.fx_page == 4) {
         cv_text(8, 1, &FONT_XS, "FX TICKS / SAMPLE", C_WHITE);
         unsigned v = fx_cost_ticks[selected];

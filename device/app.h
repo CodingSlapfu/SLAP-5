@@ -7,7 +7,7 @@
 #define APP_NAME "SLAP-5"
 #define APP_SPLASH_RGB RGB(45,230,245)
 #define APP_BLOCK 256u
-#define APP_CANVAS_PX (240u*48u)
+#define APP_CANVAS_PX (240u*52u)
 #define APP_BLE_AT_BOOT 0
 enum { OBJ_PANEL, OBJ_SONG1, OBJ_SONG8 = OBJ_SONG1 + 7, OBJ_SETTINGS, OBJ_NOBJ };
 /* Eight A/B pairs below the OTA staging window and above AQUORA's bank area. */
