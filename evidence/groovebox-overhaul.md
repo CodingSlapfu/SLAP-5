@@ -30,3 +30,11 @@ The regression at `emulator.mjs:207` came from the physical control poll canceli
 KEY & CHORDS now uses OCT− for a per-track Perfect Note switch (on by default) and OCT+ to cycle OFF, TRIAD, SEVENTH and FIFTH. With correction off, a chord starts from the played chromatic pitch and retains the intervals derived from the selected scale. Outside that page the OCT controls transpose as before. The switch is session-local; persistent keyboard defaults remain part of SETTINGS. Host tests covered the controls, recording, wrapped holds, arpeggiator and corrective UI fixtures.
 
 Native build recovered by fetching `uboot.boot` and `cfg/eq_cfg_hw.bin` from Gitee at the exact SDK commit specified in [SDK pinning](sdk-pinning.md), and reusing the cached `cfg_tool.bin` that already matched. All three checksums passed with no changes to the manifest. The JieLi compiler built the development package `FM-1_7500` and the package audit regenerated it byte-for-byte. Application size was 163,588 bytes (+756 versus published v0.1.20), static RAM 56,840 bytes and pool 312,420 bytes. This is a build check, with no physical performance claim. The full overhaul and qualified release remain open.
+
+## Recording actions
+
+Hosted browser workflow 44824585526 passed at b6dace0 (owner-confirmed). This milestone changes the firmware controls and merits a new hosted verification run.
+
+Hold REC to open RECORD. While stopped, OCT− twice clears the active loop and OCT+ twice clears the entire track’s stored steps, including steps outside the current loop. ARP undoes the last clear or take while stopped. During recording, ARP cancels and restores the pre-take snapshot after finalization, stopping the transport. Quick REC honors the RECORD mode set by K4. The workflow reuses the bounded single snapshot. Playback-continuing undo and cancel remain open.
+
+Host `record-actions`, `quick-record`, `record` and `held-recording` passed. All pinned native inputs passed. Native application size was 164,348 bytes, static RAM 56,840 bytes and pool 312,420 bytes. Remaining sound, graphics, settings and release qualification are unchanged.

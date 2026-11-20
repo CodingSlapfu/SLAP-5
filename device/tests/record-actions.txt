@@ -1,0 +1,36 @@
+wait 6100
+tap SEQ
+key 7 down
+key 7 up
+expect pitch 60
+tap HOME
+press REC
+wait 2200
+release REC
+expect page 12
+tap OCT-
+expect pitch 60
+tap OCT-
+expect pitch -1
+tap ARP
+expect pitch 60
+tap OCT+
+expect pitch 60
+tap OCT+
+expect pitch -1
+tap ARP
+expect pitch 60
+tap HOME
+tap REC
+wait 2300
+expect rec_running 1
+key 10 down
+wait 100
+key 10 up
+press REC
+wait 2200
+release REC
+tap ARP
+expect playing 0
+expect rec_running 0
+expect pitch 60

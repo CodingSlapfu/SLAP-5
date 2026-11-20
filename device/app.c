@@ -669,30 +669,58 @@ static void end_recording(uint32_t now)
     rec_running = rec_countdown = 0;
 }
 
-static void begin_recording(void)
+static void snapshot_take(unsigned track, unsigned length)
 {
-    unsigned track = rec_track;
     take_undo.ready = 0;
     take_undo.track = track;
     take_undo.length = pattern_length(tracks[track].mix);
-    take_undo.recorded_length = rec_length;
+    take_undo.recorded_length = length;
     for (unsigned lane = 0; lane < lane_count(track); ++lane)
         for (unsigned step = 0; step < take_undo.recorded_length; ++step) {
             take_undo.cells[lane][step] = *event_cell(track, step, lane);
             take_undo.timing[lane][step] = timing_group[pattern_row(track, lane)][step];
             if (track < DRUMS) take_undo.duration[lane][step] = melodic_duration[track][lane][step];
         }
-    if (rec_overwrite) {
-        for (unsigned step = 0; step < rec_length; ++step) {
-            for (unsigned lane = 0; lane < lane_count(track); ++lane)
-                timing_group[pattern_row(track, lane)][step] = 0;
-            if (track < DRUMS)
-                for (unsigned lane = 0; lane < MELODIC_LANES; ++lane) melodic_duration[track][lane][step] = 0;
-            tracks[track].steps[step] = 0;
-            for (unsigned lane = 1; lane < lane_count(track); ++lane)
-                *event_cell(track, step, lane) = 0;
-        }
+}
+
+static void clear_events(unsigned track, unsigned length)
+{
+    for (unsigned step = 0; step < length; ++step) {
+        for (unsigned lane = 0; lane < lane_count(track); ++lane)
+            timing_group[pattern_row(track, lane)][step] = 0;
+        if (track < DRUMS)
+            for (unsigned lane = 0; lane < MELODIC_LANES; ++lane) melodic_duration[track][lane][step] = 0;
+        tracks[track].steps[step] = 0;
+        for (unsigned lane = 1; lane < lane_count(track); ++lane)
+            *event_cell(track, step, lane) = 0;
     }
+    ++pattern_revision[track];
+}
+
+static unsigned clear_mode, clear_track;
+static unsigned cancel_pending;
+
+static void confirm_clear(unsigned track, unsigned all)
+{
+    unsigned action = 1u + all;
+    if (clear_mode != action || clear_track != track) {
+        clear_mode = action;
+        clear_track = track;
+        return;
+    }
+    clear_mode = 0;
+    unsigned length = all ? STEPS : pattern_length(tracks[track].mix);
+    snapshot_take(track, length);
+    clear_events(track, length);
+    take_undo.after = pattern_revision[track];
+    take_undo.ready = 1;
+}
+
+static void begin_recording(void)
+{
+    unsigned track = rec_track;
+    snapshot_take(track, rec_length);
+    if (rec_overwrite) clear_events(track, rec_length);
     track_setting(track, 0, rec_length);
     rec_begin_events = recorded_events;
     rec_rejected = 0;
@@ -2330,6 +2358,11 @@ void app_input_only(void)
         }
     }
     boot_suppressed_keys &= keys;
+    if (cancel_pending && !rec_running) {
+        cancel_pending = 0;
+        undo_recording();
+    }
+    if (slap_ui.page != RECORD || playing || recording) clear_mode = 0;
     if (pressed & (1u << B_PLAY)) {
         playing ^= 1u;
         if (!playing) recording = 0;
@@ -2357,7 +2390,7 @@ void app_input_only(void)
             rec_length = pattern_length(tracks[rec_track].mix);
             rec_start_mode = !playing;
             rec_quant_setting = rec_quantize;
-            rec_overwrite = 0;
+            rec_overwrite = rec_replace;
             rec_loop = 1;
             if (!playing) {
                 ++sequence_epoch;
@@ -2412,8 +2445,21 @@ void app_input_only(void)
         slap_ui.notice = 0;
     }
     if (pressed & (1u << B_FX)) slap_ui.page = FX;
+    if (slap_ui.page == RECORD) {
+        if ((pressed & (1u << B_ARP)) && recording) {
+            cancel_pending = rec_running;
+            recording = playing = 0;
+            ++sequence_epoch;
+            pressed &= ~(1u << B_ARP);
+        }
+        if (!playing && !recording && !rec_running) {
+            if (pressed & (1u << B_OCTDN)) confirm_clear(slap_ui.track, 0);
+            else if (pressed & (1u << B_OCTUP)) confirm_clear(slap_ui.track, 1);
+            else if (pressed || clear_track != (unsigned)slap_ui.track) clear_mode = 0;
+        }
+    }
     if (pressed & (1u << B_ARP)) {
-        if (slap_ui.page == RECORD) undo_recording();
+        if (slap_ui.page == RECORD && !cancel_pending) undo_recording();
         else if (slap_ui.track < DRUMS && slap_ui.page != MIXER) slap_ui.page = ARP;
     }
     if (pressed & (1u << B_SEL) && slap_ui.page == HOME && slap_ui.track < DRUMS) slap_ui.page = HARMONY;
@@ -2433,7 +2479,7 @@ void app_input_only(void)
             unsigned next = (((harmony >> 16) & 255u) + 1u) % HARMONY_CHORDS;
             tracks[slap_ui.track].harmony = (harmony & ~0x00ff0000u) | (next << 16);
         }
-    } else {
+    } else if (slap_ui.page != RECORD) {
         if (pressed & (1u << B_OCTDN)) slap_ui.octave = clamp(slap_ui.octave - 1, 0, 4);
         if (pressed & (1u << B_OCTUP)) slap_ui.octave = clamp(slap_ui.octave + 1, 0, 4);
     }
@@ -2455,6 +2501,7 @@ void app_input_only(void)
     else if (slap_ui.page == HOME || slap_ui.page == MIXER || (slap_ui.page == RECORD && !recording) ||
              slap_ui.page == PATCH || slap_ui.page == ENV || slap_ui.page == LFO || slap_ui.page == FX)
         slap_ui.track = clamp(slap_ui.track + delta, 0, TRACKS - 1);
+    if (slap_ui.track != previous_track) clear_mode = 0;
     if (recording && slap_ui.track != previous_track && (unsigned)slap_ui.track != rec_track)
         recording = 0;
     int algorithm = plat_enc(EN_ALGO);
@@ -2965,9 +3012,11 @@ static void draw_panel(void)
                 cv_text(x, 0, &FONT_XS, labels[k], c);
                 cv_text(x, 15, &FONT_XS, values[k], C_WHITE);
             }
-            cv_text(8, 30, &FONT_XS, metronome == 2 ? "METRO ON" : metronome == 1 ? "METRO REC" : "METRO OFF", c);
-            if (take_undo.ready && !playing && !recording)
-                cv_text(132, 30, &FONT_XS, "ARP UNDO TAKE", C_WHITE);
+            const char *record_action = recording ? "ARP CANCEL TAKE" :
+                clear_mode == 1 ? "OCT- AGAIN: CLEAR PATTERN" :
+                clear_mode == 2 ? "OCT+ AGAIN: CLEAR TRACK" : playing ? "STOP FOR EDIT ACTIONS" :
+                take_undo.ready ? "ARP UNDO  /  OCT- PATTERN  /  OCT+ TRACK" : "OCT- PATTERN  /  OCT+ TRACK";
+            cv_text(8, 30, &FONT_T, record_action, c);
         }
         cv_blit(0, 196);
         return;
