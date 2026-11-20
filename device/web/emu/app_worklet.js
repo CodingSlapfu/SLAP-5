@@ -13,8 +13,8 @@ globalThis.fm1App = {
         names: namesFor(128, ex.studio_patch_name),
         kitNames: namesFor(ex.studio_kit_count(), ex.studio_kit_name),
         project: {
-          version: 5,
-          drumFilters: ex.studio_drum_filters(),
+          version: 6,
+          drumFilters: ex.studio_drum_filters() >>> 0,
           bpm: ex.studio_bpm(),
           metronome: ex.studio_metronome(),
           swing: ex.studio_swing(),
@@ -23,11 +23,11 @@ globalThis.fm1App = {
             patch: ex.studio_patch(t),
             fx: Array.from({ length: 9 }, (_, page) => ex.studio_fx(t, page) >>> 0),
             steps: Array.from({ length: 512 }, (_, s) => (ex.studio_event(t, s, 0) & 0x7fff7fff) >>> 0),
-            offsets: Array.from({ length: t === 4 ? 7 : 4 }, (_, lane) =>
+            offsets: Array.from({ length: t === 4 ? 17 : 4 }, (_, lane) =>
               Array.from({ length: 512 }, (_, s) => ex.studio_note_offset(t, s, lane))),
-            durations: Array.from({ length: t === 4 ? 7 : 4 }, (_, lane) =>
+            durations: Array.from({ length: t === 4 ? 17 : 4 }, (_, lane) =>
               Array.from({ length: 512 }, (_, s) => ex.studio_note_duration(t, lane, s))),
-            extra: Array.from({ length: t === 4 ? 6 : 3 }, (_, lane) =>
+            extra: Array.from({ length: t === 4 ? 16 : 3 }, (_, lane) =>
               Array.from({ length: 512 }, (_, s) => (ex.studio_event(t, s, lane + 1) & 0x7fff7fff) >>> 0))
           }))
         }
@@ -40,7 +40,7 @@ globalThis.fm1App = {
       tracks.forEach(({ mix, patch, steps, extra, fx, offsets, durations }, t) => {
         ex.studio_set_track(t, mix, patch);
         fx?.forEach((word, page) => ex.studio_set_fx(t, page, word));
-        for (let lane = 0; lane <= (t === 4 ? 6 : 3); lane++) {
+        for (let lane = 0; lane <= (t === 4 ? 16 : 3); lane++) {
           const events = lane ? extra?.[lane - 1] : steps;
           for (let s = 0; s < 512; s++) {
             const word = events?.[s] ?? 0;
@@ -54,9 +54,9 @@ globalThis.fm1App = {
       const ok = ex.studio_generate_drums(m.style, m.hit, m.groove, m.variation);
       port.postMessage({ type: 'studio-generated', id: m.id, drums: !ok ? null : {
         steps: Array.from({ length: 512 }, (_, s) => (ex.studio_event(4, s, 0) & 0x7fff7fff) >>> 0),
-        offsets: Array.from({ length: 7 }, (_, lane) =>
+        offsets: Array.from({ length: 17 }, (_, lane) =>
           Array.from({ length: 512 }, (_, s) => ex.studio_note_offset(4, s, lane))),
-        extra: Array.from({ length: 6 }, (_, lane) =>
+        extra: Array.from({ length: 16 }, (_, lane) =>
           Array.from({ length: 512 }, (_, s) => (ex.studio_event(4, s, lane + 1) & 0x7fff7fff) >>> 0))
       } });
     } else if (m.command === 'record-start') {

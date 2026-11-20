@@ -8,7 +8,7 @@ export const modernSynth = 1 << 27;
 export const patternLength = mix => (mix & 255) | (mix >>> 17 & 768);
 export const withPatternLength = (mix, length) =>
   ((mix & ~0x060000ff) | (length & 255) | ((length & 768) << 17)) >>> 0;
-export const drumNotes = [36, 38, 42, 37, 39, 49];
+export const drumNotes = [36, 38, 42, 37, 39, 49, 35, 40, 46, 44, 45, 47, 50, 51, 70, 81];
 export const eventLanes = track => [track.steps, ...track.extra];
 export function encodeNote(pitch, velocity, gate, probability, timing = 0) {
   return ((pitch | 128) | velocity << 8 | gate << 16 | probability << 24 | (timing & 1) << 15 | (timing & 2) << 30) >>> 0;
@@ -28,16 +28,17 @@ const defaultFx = [0, fxWord(0,0,0,22), fxWord(0,0,1,102), fxWord(0,48,68,52), 1
   fxWord(0,48,56,65), fxWord(0,2,52,87), fxWord(0,60,52,94), fxWord(0,54,108,39)];
 
 export function validateProject(project) {
-  if (![1, 2, 3, 4, 5].includes(project?.version) || !within(project.bpm, 40, 240) || !within(project.swing, 0, 70) ||
+  if (![1, 2, 3, 4, 5, 6].includes(project?.version) || !within(project.bpm, 40, 240) || !within(project.swing, 0, 70) ||
       !Array.isArray(project.tracks) || project.tracks.length !== 5) throw new Error('Invalid SLAP-5 project header.');
   if (project.metronome !== undefined && !within(project.metronome, 0, 2))
     throw new Error('Invalid metronome setting.');
   const legacy = project.version === 1;
   const extended = project.version >= 3;
   const polyphonic = project.version >= 4;
-  const hasDurations = project.version === 5;
+  const hasDurations = project.version >= 5;
+  const expanded = project.version === 6;
   const bankSize = extended ? maxSteps : 64;
-  if (!legacy && (!within(project.drumFilters, 0, 0x3f3f) || (project.drumFilters & ~0x3f3f)))
+  if (!legacy && (!within(project.drumFilters, 0, expanded ? 0xffffffff : 0x3f3f) || (!expanded && (project.drumFilters & ~0x3f3f))))
     throw new Error('Invalid drum filters.');
   for (const [i, track] of project.tracks.entries()) {
     const mixMask = (extended ? 0x7ffffff : 0x1ffffff) | (i === 4 ? 0 : modernSynth);
@@ -49,7 +50,7 @@ export function validateProject(project) {
         track.fx.some((word, page) => !within(word, 0, 0xffffffff) || (word & 0x80808080) ||
           fxPanels[page].some((_, knob) => (word >>> (8 * knob) & 255) > fxLimit(page, knob)))))
       throw new Error('Invalid track effects.');
-    if (!legacy && (!Array.isArray(track.extra) || track.extra.length !== (i === 4 ? 6 : polyphonic ? 3 : 1)))
+    if (!legacy && (!Array.isArray(track.extra) || track.extra.length !== (i === 4 ? (expanded ? 16 : 6) : polyphonic ? 3 : 1)))
       throw new Error('Invalid sequencer lane count.');
     if (extended && (!Array.isArray(track.offsets) || track.offsets.length !== track.extra.length + 1 ||
         track.offsets.some(offsets => !Array.isArray(offsets) || offsets.length !== bankSize ||
@@ -74,7 +75,7 @@ export function validateProject(project) {
       }
     }
   }
-  return { ...project, version: 5, drumFilters: legacy ? 0 : project.drumFilters,
+  return { ...project, version: 6, drumFilters: legacy ? 0 : expanded ? project.drumFilters : ((project.drumFilters & 63) | (project.drumFilters & 0x3f00) << 8),
     metronome: project.metronome ?? 0,
     tracks: project.tracks.map((track, i) => {
       const pad = lane => [...lane, ...Array(maxSteps - lane.length).fill(0)];
@@ -88,9 +89,17 @@ export function validateProject(project) {
           offsets.push(Array(maxSteps).fill(0));
         }
       }
+      const durations = hasDurations ? track.durations.map(lane => [...lane]) : lanes.map(() => Array(maxSteps).fill(0));
+      if (i === 4 && !expanded) {
+        while (lanes.length < 17) {
+          lanes.push(Array(maxSteps).fill(0));
+          offsets.push(Array(maxSteps).fill(0));
+          durations.push(Array(maxSteps).fill(0));
+        }
+      }
       return { ...track, fx: track.fx ?? [...defaultFx],
         steps: lanes[0].map(word => word & 0x7fff7fff),
         extra: lanes.slice(1).map(lane => lane.map(word => word & 0x7fff7fff)), offsets,
-        durations: hasDurations ? track.durations.map(lane => [...lane]) : lanes.map(() => Array(maxSteps).fill(0)) };
+        durations };
     }) };
 }

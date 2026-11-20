@@ -15,7 +15,7 @@ static float (*volatile dsp_fx_sample)(unsigned, float) = slap_fx_sample;
 
 enum { TRACKS = 5, LEGACY_STEPS = 64, STEPS = 512, VOICES = 16, RATE = 44100 };
 enum { HOME, SEQ, GLOBAL, PATCH, ENV, FX, VISUAL, SAVE, HARMONY, LFO, ARP, MIXER, RECORD, GEN_DRUMS };
-enum { NOTES = 0x7f, ACTIVE = 0x80, DRUMS = 4, DRUM_LANES = 6, MODERN_SYNTH = 1u << 27 };
+enum { NOTES = 0x7f, ACTIVE = 0x80, DRUMS = 4, OLD_DRUM_LANES = 6, DRUM_LANES = 16, MODERN_SYNTH = 1u << 27 };
 
 typedef struct {
     volatile uint32_t steps[STEPS]; /* pitch, active flag, velocity, length, probability */
@@ -42,9 +42,10 @@ typedef struct {
 
 static PLAT_POOL Track tracks[TRACKS];
 static PLAT_POOL volatile uint32_t extra_note[DRUMS][STEPS];
-static PLAT_POOL volatile uint32_t drum_lane[DRUM_LANES][STEPS];
-enum { MELODIC_LANES = 4, SONG5_LANES = DRUMS * 2 + DRUM_LANES + 1,
-       SONG_LANES = SONG5_LANES + DRUMS * (MELODIC_LANES - 2) };
+static volatile uint32_t drum_lane[DRUM_LANES][STEPS];
+enum { MELODIC_LANES = 4, SONG5_LANES = DRUMS * 2 + OLD_DRUM_LANES + 1,
+       SONG7_LANES = SONG5_LANES + DRUMS * (MELODIC_LANES - 2),
+       SONG_LANES = SONG7_LANES + DRUM_LANES - OLD_DRUM_LANES };
 static PLAT_POOL volatile uint32_t poly_note[DRUMS][MELODIC_LANES - 2][STEPS];
 enum { NOTE_DURATION_UNIT = 128 };
 static PLAT_POOL uint16_t melodic_duration[DRUMS][MELODIC_LANES][STEPS];
@@ -54,11 +55,12 @@ static unsigned triggered_sequence_note;
 static PLAT_POOL uint8_t timing_group[SONG_LANES][STEPS];
 static unsigned pattern_row(unsigned track, unsigned lane)
 {
+    if (track == DRUMS && lane > OLD_DRUM_LANES) return SONG7_LANES + lane - OLD_DRUM_LANES - 1u;
     if (track == DRUMS || lane < 2u) return track * 2u + lane;
     return SONG5_LANES + track * (MELODIC_LANES - 2u) + lane - 2u;
 }
 
-static const uint8_t lane_pitch[DRUM_LANES] = {36,38,42,37,39,49};
+static const uint8_t lane_pitch[DRUM_LANES] = {36,38,42,37,39,49,35,40,46,44,45,47,50,51,70,81};
 #include "drum_patterns.h"
 static unsigned gen_style, gen_hit = 76, gen_groove = 35, gen_var = 28;
 static unsigned gen_enabled = 1, gen_confirm, gen_count;
@@ -791,6 +793,8 @@ static void record_input(unsigned track, unsigned pitch, unsigned velocity)
     volatile uint32_t *cell = &tracks[track].steps[step];
     if (track == DRUMS) {
         lane = drum_family(pitch) + 1;
+        for (unsigned i = 0; i < DRUM_LANES; ++i)
+            if (pitch == lane_pitch[i]) { lane = i + 1u; break; }
         cell = &drum_lane[lane - 1][step];
         pitch = lane_pitch[lane - 1];
     } else {
@@ -960,8 +964,8 @@ static void arp_render_clock(unsigned track, uint32_t config)
 
 static unsigned muted_drums(void)
 {
-    unsigned filter = drum_filters, solo = (filter >> 8) & 63u;
-    return solo ? 63u & ~solo : filter & 63u;
+    unsigned filter = drum_filters, solo = filter >> 16;
+    return solo ? 65535u & ~solo : filter & 65535u;
 }
 
 static void next_step(const uint32_t *mix)
@@ -1991,7 +1995,7 @@ typedef struct {
         uint32_t steps[LEGACY_STEPS], fx[SLAP_FX_PAGES];
     } track[TRACKS];
     uint32_t extra[DRUMS][LEGACY_STEPS];
-    uint8_t drums[DRUM_LANES][LEGACY_STEPS][3];
+    uint8_t drums[OLD_DRUM_LANES][LEGACY_STEPS][3];
     uint32_t filters;
     uint32_t arp[DRUMS];
 } SongRecord;
@@ -2027,6 +2031,7 @@ static volatile uint32_t *song_cell(unsigned row, unsigned step)
 {
     if (row < 8u) return event_cell(row / 2u, step, row % 2u);
     if (row < SONG5_LANES) return event_cell(DRUMS, step, row - 8u);
+    if (row >= SONG7_LANES) return event_cell(DRUMS, step, OLD_DRUM_LANES + 1u + row - SONG7_LANES);
     unsigned extra = row - SONG5_LANES;
     return event_cell(extra / (MELODIC_LANES - 2u), step, 2u + extra % (MELODIC_LANES - 2u));
 }
@@ -2053,20 +2058,22 @@ static unsigned song5_bytes;
 
 static int prepare_sparse_song(unsigned bytes, unsigned version)
 {
-    unsigned stride = version == 7u ? 8u : SONG5_EVENT;
+    unsigned stride = version == 8u ? 9u : version == 7u ? 8u : SONG5_EVENT;
     if (bytes < SONG5_HEADER || (bytes - SONG5_HEADER) % stride) return 0;
     unsigned previous = 0;
     for (unsigned at = SONG5_HEADER; at < bytes; at += stride) {
         unsigned packed = song_bytes[at] | (unsigned)song_bytes[at + 1] << 8;
-        unsigned bits = version >= 6u ? 14u : 13u;
+        unsigned bits = version == 8u ? 16u : version >= 6u ? 14u : 13u;
         unsigned index = packed & ((1u << bits) - 1u);
         uint32_t word = song_get32(at + 2);
         unsigned row = index / STEPS;
-        if ((packed >> bits) > 4u || row >= (version >= 6u ? SONG_LANES : SONG5_LANES) ||
+        if ((packed >> bits) > 4u || row >= (version == 8u ? SONG_LANES : version >= 6u ? SONG7_LANES : SONG5_LANES) ||
             (at != SONG5_HEADER && index <= previous) || !word || !step_valid(word))
             return 0;
         if (row > 8u && row < SONG5_LANES && (word & NOTES) != lane_pitch[row - 9u]) return 0;
-        if (version == 7u && row >= 8u && row < SONG5_LANES &&
+        if (row >= SONG7_LANES && (word & NOTES) != lane_pitch[OLD_DRUM_LANES + row - SONG7_LANES]) return 0;
+        if (version == 8u && song_bytes[at + 8] > 3) return 0;
+        if (version >= 7u && ((row >= 8u && row < SONG5_LANES) || row >= SONG7_LANES) &&
             (song_bytes[at + 6] || song_bytes[at + 7])) return 0;
         previous = index;
     }
@@ -2081,13 +2088,13 @@ static int prepare_sparse_song(unsigned bytes, unsigned version)
 
 static unsigned encode_sparse_song(unsigned version)
 {
-    unsigned stride = version == 7u ? 8u : SONG5_EVENT;
+    unsigned stride = version == 8u ? 9u : version == 7u ? 8u : SONG5_EVENT;
     song_put32(0, SONG_MAGIC);
     song_put32(4, version);
     song_put32(8, song_io.bpm);
     song_put32(12, song_io.swing);
     unsigned at = song5_fields(1);
-    for (unsigned row = 0; row < (version >= 6u ? SONG_LANES : SONG5_LANES); ++row) {
+    for (unsigned row = 0; row < (version == 8u ? SONG_LANES : version >= 6u ? SONG7_LANES : SONG5_LANES); ++row) {
         for (unsigned step = 0; step < STEPS; ++step) {
             uint32_t word = *song_cell(row, step);
             if (!word) continue;
@@ -2095,15 +2102,16 @@ static unsigned encode_sparse_song(unsigned version)
             unsigned index = row * STEPS + step;
             if (version >= 6u) {
                 unsigned offset = note_timing(row, step, word);
-                index |= (offset / 4u) << 14;
+                if (version == 8u) song_bytes[at + 8] = (uint8_t)(offset / 4u);
+                else index |= (offset / 4u) << 14;
                 word = (word & ~timing_bits(3u)) | timing_bits(offset);
             } else index |= (unsigned)timing_group[row][step] << 13;
             song_bytes[at] = (uint8_t)index;
             song_bytes[at + 1] = (uint8_t)(index >> 8);
             song_put32(at + 2, word);
-            if (version == 7u) {
+            if (version >= 7u) {
                 unsigned duration = 0;
-                if (row < 8u || row >= SONG5_LANES) {
+                if (row < 8u || (row >= SONG5_LANES && row < SONG7_LANES)) {
                     unsigned track = row < 8u ? row / 2u : (row - SONG5_LANES) / 2u;
                     duration = melodic_duration[track][melodic_lane_from_row(track, row)][step];
                 }
@@ -2121,7 +2129,7 @@ static int read_song(unsigned slot)
     int bytes = plat_store_load(OBJ_SONG1 + slot, song_bytes, sizeof(song_bytes));
     if (bytes < 8) return 0;
     unsigned version = song_get32(4);
-    if (version >= 5u && version <= 7u) {
+    if (version >= 5u && version <= 8u) {
         if (!prepare_sparse_song((unsigned)bytes, version)) return 0;
     } else {
         if ((unsigned)bytes > sizeof(song_io)) return 0;
@@ -2132,7 +2140,7 @@ static int read_song(unsigned slot)
     if (song_io.magic != SONG_MAGIC ||
         !((song_io.version == 2 && bytes == v2bytes) ||
           (song_io.version == 3 && bytes == v3bytes) ||
-          (song_io.version == 4 && bytes == (int)sizeof(song_io)) || (song_io.version >= 5u && song_io.version <= 7u)) ||
+          (song_io.version == 4 && bytes == (int)sizeof(song_io)) || (song_io.version >= 5u && song_io.version <= 8u)) ||
         song_io.bpm < 40 || song_io.bpm > 240 || song_io.swing > 70) return 0;
     for (unsigned t = 0; t < TRACKS; ++t) {
         uint32_t mix = song_io.track[t].mix;
@@ -2148,12 +2156,12 @@ static int read_song(unsigned slot)
         for (unsigned i = 0; i < SLAP_FX_PAGES; ++i)
             if (!slap_fx_config_valid(i, song_io.track[t].fx[i])) return 0;
     }
-    if (song_io.version >= 3 && (song_io.filters & ~0x3f3fu)) return 0;
+    if (song_io.version >= 3 && song_io.version < 8u && (song_io.filters & ~0x3f3fu)) return 0;
     if (song_io.version == 3 || song_io.version == 4) {
         for (unsigned t = 0; t < DRUMS; ++t)
             for (unsigned i = 0; i < LEGACY_STEPS; ++i)
                 if (!step_valid(song_io.extra[t][i])) return 0;
-        for (unsigned lane = 0; lane < DRUM_LANES; ++lane) {
+        for (unsigned lane = 0; lane < OLD_DRUM_LANES; ++lane) {
             for (unsigned i = 0; i < LEGACY_STEPS; ++i) {
                 const uint8_t *d = song_io.drums[lane][i];
                 uint32_t data = (uint32_t)d[0] << 8 | (uint32_t)d[1] << 16 | (uint32_t)d[2] << 24;
@@ -2191,7 +2199,7 @@ static void load_song(unsigned slot)
     for (unsigned t = 0; t < DRUMS; ++t)
         for (unsigned i = 0; i < LEGACY_STEPS; ++i)
             extra_note[t][i] = song_io.version == 3 || song_io.version == 4 ? song_io.extra[t][i] : 0u;
-    for (unsigned lane = 0; lane < DRUM_LANES; ++lane) {
+    for (unsigned lane = 0; lane < OLD_DRUM_LANES; ++lane) {
         for (unsigned i = 0; i < LEGACY_STEPS; ++i) {
             const uint8_t *d = song_io.drums[lane][i];
             uint32_t data = song_io.version == 3 || song_io.version == 4 ?
@@ -2199,7 +2207,8 @@ static void load_song(unsigned slot)
             drum_lane[lane][i] = data ? data | ACTIVE | lane_pitch[lane] : 0;
         }
     }
-    drum_filters = song_io.version >= 3 ? song_io.filters : 0;
+    drum_filters = song_io.version >= 8 ? song_io.filters :
+        song_io.version >= 3 ? (song_io.filters & 63u) | ((song_io.filters & 0x3f00u) << 8) : 0;
     for (unsigned t = 0; t < DRUMS; ++t)
         arp_setup[t] = song_io.version >= 4 ? song_io.arp[t] : ARP_DEFAULT;
     for (unsigned row = 0; row < SONG_LANES; ++row)
@@ -2212,16 +2221,16 @@ static void load_song(unsigned slot)
             for (unsigned step = 0; step < STEPS; ++step)
                 melodic_duration[track][lane][step] = 0;
     if (song_io.version >= 5u) {
-        unsigned stride = song_io.version == 7u ? 8u : SONG5_EVENT;
+        unsigned stride = song_io.version == 8u ? 9u : song_io.version == 7u ? 8u : SONG5_EVENT;
         for (unsigned at = SONG5_HEADER; at < song5_bytes; at += stride) {
             unsigned packed = song_bytes[at] | (unsigned)song_bytes[at + 1] << 8;
-            unsigned bits = song_io.version >= 6u ? 14u : 13u;
+            unsigned bits = song_io.version == 8u ? 16u : song_io.version >= 6u ? 14u : 13u;
             unsigned index = packed & ((1u << bits) - 1u);
             timing_group[index / STEPS][index % STEPS] =
-                (uint8_t)((packed >> bits) + (song_io.version >= 6u));
+                (uint8_t)((song_io.version == 8u ? song_bytes[at + 8] : packed >> bits) + (song_io.version >= 6u));
             unsigned row = index / STEPS, step = index % STEPS;
             *song_cell(row, step) = song_get32(at + 2);
-            if (song_io.version == 7u && (row < 8u || row >= SONG5_LANES)) {
+            if (song_io.version >= 7u && (row < 8u || (row >= SONG5_LANES && row < SONG7_LANES))) {
                 unsigned track = row < 8u ? row / 2u : (row - SONG5_LANES) / 2u;
                 melodic_duration[track][melodic_lane_from_row(track, row)][step] =
                     (uint16_t)(song_bytes[at + 6] | (unsigned)song_bytes[at + 7] << 8);
@@ -2253,7 +2262,7 @@ static void write_song(unsigned slot)
     }
     for (unsigned t = 0; t < DRUMS; ++t)
         for (unsigned i = 0; i < LEGACY_STEPS; ++i) song_io.extra[t][i] = extra_note[t][i];
-    for (unsigned lane = 0; lane < DRUM_LANES; ++lane) {
+    for (unsigned lane = 0; lane < OLD_DRUM_LANES; ++lane) {
         for (unsigned i = 0; i < LEGACY_STEPS; ++i) {
             uint32_t word = drum_lane[lane][i];
             for (unsigned byte = 0; byte < 3; ++byte)
@@ -2281,6 +2290,11 @@ static void write_song(unsigned slot)
                     version = 7u;
                     break;
                 }
+    for (unsigned row = SONG7_LANES; row < SONG_LANES; ++row)
+        for (unsigned step = 0; step < STEPS; ++step)
+            if (*song_cell(row, step)) version = 8u;
+    if ((drum_filters & 65535u) > 63u || (drum_filters >> 16) > 63u) version = 8u;
+    if (version < 8u) song_io.filters = (drum_filters & 63u) | ((drum_filters >> 8) & 0x3f00u);
     unsigned bytes = version > 4u ? encode_sparse_song(version) : sizeof(song_io);
     if (!bytes) { slap_ui.notice = "BANK TOO DENSE"; return; }
     const void *payload = version > 4u ? (const void *)song_bytes : (const void *)&song_io;
@@ -2355,6 +2369,17 @@ static void generate_drums(void)
         for (unsigned lane = 0; lane < lane_count(DRUMS); ++lane)
             timing_group[pattern_row(DRUMS, lane)][step] = 0;
         for (unsigned lane = 0; lane < DRUM_LANES; ++lane) {
+            if (lane >= OLD_DRUM_LANES) {
+                unsigned accent = lane == 6 ? 14u : lane == 7 ? 11u : lane == 8 ? 10u :
+                    lane == 9 ? 6u : lane == 10 ? 13u : lane == 11 ? 14u :
+                    lane == 12 ? 15u : lane == 13 ? 0u : lane == 14 ? 7u : 15u;
+                unsigned is_fill = lane >= 10 && lane <= 12;
+                int hit = tracks[DRUMS].patch >= DRUM_LEGACY_KITS && beat == accent &&
+                    (is_fill ? fill : (lane == 13 ? step % 64u == 0 : (gen_style + lane) % 3u == 0)) &&
+                    next_random(&gen_seed) % 100u < (is_fill ? gen_var : gen_hit / 2u);
+                drum_lane[lane][step] = hit ? cell_word(lane_pitch[lane], 67, 104, 100) : 0u;
+                continue;
+            }
             unsigned anchor = (lane < 2) && (style->lanes[lane] & bit);
             unsigned chance = lane == 2 ? 30 + gen_hit * 70 / 100 : gen_hit;
             unsigned hit = anchor || ((style->lanes[lane] & bit) && next_random(&gen_seed) % 100u < chance);
@@ -2466,7 +2491,7 @@ void app_input_only(void)
             (pressed & ((1u << B_ARP) | (1u << B_REC)))) {
             unsigned bit = 1u << (slap_ui.lane - 1u);
             if (pressed & (1u << B_ARP)) drum_filters ^= bit;
-            if (pressed & (1u << B_REC)) drum_filters ^= bit << 8;
+            if (pressed & (1u << B_REC)) drum_filters ^= bit << 16;
         }
     }
     if ((buttons & (1u << B_GLO)) && (pressed & (1u << B_SEL))) {
@@ -3060,7 +3085,9 @@ static void draw_panel(void)
     }
     cv_begin(240, 32, background);
     const SlapPatch *patch = &slap_patches[tracks[selected].patch];
-    static const char *const drum_names[] = {"KICK","SNARE","HAT","RIM","CLAP","CYMBAL"};
+    static const char *const drum_names[] = {"KICK","SNARE","CLOSED HAT","RIM","CLAP","CRASH",
+        "SUB KICK","ALT SNARE","OPEN HAT","PEDAL HAT","LOW TOM","MID TOM",
+        "HIGH TOM","RIDE","SHAKER","PERC FX"};
     static const char *const melodic_names[] = {"NOTE A", "NOTE B", "NOTE C", "NOTE D"};
     const char *lane_name = selected == DRUMS ?
         (slap_ui.lane ? drum_names[slap_ui.lane-1] : "DRUM NOTES") :
@@ -3631,7 +3658,7 @@ STUDIO_EXPORT uint32_t studio_drum_filters(void) { return drum_filters; }
 
 STUDIO_EXPORT void studio_set_drum_filters(uint32_t mask)
 {
-    if (!(mask & ~0x3f3fu)) drum_filters = mask;
+    drum_filters = mask;
 }
 
 STUDIO_EXPORT uint32_t studio_mix(uint32_t track)

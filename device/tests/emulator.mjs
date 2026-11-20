@@ -195,7 +195,7 @@ assert.equal(take.tracks[0].steps[0] & 127, 60);
 assert.deepEqual(take.tracks[0].extra.map(lane => lane[0] & 127), [64, 67, 71]);
 const previousFormat = {
   ...take, version: 3, tracks: take.tracks.map((part, track) =>
-    track === 4 ? part : { ...part, extra: part.extra.slice(0, 1), offsets: part.offsets.slice(0, 2) })
+    track === 4 ? { ...part, extra: part.extra.slice(0, 6), offsets: part.offsets.slice(0, 7) } : { ...part, extra: part.extra.slice(0, 1), offsets: part.offsets.slice(0, 2) })
 };
 const migrated = validateProject(previousFormat);
 assert.equal(migrated.tracks[0].extra[0][0] & 127, 64);

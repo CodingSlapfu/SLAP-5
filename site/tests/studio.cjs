@@ -57,8 +57,12 @@ async function test() {
       buffer: Buffer.from(JSON.stringify({ ...project, bpm: 138 })) });
     await page.waitForFunction(() => document.getElementById('bpm').value === '138');
     assert.equal(await page.locator('#patch').inputValue(), '31');
-    assert.equal(await page.locator('#patch option').count(), 25);
-    assert.match(await page.locator('#patch option:checked').textContent(), /legacy/);
+    const importedKitOptions = await page.locator('#patch option').evaluateAll(options =>
+      options.map(option => ({ id: Number(option.value), label: option.textContent })));
+    assert.equal(importedKitOptions.length, 26);
+    assert.deepEqual(importedKitOptions.map(({ id }) => id), [31, ...Array.from({ length: 25 }, (_, i) => 56 + i)]);
+    assert.match(importedKitOptions[0].label, /legacy/);
+    assert.equal(importedKitOptions.filter(({ label }) => label.includes('(legacy)')).length, 1);
     await page.locator('#play').click();
     page.once('dialog', dialog => dialog.accept());
     await page.locator('#gen-apply').click();
@@ -67,6 +71,7 @@ async function test() {
     await page.locator('#export').click();
     const generatedFile = await (await generatedPromise).path();
     const generated = JSON.parse(await fs.readFile(generatedFile, 'utf8'));
+    assert.equal(generated.tracks[4].patch, 31);
     assert.notDeepEqual(generated.tracks[4].extra, project.tracks[4].extra);
     assert.ok(generated.tracks[4].extra.flat().some(Boolean));
     await page.locator('#undo').click();

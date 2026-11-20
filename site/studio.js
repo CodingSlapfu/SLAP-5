@@ -6,7 +6,7 @@ const $ = id => document.getElementById(id);
 const colors = ['#1ce2ff', '#ab70ff', '#ff59b0', '#ffb43a', '#3ef289'];
 const ctx2d = $('roll').getContext('2d');
 const piano = ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'];
-const drums = ['Kick', 'Snare', 'Hat', 'Rim', 'Clap', 'Cymbal'];
+const drums = ['Kick', 'Snare', 'Closed Hat', 'Rim', 'Clap', 'Crash', 'Sub Kick', 'Alt Snare', 'Open Hat', 'Pedal Hat', 'Low Tom', 'Mid Tom', 'High Tom', 'Ride', 'Shaker', 'Perc FX'];
 const drumStyles = ['IDM', 'Acid Jazz', 'Drum & Bass', 'Jungle', 'Dubstep', 'Synthwave', 'House', 'Deep House',
   'Ruff House', 'Hip-Hop', 'Boom Bap', 'Trap', 'Breakbeat', 'Techno', 'Electro', 'Ambient / Downtempo'];
 $('gen-style').replaceChildren(...drumStyles.map((name, value) => new Option(name, value)));
@@ -66,7 +66,7 @@ const noteLabel = (pitch) => track === 4 ? drums[drumRow(pitch)] :
 function draw() {
   if (!project) return;
   const current = selected(), steps = patternLength(current.mix), first = pageStart(), last = Math.min(steps, first + 64);
-  const rows = track === 4 ? 6 : 49;
+  const rows = track === 4 ? drums.length : 49;
   document.documentElement.style.setProperty('--accent', colors[track]);
   $('roll').width = left + (last - first) * width;
   $('roll').height = top + rows * height;
@@ -125,7 +125,7 @@ function draw() {
   const activeLane = lane ? lane - 1 : 0;
   $('drum-lane').value = activeLane;
   $('drum-mute').checked = !!(project.drumFilters & (1 << activeLane));
-  $('drum-solo').checked = !!(project.drumFilters & (1 << (activeLane + 8)));
+  $('drum-solo').checked = !!(project.drumFilters & (1 << (activeLane + 16)));
   const word = eventLanes(current)[lane][step];
   const note = noteAt(current, lane, step);
   $('position').textContent = word ? `Step ${step + 1} · ${noteLabel(note.pitch)}` : `Step ${step + 1}`;
@@ -163,7 +163,7 @@ function draw() {
 
 function paintNote(s, note) {
   const row = track === 4 ? drumRow(note.pitch) : 84 - note.pitch;
-  if (row < 0 || row >= (track === 4 ? 6 : 49)) return;
+  if (row < 0 || row >= (track === 4 ? drums.length : 49)) return;
   const x = left + (s - pageStart()) * width + 2, y = top + row * height + 2;
   const size = noteWidth(note);
   ctx2d.globalAlpha = 0.34 + note.velocity / 190;
@@ -394,10 +394,10 @@ $('drum-lane').addEventListener('change', () => {
   lane = Number($('drum-lane').value) + 1;
   draw();
 });
-for (const [id, shift] of [['drum-mute', 0], ['drum-solo', 8]]) {
+for (const [id, shift] of [['drum-mute', 0], ['drum-solo', 16]]) {
   $(id).addEventListener('change', () => edit(p => {
     const bit = 1 << (Number($('drum-lane').value) + shift);
-    p.drumFilters = $(id).checked ? p.drumFilters | bit : p.drumFilters & ~bit;
+    p.drumFilters = ($(id).checked ? p.drumFilters | bit : p.drumFilters & ~bit) >>> 0;
   }));
 }
 $('clear').addEventListener('click', () => edit(p => { setNote(p.tracks[track], lane, step, null); }));
