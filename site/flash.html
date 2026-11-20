@@ -19,7 +19,7 @@
   <header><a class="brand" href="./">SLAP<span> FLASH</span></a><a href="studio.html">SLAP STUDIO</a></header>
   <main>
     <h1>Install SLAP-5 on your FM-1</h1>
-    <p class="intro">SLAP-5 0.1.17 engineering TESTING · FM-1_75000117. The package passed software checks. FM-1 deadline, underrun and installation testing are pending.</p>
+    <p class="intro">SLAP-5 0.1.18 engineering TESTING · FM-1_75000118. The package passed software checks. FM-1 deadline, underrun and installation testing are pending.</p>
     <section class="editor copy flash-panel" aria-labelledby="browser-title">
       <p>Before testing, back up your song banks. Banks saved with the new synthesis or drum kits require 0.1.16 or later.</p>
       <h2 id="browser-title">Install directly from this website</h2>
@@ -29,7 +29,7 @@
       <div class="flash-actions">
         <button id="connect">Connect FM-1</button>
         <button id="install" disabled>Install SLAP-5</button>
-        <a href="https://github.com/CodingSlapfu/SLAP-5/releases/tag/v0.1.17-testing">Release notes</a> · <a href="https://github.com/CodingSlapfu/SLAP-5/releases/tag/v0.1.16-testing">0.1.16 rollback</a> · <a href="https://github.com/CodingSlapfu/SLAP-5/releases/tag/v0.1.14-testing">0.1.14 rollback</a> · <a href="https://github.com/CodingSlapfu/SLAP-5/releases/tag/v0.1.13-testing">0.1.13 rollback</a> · <a href="https://github.com/CodingSlapfu/SLAP-5/releases/tag/v0.1.12-testing">0.1.12 rollback</a> · <a href="https://github.com/CodingSlapfu/SLAP-5/releases/tag/v0.1.11-testing">0.1.11 rollback</a> · <a href="https://github.com/CodingSlapfu/SLAP-5/releases/tag/v0.1.7-testing">0.1.7 rollback</a> · <a href="https://github.com/CodingSlapfu/SLAP-5/releases/tag/v0.1.4-testing">0.1.4 rollback</a>
+        <a href="https://github.com/CodingSlapfu/SLAP-5/releases/tag/v0.1.18-testing">Release notes</a> · <a href="https://github.com/CodingSlapfu/SLAP-5/releases/tag/v0.1.17-testing">0.1.17 rollback</a> · <a href="https://github.com/CodingSlapfu/SLAP-5/releases/tag/v0.1.16-testing">0.1.16 rollback</a> · <a href="https://github.com/CodingSlapfu/SLAP-5/releases/tag/v0.1.14-testing">0.1.14 rollback</a> · <a href="https://github.com/CodingSlapfu/SLAP-5/releases/tag/v0.1.13-testing">0.1.13 rollback</a> · <a href="https://github.com/CodingSlapfu/SLAP-5/releases/tag/v0.1.12-testing">0.1.12 rollback</a> · <a href="https://github.com/CodingSlapfu/SLAP-5/releases/tag/v0.1.11-testing">0.1.11 rollback</a> · <a href="https://github.com/CodingSlapfu/SLAP-5/releases/tag/v0.1.7-testing">0.1.7 rollback</a> · <a href="https://github.com/CodingSlapfu/SLAP-5/releases/tag/v0.1.4-testing">0.1.4 rollback</a>
       </div>
       <label><input id="confirmed" type="checkbox" disabled> I confirmed the flash chip, chip key and bootloader layout and have a recovery route.</label>
       <p id="result" role="status" aria-live="polite"></p>
@@ -39,20 +39,20 @@
       <h2 id="desktop-title">Install with M-Flasher</h2>
       <p>Use this alternative when browser OTA is unsupported or you need recovery. Once the unit is in USB download mode, this workflow works independently of the running firmware. AQUORA, SLOOP, Felucca, factory firmware and SLAP-5 can all use this route.</p>
       <div class="flash-actions">
-        <a class="primary" href="https://github.com/CodingSlapfu/SLAP-5/releases/download/v0.1.17-testing/SLAP-5-0.1.17.fwsc">Download SLAP-5 0.1.17 TESTING</a>
+        <a class="primary" href="https://github.com/CodingSlapfu/SLAP-5/releases/download/v0.1.18-testing/SLAP-5-0.1.18.fwsc">Download SLAP-5 0.1.18 TESTING</a>
         <a class="primary" href="https://github.com/jvitkauskas/m-flasher/releases/latest">Get the latest M-Flasher</a>
       </div>
       <ol>
         <li>Open the official M-Flasher release and select the download for Windows, macOS or Linux. If you already have M-Flasher, compare your version with the release heading. If you can’t find your version, get a fresh copy from the release page and open it yourself.</li>
         <li>Connect the FM-1 directly with a USB data cable. Close browser MIDI tools and other music apps. Open M-Flasher and choose <strong>Download Mode</strong> if offered. With m-bootloader, hold <strong>REC</strong> at power-on. For other configurations, follow the <a href="https://github.com/jvitkauskas/m-flasher/blob/main/docs/usage.md#download-mode">M-Flasher download-mode guide</a>. Cancel any disk-format prompt.</li>
         <li>Once M-Flasher reads the device, inspect <strong>Device info</strong>. This build targets the M-VAVE FM-1 with a 1 MiB <code>0x856014</code> flash chip, chip key <code>0x980F</code> and a compatible V15-style application layout. The <code>0xB36014</code> flash revision and unverified bootloader layouts are outside this build’s support. If any value or layout is unclear, stop at the read-only screen.</li>
-        <li>Choose <strong>Install firmware (.fwsc)</strong> and open <code>SLAP-5-0.1.17.fwsc</code>. Review the flash map before confirming. The write plan must stay in <code>0x4000–0x92FFF</code> and preserve the boot area and user-data regions. Decline any separate bootloader installation offer. Stop if the plan or M-Flasher reports a compatibility warning you can’t resolve.</li>
-        <li>Let M-Flasher save its automatic backup, complete the write and verify it. Keep the cable connected during the operation. After verification, restart and confirm SLAP-5 boots. Use browser detection below to check for <code>FM-1_75000117</code>.</li>
+        <li>Choose <strong>Install firmware (.fwsc)</strong> and open <code>SLAP-5-0.1.18.fwsc</code>. Review the flash map before confirming. The write plan must stay in <code>0x4000–0x92FFF</code> and preserve the boot area and user-data regions. Decline any separate bootloader installation offer. Stop if the plan or M-Flasher reports a compatibility warning you can’t resolve.</li>
+        <li>Let M-Flasher save its automatic backup, complete the write and verify it. Keep the cable connected during the operation. After verification, restart and confirm SLAP-5 boots. Use browser detection below to check for <code>FM-1_75000118</code>.</li>
       </ol>
       <details><summary>Package checksum and recovery</summary>
-        <p>611,488 bytes. SHA-256 <code>090cc3d822095a89e53b18982b023f7c23c3d1a280a4479359bcaac11df33167</code>. In PowerShell, run <code>Get-FileHash -Algorithm SHA256 .\SLAP-5-0.1.17.fwsc</code> from the download folder and compare the result.</p>
+        <p>611,488 bytes. SHA-256 <code>7b617de2c653e0507eeec342a1564d479b8dee9f4271da421910ef1889170c7e</code>. In PowerShell, run <code>Get-FileHash -Algorithm SHA256 .\SLAP-5-0.1.18.fwsc</code> from the download folder and compare the result.</p>
         <p>If installation fails, keep the error and flash-map details. If the unit still enters download mode, use M-Flasher’s restore action with the automatic backup from this exact FM-1, retaining its bootloader for a firmware-only rollback. If download mode is unavailable, follow the upstream recovery guidance for the installed bootloader before attempting another write.</p>
-        <p><a href="https://github.com/CodingSlapfu/SLAP-5/releases/tag/v0.1.17-testing">Release evidence</a> · <a href="https://github.com/jvitkauskas/m-flasher/blob/main/docs/safety.md">M-Flasher backup and verification safeguards</a></p>
+        <p><a href="https://github.com/CodingSlapfu/SLAP-5/releases/tag/v0.1.18-testing">Release evidence</a> · <a href="https://github.com/jvitkauskas/m-flasher/blob/main/docs/safety.md">M-Flasher backup and verification safeguards</a></p>
       </details>
     </section>
   </main>

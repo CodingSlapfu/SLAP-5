@@ -101,12 +101,19 @@ for mode in worker single; do
 done
 python3 tests/pcm_parity.py "$tmp/synth-single/synth.wav" "$tmp/synth-worker/synth.wav"
 
-# Late voice output retires the worker. Single-core recovery preserves PCM.
+# An isolated late voice output is discarded, then the worker resumes.
 mkdir "$tmp/late"
 cp tests/dual-core.txt "$tmp/late/input.txt"
-printf '%s\n' 'expect voice_late_jobs 1' 'expect worker_jobs 4' 'expect worker_fallbacks 1' >> "$tmp/late/input.txt"
+printf '%s\n' 'expect voice_late_jobs 1' 'expect worker_jobs >4' 'expect voice_drained_jobs 1' 'expect worker_fallbacks 1' >> "$tmp/late/input.txt"
 SLAP_TEST_LATE_VOICE=1 build/host/slap-5_host "$tmp/late/input.txt" "$tmp/late"
 python3 tests/pcm_parity.py "$tmp/single/dual-core.wav" "$tmp/late/dual-core.wav"
+
+# Repeated misses before the worker establishes a healthy run still retire it.
+mkdir "$tmp/repeated"
+cp tests/dual-core.txt "$tmp/repeated/input.txt"
+printf '%s\n' 'expect voice_late_jobs 2' 'expect worker_jobs 4' 'expect voice_drained_jobs 1' 'expect worker_fallbacks 2' >> "$tmp/repeated/input.txt"
+SLAP_TEST_LATE_VOICE=2 build/host/slap-5_host "$tmp/repeated/input.txt" "$tmp/repeated"
+python3 tests/pcm_parity.py "$tmp/single/dual-core.wav" "$tmp/repeated/dual-core.wav"
 
 # Held chord arpeggios can allocate several voices. Batch only up to their
 # next sample-accurate tick and compare with the single-core render.

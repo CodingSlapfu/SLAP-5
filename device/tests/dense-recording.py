@@ -72,10 +72,14 @@ def main():
             directory.mkdir()
             script = directory / "case.txt"
             worker_assert = "expect worker_jobs >0" if mode == "worker" else "expect worker_jobs 0"
-            assertions = [worker_assert, "expect worker_fallbacks <2" if mode == "worker" and args.async_worker
-                          else "expect worker_fallbacks 0"]
+            assertions = [worker_assert]
             if mode == "worker" and args.async_worker:
+                # A general-purpose OS can preempt the worker. Verify actual
+                # overlap and PCM parity here. The deterministic failure tests
+                # verify which faults retire the worker and which can drain.
                 assertions += ["expect worker_overlap_us >0"]
+            else:
+                assertions += ["expect worker_fallbacks 0"]
             script.write_text("\n".join([*commands, *assertions]) + "\n")
             env = {key: value for key, value in os.environ.items() if not key.startswith("SLAP_TEST_")}
             if mode == "worker" and args.async_worker:

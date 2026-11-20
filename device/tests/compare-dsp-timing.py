@@ -65,6 +65,7 @@ def main():
     parser.add_argument("baseline")
     parser.add_argument("redesign")
     parser.add_argument("--runs", type=int, default=5)
+    parser.add_argument("--chords", action="store_true")
     args = parser.parse_args()
     if args.runs < 1:
         parser.error("--runs must be positive")
@@ -77,7 +78,7 @@ def main():
         }
         for name, seed, bpm, fx in [("dry", 519331, 112, False), ("wet", 220507, 137, True)]:
             script = scratch / f"{name}.txt"
-            script.write_text("\n".join(fixture(seed, bpm, 1, fx, fx)) + "\n")
+            script.write_text("\n".join(fixture(seed, bpm, 1, fx, fx, chords=args.chords)) + "\n")
             for single in (False, True):
                 mode = "single" if single else "worker"
                 results = {label: [] for label in binaries}
