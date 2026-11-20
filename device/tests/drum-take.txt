@@ -1,0 +1,22 @@
+wait 6100
+turn SELECT 4
+expect track 5
+tap REC
+wait 2200
+expect rec_running 1
+key 0 down
+key 2 down
+key 6 down
+wait 65
+key 0 up
+key 2 up
+key 6 up
+expect recorded >1
+tap REC
+expect recording 0
+expect rec_running 0
+expect playing 1
+wav drum-take.wav
+wait 4700
+wavstop
+expect events >1

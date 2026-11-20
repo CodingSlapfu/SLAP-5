@@ -62,6 +62,10 @@ enum { CLICK_SAMPLES = RATE / 40 };
 enum { BOOT_MS = 6000 };
 static volatile uint32_t mixer_solo, dsp_overruns, intro_skipped;
 static volatile uint32_t dsp_avg_ticks, dsp_peak_ticks, dsp_budget_ticks;
+enum { DSP_BINS = 128, DSP_BIN_TICKS = 2400 };
+static volatile uint32_t dsp_histogram[DSP_BINS], dsp_callbacks;
+static volatile uint32_t dsp_reset_request, dsp_xrun_baseline;
+
 static volatile uint32_t active_voices, voice_steals;
 static volatile uint8_t mixer_auto[TRACKS], mixer_proc[TRACKS];
 static uint32_t boot_suppressed_keys;
@@ -126,6 +130,8 @@ static uint32_t cell_word(unsigned pitch, unsigned velocity, unsigned gate, unsi
 }
 
 enum { LENGTH_MASK = 0x060000ffu };
+static volatile uint32_t pattern_revision[TRACKS];
+
 static unsigned pattern_length(uint32_t mix)
 {
     return (mix & 255u) | ((mix >> 17) & 768u);
@@ -134,8 +140,9 @@ static unsigned pattern_length(uint32_t mix)
 static void track_setting(unsigned track, unsigned shift, unsigned value)
 {
     if (shift == 0) {
-        tracks[track].mix = (tracks[track].mix & ~LENGTH_MASK) |
-            (value & 255u) | ((value & 768u) << 17);
+        uint32_t old = tracks[track].mix;
+        tracks[track].mix = (old & ~LENGTH_MASK) | (value & 255u) | ((value & 768u) << 17);
+        if (pattern_length(old) != value) ++pattern_revision[track];
         return;
     }
     uint32_t mask = 255u << shift;
@@ -245,7 +252,6 @@ static void trigger_voice(unsigned track, unsigned pitch, unsigned velocity, uin
     float tail = voice->age && voice->track == track ? voice->last_sample : 0.0f;
     if (voice->age) ++voice_steals;
     *voice = (Voice) {
-        .inc = slap_pitch_increment(pitch),
         .velocity = (float)velocity / 127.0f, .fall = 1.0f, .bend = 1.0f,
         .remaining = duration, .age = ++ages,
         .track = (uint8_t)track, .pitch = (uint8_t)pitch, .manual = (uint8_t)manual,
@@ -273,6 +279,7 @@ static void trigger_voice(unsigned track, unsigned pitch, unsigned velocity, uin
         }
         slap_synth_start(&synths[voice - voices], patch->engine, pitch,
                          patch->color, patch->motion, random_word());
+        voice->inc = synths[voice - voices].inc;
     } else {
         voice->rng = random_word();
         voice->kit = (uint8_t)tracks[track].patch;
@@ -379,27 +386,18 @@ static unsigned lane_count(unsigned track);
 static PLAT_POOL struct {
     uint32_t cells[DRUM_LANES + 1][STEPS];
     uint8_t timing[DRUM_LANES + 1][STEPS];
-    unsigned track, length, ready;
+    unsigned track, length, recorded_length, ready;
     uint32_t after;
 } take_undo;
-
-static uint32_t take_pattern_hash(unsigned track)
-{
-    uint32_t hash = pattern_length(tracks[track].mix);
-    for (unsigned lane = 0; lane < lane_count(track); ++lane)
-        for (unsigned step = 0; step < STEPS; ++step)
-            hash = (hash ^ *event_cell(track, step, lane) ^ timing_group[pattern_row(track, lane)][step]) * 16777619u;
-    return hash;
-}
 
 static void undo_recording(void)
 {
     if (playing || recording || rec_running || !take_undo.ready) return;
     unsigned track = take_undo.track;
     take_undo.ready = 0;
-    if (take_pattern_hash(track) != take_undo.after) return;
+    if (pattern_revision[track] != take_undo.after) return;
     for (unsigned lane = 0; lane < lane_count(track); ++lane)
-        for (unsigned step = 0; step < STEPS; ++step) {
+        for (unsigned step = 0; step < take_undo.recorded_length; ++step) {
             *event_cell(track, step, lane) = take_undo.cells[lane][step];
             timing_group[pattern_row(track, lane)][step] = take_undo.timing[lane][step];
         }
@@ -409,7 +407,7 @@ static void undo_recording(void)
 static void end_recording(uint32_t now)
 {
     for (unsigned slot = 0; slot < VOICES; ++slot) finish_record_note(slot, now);
-    take_undo.after = take_pattern_hash(rec_track);
+    take_undo.after = pattern_revision[rec_track];
     take_undo.ready = 1;
     rec_running = rec_countdown = 0;
 }
@@ -420,8 +418,9 @@ static void begin_recording(void)
     take_undo.ready = 0;
     take_undo.track = track;
     take_undo.length = pattern_length(tracks[track].mix);
+    take_undo.recorded_length = rec_length;
     for (unsigned lane = 0; lane < lane_count(track); ++lane)
-        for (unsigned step = 0; step < STEPS; ++step) {
+        for (unsigned step = 0; step < take_undo.recorded_length; ++step) {
             take_undo.cells[lane][step] = *event_cell(track, step, lane);
             take_undo.timing[lane][step] = timing_group[pattern_row(track, lane)][step];
         }
@@ -779,57 +778,82 @@ static struct {
     Voice voice[VOICES];
     unsigned slot[VOICES];
     unsigned count, muted;
-    float output[VOICE_BATCH];
+    float output[VOICES][VOICE_BATCH];
     uint32_t ticks;
-} drum_worker __attribute__((aligned(32)));
+} voice_worker __attribute__((aligned(32)));
+static PLAT_POOL SlapSynth worker_synth[VOICES / 2];
+enum { SYNTH_STATE_BYTES = __builtin_offsetof(SlapSynth, string) };
 static float voice_bus[VOICE_BATCH][TRACKS];
 static float fx_bus[TRACKS][VOICE_BATCH] __attribute__((aligned(32)));
 static unsigned fx_worker_tracks[SLAP_FX_WORKER_TRACKS], fx_worker_count;
 static volatile uint32_t fx_worker_jobs, fx_worker_fallbacks, fx_worker_ticks;
-static uint32_t fx_job_ticks;
+static uint32_t fx_job_ticks, late_voice_tick;
+static unsigned late_voice_pending;
 static volatile uint32_t worker_jobs, worker_fallbacks, worker_ticks, worker_wait_ticks;
 
-static void render_drum_bus(uint32_t frames)
+static void render_worker_voices(uint32_t frames)
 {
     if (frames > VOICE_BATCH) return;
     uint32_t started = plat_ticks24();
-    for (unsigned i = 0; i < frames; ++i) {
-        float dry = 0.0f;
-        for (unsigned j = 0; j < drum_worker.count; ++j) {
-            Voice *voice = &drum_worker.voice[j];
-            if (!voice->age) continue;
-            float sample = render_voice(voice, 0);
-            if (!(drum_worker.muted & (1u << voice->drum_family))) dry += sample;
+    for (unsigned j = 0; j < voice_worker.count; ++j) {
+        Voice *voice = &voice_worker.voice[j];
+        unsigned audible = voice->track != DRUMS || !(voice_worker.muted & (1u << voice->drum_family));
+        SlapSynth *synth = voice->track == DRUMS ? 0 : &worker_synth[j];
+        for (unsigned i = 0; i < frames; ++i) {
+            float sample = voice->age ? render_voice(voice, synth) : 0.0f;
+            voice_worker.output[j][i] = audible ? sample : 0.0f;
         }
-        drum_worker.output[i] = dry;
     }
-    drum_worker.ticks = plat_ticks24() - started;
+    voice_worker.ticks = plat_ticks24() - started;
+}
+
+static unsigned voice_mailbox_ready(uint32_t budget)
+{
+    if (!late_voice_pending) return 1;
+    if (plat_cpu2_busy()) {
+        if (plat_ticks24() - late_voice_tick >= budget) plat_cpu2_set(0);
+        return 0;
+    }
+    late_voice_pending = 0;
+    return plat_cpu2_wait() == 0;
 }
 
 static unsigned render_voice_batch(unsigned frames, unsigned muted, unsigned allow_fx,
                                    uint32_t callback_start, uint32_t budget)
 {
-    if (frames < MIN_VOICE_BATCH || !plat_cpu2_on() ||
+    if (frames < MIN_VOICE_BATCH || !plat_cpu2_on() || !voice_mailbox_ready(budget) ||
         plat_ticks24() - callback_start >= budget / 2u) return 0;
-    unsigned melodic = 0;
-    drum_worker.count = 0;
-    drum_worker.muted = muted;
-    for (unsigned j = 0; j < VOICES; ++j) {
-        if (!voices[j].age) continue;
-        if (voices[j].track == DRUMS) {
-            unsigned index = drum_worker.count++;
-            drum_worker.slot[index] = j;
-            drum_worker.voice[index] = voices[j];
-        } else ++melodic;
+    unsigned active = 0;
+    for (unsigned j = 0; j < VOICES; ++j) active += voices[j].age != 0;
+    unsigned target = active / 2u;
+    unsigned remote = 0, local_only = 0;
+    voice_worker.count = 0;
+    voice_worker.muted = muted;
+    // Take a suffix of the active slots on each track to preserve its float sum.
+    for (unsigned j = VOICES; j-- > 0 && voice_worker.count < target;) {
+        const Voice *voice = &voices[j];
+        if (!voice->age || (local_only & (1u << voice->track))) continue;
+        if (voice->track != DRUMS &&
+            (voice->lfo_wave == 5 || synths[j].engine == 4 || synths[j].engine == 6)) {
+            // Sample-and-hold shares the scheduler RNG. String engines own long delay lines.
+            local_only |= 1u << voice->track;
+            continue;
+        }
+        unsigned index = voice_worker.count++;
+        voice_worker.slot[index] = j;
+        voice_worker.voice[index] = *voice;
+        if (voice->track != DRUMS)
+            __builtin_memcpy(&worker_synth[index], &synths[j], SYNTH_STATE_BYTES);
+        remote |= 1u << j;
     }
-    unsigned split = melodic && drum_worker.count && plat_cpu2_run(render_drum_bus, frames);
+    unsigned split = remote && plat_cpu2_run(render_worker_voices, frames);
     if (!split && !allow_fx) return 0;
 
     for (unsigned i = 0; i < frames; ++i) {
         for (unsigned t = 0; t < TRACKS; ++t) voice_bus[i][t] = 0.0f;
         for (unsigned j = 0; j < VOICES; ++j) {
             Voice *voice = &voices[j];
-            if (!voice->age || (split && voice->track == DRUMS)) continue;
+            if (!voice->age || (split && (remote & (1u << j)))) continue;
             float sample = render_voice(voice, &synths[j]);
             if (voice->track != DRUMS || !(muted & (1u << voice->drum_family)))
                 voice_bus[i][voice->track] += sample;
@@ -843,24 +867,43 @@ static unsigned render_voice_batch(unsigned frames, unsigned muted, unsigned all
            plat_ticks24() - wait_start < 60u * 24u &&
            plat_ticks24() - callback_start < budget * 3u / 4u) {}
     worker_wait_ticks += plat_ticks24() - wait_start;
+    int unusable = busy;
 #ifdef PLAT_HOST
-    // Exercise the recovery path after the simulated worker has changed its copy.
-    busy |= host_discard_worker_result;
-#endif
-    if (busy || plat_cpu2_wait() != 0) {
-        plat_cpu2_set(0);
-        ++worker_fallbacks;
-        for (unsigned j = 0; j < drum_worker.count; ++j)
-            drum_worker.voice[j] = voices[drum_worker.slot[j]];
-        render_drum_bus(frames);
-    } else {
-        ++worker_jobs;
-        worker_ticks += drum_worker.ticks;
+    // Simulate a rejected result after the worker has modified its private copy.
+    if (host_discard_worker_result) {
+        unusable = 1;
+        if (!busy) plat_cpu2_set(0);
     }
-    for (unsigned j = 0; j < drum_worker.count; ++j)
-        voices[drum_worker.slot[j]] = drum_worker.voice[j];
-    for (unsigned i = 0; i < frames; ++i)
-        voice_bus[i][DRUMS] = drum_worker.output[i];
+#endif
+    if (unusable || plat_cpu2_wait() != 0) {
+        if (busy) {
+            late_voice_pending = 1;
+            late_voice_tick = wait_start;
+        }
+        ++worker_fallbacks;
+        // Core 1 can finish its discarded copy while Core 0 replays the
+        // original suffix. The mailbox and output stay reserved until drained.
+        for (unsigned i = 0; i < frames; ++i)
+            for (unsigned j = 0; j < VOICES; ++j) {
+                if (!(remote & (1u << j))) continue;
+                Voice *voice = &voices[j];
+                if (!voice->age) continue;
+                float sample = render_voice(voice, &synths[j]);
+                if (voice->track != DRUMS || !(muted & (1u << voice->drum_family)))
+                    voice_bus[i][voice->track] += sample;
+            }
+        return frames;
+    }
+    ++worker_jobs;
+    worker_ticks += voice_worker.ticks;
+    for (unsigned j = voice_worker.count; j-- > 0;) {
+        unsigned slot = voice_worker.slot[j], track = voice_worker.voice[j].track;
+        voices[slot] = voice_worker.voice[j];
+        if (track != DRUMS)
+            __builtin_memcpy(&synths[slot], &worker_synth[j], SYNTH_STATE_BYTES);
+        for (unsigned i = 0; i < frames; ++i)
+            voice_bus[i][track] += voice_worker.output[j][i];
+    }
     return frames;
 }
 
@@ -904,7 +947,7 @@ static void render_worker_fx(uint32_t frames)
 
 static unsigned render_fx_batch(unsigned frames, unsigned mask, uint32_t start, uint32_t budget)
 {
-    if (!mask || !plat_cpu2_on() || plat_ticks24() - start >= budget * 3u / 4u) return 0;
+    if (!mask || !plat_cpu2_on() || late_voice_pending || plat_ticks24() - start >= budget * 3u / 4u) return 0;
     fx_worker_count = 0;
     for (unsigned t = 1; t < TRACKS; ++t) {
         if (!(mask & (1u << t))) continue;
@@ -960,6 +1003,16 @@ static float startup_sound(void)
 void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
 {
     uint32_t audio_started = plat_ticks24();
+    if (dsp_reset_request) {
+        dsp_peak_ticks = dsp_avg_ticks = dsp_overruns = dsp_callbacks = 0;
+        dsp_xrun_baseline = plat_xruns();
+#if FM1B_CPU2 && !defined(PLAT_WEB)
+        worker_jobs = worker_fallbacks = worker_ticks = worker_wait_ticks = 0;
+        fx_worker_jobs = fx_worker_fallbacks = fx_worker_ticks = 0;
+#endif
+        for (unsigned bin = 0; bin < DSP_BINS; ++bin) dsp_histogram[bin] = 0;
+        dsp_reset_request = 0;
+    }
     uint32_t mix[TRACKS], solo = mixer_solo;
     float left[TRACKS], right[TRACKS], level_at[TRACKS], wet[TRACKS];
     unsigned automatic[TRACKS];
@@ -1127,6 +1180,10 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
         uint32_t elapsed = plat_ticks24() - audio_started;
         uint32_t budget = (24000000u / RATE) * frames + (24000000u % RATE) * frames / RATE;
         dsp_budget_ticks = budget;
+        unsigned bin = elapsed / DSP_BIN_TICKS;
+        if (bin >= DSP_BINS) bin = DSP_BINS - 1u;
+        ++dsp_histogram[bin];
+        ++dsp_callbacks;
         if (elapsed > budget) ++dsp_overruns;
         if (elapsed > dsp_peak_ticks) dsp_peak_ticks = elapsed;
         dsp_avg_ticks = dsp_avg_ticks - dsp_avg_ticks / 8u + elapsed / 8u;
@@ -1457,6 +1514,7 @@ static void generate_drums(void)
     }
     gen_confirm = 0;
     ++gen_count;
+    if (take_undo.track == DRUMS) take_undo.ready = 0;
     const struct DrumStyle *style = &drum_style[gen_style];
     for (unsigned step = 0; step < length; ++step) {
         unsigned beat = step & 15u;
@@ -1666,6 +1724,7 @@ void app_input_only(void)
     } else if (slap_ui.page == GLOBAL) {
         tempo = (unsigned)clamp((int)tempo + knob[0], 40, 240);
         swing = (unsigned)clamp((int)swing + knob[1] * 2, 0, 70);
+        if (knob[2]) dsp_reset_request = 1;
         unsigned mode = (unsigned)clamp((int)metronome + knob[3], 0, 2);
         if (mode != metronome) {
             metronome = mode;
@@ -1680,6 +1739,8 @@ void app_input_only(void)
         int editing_timing = buttons & (1u << B_SEL);
         unsigned row = pattern_row(slap_ui.track, slap_ui.lane);
         uint32_t word = *cell;
+        uint32_t original_word = word;
+        uint8_t original_timing = timing_group[row][slap_ui.step];
         if (notes) {
             timing_group[row][slap_ui.step] = 0;
             unsigned k = 0;
@@ -1701,6 +1762,8 @@ void app_input_only(void)
                 timing_bits(timing);
         }
         *cell = word;
+        if (word != original_word || timing_group[row][slap_ui.step] != original_timing)
+            ++pattern_revision[slap_ui.track];
     } else if (slap_ui.page == ARP) {
         static const uint8_t min[] = {0, 0, 1, 0}, max[] = {6, 5, 4, 100};
         uint32_t word = arp_setup[slap_ui.track];
@@ -1759,14 +1822,31 @@ void app_input_only(void)
 
 static void decimal(char *out, unsigned value)
 {
-    if (value >= 1000) *out++ = (char)('0' + value / 1000);
-    if (value >= 100) *out++ = (char)('0' + value / 100 % 10);
-    if (value >= 10) *out++ = (char)('0' + value / 10 % 10);
-    *out++ = (char)('0' + value % 10);
+    char reverse[10];
+    unsigned count = 0;
+    do {
+        reverse[count++] = (char)('0' + value % 10u);
+        value /= 10u;
+    } while (value);
+    while (count) *out++ = reverse[--count];
     *out = 0;
 }
 
 #include "visuals.h"
+
+static unsigned callback_percentile(unsigned percentile)
+{
+    unsigned callbacks = dsp_callbacks;
+    if (!callbacks) return 0;
+    unsigned needed = callbacks - (callbacks / 100u * (100u - percentile) +
+                                   (callbacks % 100u) * (100u - percentile) / 100u);
+    unsigned seen = 0;
+    for (unsigned bin = 0; bin < DSP_BINS - 1u; ++bin) {
+        seen += dsp_histogram[bin];
+        if (seen >= needed) return (bin + 1u) * (DSP_BIN_TICKS / 24u);
+    }
+    return dsp_peak_ticks / 24u;
+}
 
 static void draw_panel(void)
 {
@@ -1779,7 +1859,7 @@ static void draw_panel(void)
     static const char *const env_labels[] = {"ATTACK", "DECAY", "SUSTAIN", "RELEASE"};
     static const char *const labels[] = {"PAN", "STEPS", "LEVEL", "SWING"};
     static const char *const edit_labels[] = {"NOTE", "VEL", "GATE", "HIT %"};
-    char number[5];
+    char number[12];
     unsigned selected = (unsigned)slap_ui.track;
     uint32_t position = positions;
     uint32_t settings = tracks[selected].mix;
@@ -1858,13 +1938,13 @@ static void draw_panel(void)
                 }
             } else if (slap_ui.page == GLOBAL) {
                 static const char *const labels[3][2] = {
-                    {"AVG DSP %", "PEAK US"}, {"AVG US", "BUDGET US"},
-                    {"DEADLINE MISS", "VOICE STEALS"}
+                    {"AVG DSP %", "PEAK US"}, {"P95 US", "P99 US"},
+                    {"DEADLINE MISS", "BUDGET US"}
                 };
                 unsigned avg = dsp_avg_ticks, budget = dsp_budget_ticks;
                 unsigned values[3][2] = {
                     {budget ? avg * 100u / budget : 0u, dsp_peak_ticks / 24u},
-                    {avg / 24u, budget / 24u}, {dsp_overruns, voice_steals}
+                    {callback_percentile(95), callback_percentile(99)}, {dsp_overruns, budget / 24u}
                 };
                 for (unsigned col = 0; col < 2; ++col) {
                     int x = 8 + (int)col * 116;
@@ -1918,21 +1998,22 @@ static void draw_panel(void)
 #if FM1B_CPU2 && !defined(PLAT_WEB)
             cv_text(8, 2, &FONT_XS, "C1 JOBS", c);
             uint32_t total_jobs = worker_jobs + fx_worker_jobs;
-            decimal(number, total_jobs > 9999 ? 9999 : total_jobs);
+            decimal(number, total_jobs);
             cv_text(55, 2, &FONT_XS, number, C_WHITE);
-            cv_text(89, 2, &FONT_XS, "FALLBACKS", c);
+            cv_text(126, 2, &FONT_XS, "FALLBACKS", c);
             uint32_t total_fallbacks = worker_fallbacks + fx_worker_fallbacks;
             decimal(number, total_fallbacks > 9999 ? 9999 : total_fallbacks);
-            cv_text(157, 2, &FONT_XS, number, C_WHITE);
+            cv_text(190, 2, &FONT_XS, number, C_WHITE);
 #else
             cv_text(8, 2, &FONT_XS, "K1 TEMPO  /  K2 SWING", C_WHITE);
 #endif
             cv_text(8, 31, &FONT_XS, metronome == 2 ? "K4 METRO ON" : metronome == 1 ? "K4 METRO REC" : "K4 METRO OFF", c);
+            cv_text(115, 31, &FONT_XS, "K3 RESET STATS", c);
             cv_text(8, 18, &FONT_XS, "ACTIVE VOICES", c);
             decimal(number, active_voices);
             cv_text(113, 20, &FONT_XS, number, C_WHITE);
             cv_text(134, 20, &FONT_XS, "DMA XRUNS", c);
-            unsigned xruns = plat_xruns();
+            unsigned xruns = plat_xruns() - dsp_xrun_baseline;
             decimal(number, xruns > 9999 ? 9999 : xruns);
             cv_text(201, 20, &FONT_XS, number, C_WHITE);
         } else {
@@ -2005,7 +2086,7 @@ static void draw_panel(void)
             const char *name = selected == DRUMS ? drum_kits[item].name : slap_patches[item].name;
             cv_begin(240, 30, background);
             cv_rect(7, 2, 226, 26, item == current ? c : track_surface[selected]);
-            const felucca_font_t *font = text_w(&FONT_M, name) < 210 ? &FONT_M : &FONT_B;
+            const felucca_font_t *font = &FONT_S;
             cv_text(14, 4, font, name, item == current ? C_BLACK : C_WHITE);
             cv_blit(0, 120+row*30);
         }
@@ -2395,6 +2476,7 @@ STUDIO_EXPORT void studio_set_event(uint32_t track, uint32_t step, uint32_t lane
     if (word && track == DRUMS && lane && (word & NOTES) != lane_pitch[lane-1u]) return;
     timing_group[pattern_row(track, lane)][step] = 0;
     *event_cell(track, step, lane) = word;
+    ++pattern_revision[track];
 }
 
 STUDIO_EXPORT uint32_t studio_note_offset(uint32_t track, uint32_t step, uint32_t lane)
@@ -2410,6 +2492,7 @@ STUDIO_EXPORT void studio_set_note_offset(uint32_t track, uint32_t step, uint32_
     if (!*cell) return;
     timing_group[pattern_row(track, lane)][step] = offset ? (uint8_t)(offset / 4u + 1u) : 0;
     *cell = (*cell & ~timing_bits(3u)) | timing_bits(offset);
+    ++pattern_revision[track];
 }
 
 STUDIO_EXPORT uint32_t studio_drum_filters(void) { return drum_filters; }
@@ -2438,6 +2521,7 @@ STUDIO_EXPORT void studio_set_step(uint32_t track, uint32_t step, uint32_t word)
     if (!step_valid(word)) return;
     timing_group[pattern_row(track, 0)][step] = 0;
     tracks[track].steps[step] = word;
+    ++pattern_revision[track];
 }
 
 STUDIO_EXPORT void studio_set_track(uint32_t track, uint32_t mix, uint32_t patch)
@@ -2446,6 +2530,7 @@ STUDIO_EXPORT void studio_set_track(uint32_t track, uint32_t mix, uint32_t patch
         patch >= (track == DRUMS ? DRUM_KITS : SLAP_PATCHES)) return;
     if (track == DRUMS) tracks[track].patch = patch;
     else if (patch != tracks[track].patch) load_patch(track, patch);
+    if (pattern_length(tracks[track].mix) != pattern_length(mix)) ++pattern_revision[track];
     tracks[track].mix = mix;
 }
 
@@ -2453,6 +2538,11 @@ STUDIO_EXPORT void studio_set_clock(uint32_t bpm, uint32_t amount)
 {
     if (bpm >= 40 && bpm <= 240) tempo = bpm;
     if (amount <= 70) swing = amount;
+}
+
+STUDIO_EXPORT const char *studio_kit_name(uint32_t kit)
+{
+    return kit < DRUM_KITS ? drum_kits[kit].name : "";
 }
 
 STUDIO_EXPORT const char *studio_patch_name(uint32_t patch)

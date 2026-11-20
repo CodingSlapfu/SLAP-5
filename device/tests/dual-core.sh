@@ -60,3 +60,43 @@ for mode in worker single discard; do
 done
 cmp "$tmp/fx/single/fx.wav" "$tmp/fx/worker/fx.wav"
 cmp "$tmp/fx/single/fx.wav" "$tmp/fx/discard/fx.wav"
+
+# Record Track 5 from a fresh boot, disarm, then let the drum-only take loop
+# with FX off. Compare the whole playback window after recording has ended.
+for mode in worker single; do
+    mkdir "$tmp/drum-$mode"
+    cp tests/drum-take.txt "$tmp/drum-$mode/input.txt"
+    (
+        unset SLAP_TEST_SINGLE_CORE SLAP_TEST_DISCARD_WORKER SLAP_TEST_DISCARD_FX
+        if [ "$mode" = worker ]; then
+            echo 'expect worker_jobs >0'
+            echo 'expect worker_fallbacks 0'
+        else
+            echo 'expect worker_jobs 0'
+            export SLAP_TEST_SINGLE_CORE=1
+        fi >> "$tmp/drum-$mode/input.txt"
+        build/host/slap-5_host "$tmp/drum-$mode/input.txt" "$tmp/drum-$mode"
+    )
+done
+cmp "$tmp/drum-single/drum-take.wav" "$tmp/drum-worker/drum-take.wav"
+
+for mode in worker single; do
+    mkdir "$tmp/synth-$mode"
+    {
+        printf '%s\n' 'wait 6100' 'wav synth.wav' 'key 7 down' 'key 8 down' \
+            'key 10 down' 'wait 500' 'key 7 up' 'key 8 up' 'key 10 up' \
+            'wait 300' 'wavstop'
+        if [ "$mode" = worker ]; then
+            echo 'expect worker_jobs >0'
+            echo 'expect worker_fallbacks 0'
+        else
+            echo 'expect worker_jobs 0'
+        fi
+    } > "$tmp/synth-$mode/input.txt"
+    (
+        unset SLAP_TEST_SINGLE_CORE SLAP_TEST_DISCARD_WORKER SLAP_TEST_DISCARD_FX
+        [ "$mode" != single ] || export SLAP_TEST_SINGLE_CORE=1
+        build/host/slap-5_host "$tmp/synth-$mode/input.txt" "$tmp/synth-$mode"
+    )
+done
+cmp "$tmp/synth-single/synth.wav" "$tmp/synth-worker/synth.wav"

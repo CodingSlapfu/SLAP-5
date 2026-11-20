@@ -4,13 +4,14 @@ globalThis.fm1App = {
   message({ ex, mem, port }, m) {
     if (m.command === 'read' || m.command === 'read-take') {
       const byte = new Uint8Array(mem.buffer);
-      const names = Array.from({ length: 128 }, (_, i) => {
-        const start = ex.studio_patch_name(i);
+      const namesFor = (count, nameAt) => Array.from({ length: count }, (_, i) => {
+        const start = nameAt(i);
         return String.fromCharCode(...byte.subarray(start, byte.indexOf(0, start)));
       });
       port.postMessage({
         type: m.command === 'read-take' ? 'studio-take-project' : 'studio-project',
-        names,
+        names: namesFor(128, ex.studio_patch_name),
+        kitNames: namesFor(32, ex.studio_kit_name),
         project: {
           version: 3,
           drumFilters: ex.studio_drum_filters(),
