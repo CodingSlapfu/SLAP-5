@@ -401,7 +401,7 @@ static unsigned voice_dispatch_cost(const Voice *voice, const SlapSynth *synth)
         return (voice->drum_family == 0 ? 5u : 4u) + (voice->drum_layers ? 2u : 0u);
     unsigned engine = synth->engine;
     unsigned cost = engine_cost[engine] + (voice->lfo_wave ? 2u : 0u);
-    if (synth->modern && (engine == 0 || engine == 16 || engine == 20)) cost += 2u;
+    if (synth->modern && (engine == 0 || engine == 13 || engine == 16 || engine == 18 || engine == 20)) cost += 2u;
     // Shared sample-and-hold RNG and mutable string lines stay on Core 0.
     if (voice->lfo_wave == 5 || engine == 4 || engine == 6) cost |= VOICE_LOCAL_ONLY;
     return cost;

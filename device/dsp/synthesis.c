@@ -175,9 +175,16 @@ SLAP_SYNTH_SRAM float slap_synth_sample(SlapSynth *s)
             out = 0.8f * sine(p + op2 * (0.02f + 0.34f*c) + m * 0.055f * op4);
         }
         s->feedback = op4;
-        next_x = x + d * (m > 0.60f ? 3.0f : 2.0f);
-        next_y = y + d * (m > 0.29f ? 3.01f : 1.0f);
-        s->strike *= 0.99991f;
+        if (s->modern) {
+            // Motion selects the operator ratios and controls modulation decay.
+            next_x = x + d * (m < 0.22f ? 1.0f : m < 0.48f ? 2.0f : m < 0.69f ? 3.5f : 5.0f);
+            next_y = y + d * (m < 0.40f ? 1.0f : m < 0.69f ? 2.01f : 7.02f);
+            s->strike *= 0.99962f + 0.00034f * m;
+        } else {
+            next_x = x + d * (m > 0.60f ? 3.0f : 2.0f);
+            next_y = y + d * (m > 0.29f ? 3.01f : 1.0f);
+            s->strike *= 0.99991f;
+        }
         break;
     }
     case 1:
@@ -254,6 +261,17 @@ SLAP_SYNTH_SRAM float slap_synth_sample(SlapSynth *s)
         break;
     }
     case 13:
+        if (s->modern) {
+            float sub = sine(x);
+            float main = sine(p + (0.012f + 0.15f * m * s->strike) * sub);
+            float edge = pulse(p, d, 0.21f + 0.27f * m);
+            s->pole += (edge - s->pole) * (0.033f + 0.32f * c * s->strike);
+            out = (0.56f - 0.16f * c) * main + (0.17f + 0.25f * m) * sub +
+                  (0.05f + 0.36f * c) * s->pole;
+            next_x = x + d * 0.5f;
+            s->strike *= 0.9994f + 0.00053f * m;
+            break;
+        }
         next_x = x + d*0.5f;
         out = 0.51f*sine(p) + 0.22f*sine(x) + 0.22f*c*pulse(p,d,0.35f+0.12f*m);
         break;
@@ -270,19 +288,30 @@ SLAP_SYNTH_SRAM float slap_synth_sample(SlapSynth *s)
         break;
     }
     case 15:
+        if (s->modern) {
+            float tine = sine(x);
+            float body = sine(p + tine * (0.03f + c * (0.04f + 0.29f * s->strike)));
+            float reed = sine(2.0f * p + 0.11f * tine);
+            next_x = x + d * (m < 0.25f ? 1.0f : m < 0.55f ? 2.0f : m < 0.77f ? 7.003f : 3.002f);
+            out = 0.67f * body + (0.04f + 0.17f * c) * reed +
+                  (0.03f + 0.16f * c) * s->strike * tine;
+            s->strike *= 0.99945f + 0.00041f * m;
+            break;
+        }
         next_x = x + d*7.002f;
         out = 0.65f*sine(p+0.23f*c*s->strike*sine(2*p)) + 0.20f*s->strike*sine(x);
         s->strike *= 0.99972f + 0.00017f*m;
         break;
     case 16:
         if (s->modern) {
-            next_x = x + d*(2.006f + 0.012f*c);
-            next_y = y + d*(3.016f + 0.034f*c);
+            next_x = x + d * (2.003f + 0.021f * c);
+            next_y = y + d * ((m < 0.44f ? 4.0f : 3.0f) + 0.012f + 0.045f * c);
             float hammer = s->strike * s->strike;
             s->pole += (noise_sample(s) - s->pole) * (0.12f + 0.30f*c);
-            out = 0.59f*sine(p)*(0.43f+0.57f*s->strike) +
-                  (0.08f+0.24f*c*s->strike)*sine(x) +
-                  (0.025f+0.20f*c*hammer)*sine(y) + 0.09f*hammer*s->pole;
+            out = 0.59f * sine(p) * (0.32f + 0.19f * m + 0.49f * s->strike) +
+                  (0.055f + 0.07f * m + 0.21f * c * s->strike) * sine(x) +
+                  (0.015f + 0.24f * c * hammer) * sine(y) +
+                  (0.05f + 0.14f * c) * hammer * s->pole;
         } else {
             next_x = x + d*2.007f;
             next_y = y + d*3.028f;
@@ -297,6 +326,16 @@ SLAP_SYNTH_SRAM float slap_synth_sample(SlapSynth *s)
               0.20f*c*sine(4*p)+0.15f*m*sine(6*p);
         break;
     case 18: {
+        if (s->modern) {
+            float movement = sine(t) * (0.04f + 0.19f * m);
+            float vowel = c + movement;
+            out = 0.39f * sine(p) + (0.10f + 0.31f * vowel) * sine(2.0f * p) +
+                  (0.32f - 0.24f * vowel) * sine(3.0f * p) +
+                  (0.04f + 0.20f * c) * sine((c > 0.54f ? 7.0f : 4.0f) * p) +
+                  0.16f * sine(x + 0.10f * movement);
+            next_x = x + d * (0.997f + 0.018f * m);
+            break;
+        }
         float vowel = c + 0.13f*sine(t);
         out = 0.42f*sine(p) + (0.18f+0.13f*vowel)*sine(3*p) +
               (0.20f-0.14f*vowel)*sine(5*p) + 0.17f*sine(x);
@@ -310,12 +349,17 @@ SLAP_SYNTH_SRAM float slap_synth_sample(SlapSynth *s)
         break;
     case 20:
         if (s->modern) {
-            float bore = pulse(p,d,0.49f-c*0.15f);
+            // Narrow doubles favor oboe-like upper partials. The broad single
+            // reed keeps the odd harmonics of a more cylindrical bore.
+            float width = m < 0.27f ? 0.49f : m < 0.36f ? 0.24f : m > 0.71f ? 0.36f : 0.43f - 0.20f * c;
+            float bore = pulse(p, d, width);
             float breath = noise_sample(s);
             s->pole += (bore - s->pole) * (0.045f + 0.31f*c);
             s->feedback += (s->pole - s->feedback) * (0.035f + 0.12f*m);
-            out = 0.48f*s->pole + (0.16f+0.27f*c)*(s->pole-s->feedback) +
-                  0.28f*sine(p) + (0.012f+0.04f*s->strike)*m*breath;
+            float air = (0.014f + 0.07f * s->strike) * m * breath;
+            out = (0.60f - 0.17f * c) * s->pole +
+                  (0.12f + 0.34f * c) * (s->pole - s->feedback) +
+                  (0.18f + 0.21f * m) * sine(p) + air;
             s->strike *= 0.9987f;
         } else {
             s->pole += (pulse(p,d,0.48f-c*0.09f)-s->pole)*(0.05f+0.30f*c);

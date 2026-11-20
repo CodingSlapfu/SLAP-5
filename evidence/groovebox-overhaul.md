@@ -38,3 +38,13 @@ Hosted browser workflow 44824585526 passed at b6dace0 (owner-confirmed). This mi
 Hold REC to open RECORD. While stopped, OCT− twice clears the active loop and OCT+ twice clears the entire track’s stored steps, including steps outside the current loop. ARP undoes the last clear or take while stopped. During recording, ARP cancels and restores the pre-take snapshot after finalization, stopping the transport. Quick REC honors the RECORD mode set by K4. The workflow reuses the bounded single snapshot. Playback-continuing undo and cancel remain open.
 
 Host `record-actions`, `quick-record`, `record` and `held-recording` passed. All pinned native inputs passed. Native application size was 164,348 bytes, static RAM 56,840 bytes and pool 312,420 bytes. Remaining sound, graphics, settings and release qualification are unchanged.
+
+## Factory voicing pass
+
+The [previous recording checkpoint](https://github.com/CodingSlapfu/SLAP-5/commit/c65cbc5d8da5ea03ca29372ba578b4b684f6778c) has owner-confirmed hosted browser run 44825443101.
+
+A first factory voicing pass changed 32 presets across six engines: operator FM (ratio sets and modulation decay), analog bass (sub mix and a separate transient filter), electric piano (tine ratios and hammer decay), acoustic piano (detuned partials and hammer contribution), choir (moving formants and detuned vocal layer) and woodwind (different reed widths, bore filtering and breath). Existing patch IDs and engine IDs remain stable. Existing legacy oscillator branches are preserved. The stored factory parameter changes can still change the timbre of older songs that reference these IDs. Modern bass and choir carry increased worker cost estimates.
+
+The standard host audition fixture rendered all 128 presets before and after. Exactly 32 PCM renders changed. The other 96 matched byte-for-byte. The [comparison index](patch-audition-comparison.csv) gives peak and RMS levels. It is evidence of changed output and gain structure, not a subjective quality sign-off. Recreate playable WAVs with `python3 device/tests/audition-patches.py device/build/host/slap-5_host OUTPUT` using before and after builds. The isolated synthesis suite passed all 25 engines and 128 presets in both synthesis modes. The checksum-verified native build passed with 166,280 bytes of application flash (+1,932 from c65cbc5), 56,840 bytes of static RAM and 312,420 bytes of pool RAM.
+
+The remaining patch families and level-matched listening review are still open, as are the 25 sample-backed kits, 16 drum lanes, LIVE FX, SETTINGS, visualizer work and full release qualification.
