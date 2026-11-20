@@ -113,3 +113,8 @@ device/tests/dual-core.sh, and device/tests/dense-recording.py using
 case with --fx --visual --seed 220507. The benchmark script is in
 evidence/slap14-host-profile.mjs and accepts a built emulator directory and
 a short label. Run the same Node runtime and fixture for both release builds.
+
+## Newest physical audio-stability gate
+
+See [critical-audio-stability.md](critical-audio-stability.md) for the
+v0.1.14 failure, v0.1.15 engineering checkpoint, and remaining acceptance.

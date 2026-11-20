@@ -84,7 +84,9 @@ static volatile uint32_t dsp_avg_ticks, dsp_peak_ticks, dsp_budget_ticks;
 enum { DSP_BINS = 128, DSP_BIN_TICKS = 2400 };
 static volatile uint32_t dsp_histogram[DSP_BINS], dsp_callbacks;
 static volatile uint32_t dsp_reset_request, dsp_xrun_baseline;
-static unsigned global_details;
+static volatile unsigned global_details;
+enum { PROFILE_INPUT, PROFILE_EVENTS, PROFILE_VOICES, PROFILE_FX, PROFILE_MIX, PROFILE_OUTPUT, PROFILE_COUNT };
+static volatile uint32_t serial_peak, serial_at_peak[PROFILE_COUNT];
 static volatile uint32_t peak_voice_batch, peak_fx_batch, peak_worker_work, peak_worker_wait;
 
 static volatile uint32_t active_voices, voice_steals;
@@ -109,7 +111,7 @@ static uint32_t arp_pulse, arp_wait, arp_last_track = TRACKS, arp_stamp, arp_arr
 static float master_gain, energy_smooth[TRACKS];
 static volatile uint32_t track_energy[TRACKS];
 #if FM1B_CPU2 && defined(PLAT_HOST) && !defined(PLAT_WEB)
-static int host_discard_worker_result, host_discard_fx_result;
+static int host_discard_worker_result, host_discard_fx_result, host_late_voice;
 #endif
 enum { SPECTRUM_BANDS = 7, VISUAL_COUNT = 8 };
 static volatile float visual_rms[2], visual_peak[2], visual_band[SPECTRUM_BANDS];
@@ -216,6 +218,7 @@ void app_init(void)
 #ifdef PLAT_HOST
     host_discard_worker_result = getenv("SLAP_TEST_DISCARD_WORKER") != 0;
     host_discard_fx_result = getenv("SLAP_TEST_DISCARD_FX") != 0;
+    host_late_voice = getenv("SLAP_TEST_LATE_VOICE") != 0;
     plat_cpu2_set(getenv("SLAP_TEST_SINGLE_CORE") == 0);
 #else
     plat_cpu2_set(1);
@@ -903,6 +906,9 @@ static volatile uint32_t fx_worker_jobs, fx_worker_fallbacks, fx_worker_ticks;
 static uint32_t fx_job_ticks, late_voice_tick;
 static unsigned late_voice_pending;
 static volatile uint32_t worker_jobs, worker_fallbacks, worker_ticks, worker_wait_ticks;
+static volatile uint32_t voice_late_jobs, voice_rejected_jobs, voice_busy_jobs, fx_late_jobs;
+enum { VOICE_SHARE_MAX = 8, VOICE_SHARE_MIN = 3, VOICE_SHARE_RECOVERY = 64 };
+static unsigned worker_share = VOICE_SHARE_MAX, worker_healthy_jobs;
 
 static void render_worker_voices(uint32_t frames)
 {
@@ -924,6 +930,7 @@ static unsigned voice_mailbox_ready(uint32_t budget)
 {
     if (!late_voice_pending) return 1;
     if (plat_cpu2_busy()) {
+        ++voice_busy_jobs;
         if (plat_ticks24() - late_voice_tick >= budget) plat_cpu2_set(0);
         return 0;
     }
@@ -934,8 +941,9 @@ static unsigned voice_mailbox_ready(uint32_t budget)
 static unsigned render_voice_batch(unsigned frames, unsigned muted, unsigned allow_fx,
                                    uint32_t callback_start, uint32_t budget)
 {
-    if (frames < MIN_VOICE_BATCH || !plat_cpu2_on() || !voice_mailbox_ready(budget) ||
-        plat_ticks24() - callback_start >= budget / 2u) return 0;
+    if (!frames) return 0;
+    unsigned can_dispatch = frames >= MIN_VOICE_BATCH && plat_cpu2_on() &&
+        voice_mailbox_ready(budget) && plat_ticks24() - callback_start < budget / 2u;
     unsigned active_slots[VOICES], active = 0, total_cost = 0;
     unsigned cost[VOICES];
     int ordered_rng = 0;
@@ -957,11 +965,14 @@ static unsigned render_voice_batch(unsigned frames, unsigned muted, unsigned all
         total_cost += cost[j];
     }
     unsigned assigned_cost = 0;
+    unsigned target_cost = (total_cost * worker_share + VOICE_SHARE_MAX) / (VOICE_SHARE_MAX * 2u);
     unsigned remote = 0, local_only = 0;
-    voice_worker.count = 0;
-    voice_worker.muted = muted;
+    if (can_dispatch) {
+        voice_worker.count = 0;
+        voice_worker.muted = muted;
+    }
     // Take a suffix of the active slots on each track to preserve its float sum.
-    for (unsigned n = active; n-- > 0 && voice_worker.count < VOICES / 2;) {
+    for (unsigned n = active; can_dispatch && n-- > 0 && voice_worker.count < VOICES / 2;) {
         unsigned j = active_slots[n];
         const Voice *voice = &voices[j];
         if (local_only & (1u << voice->track)) continue;
@@ -973,8 +984,8 @@ static unsigned render_voice_batch(unsigned frames, unsigned muted, unsigned all
         }
         // A skipped voice blocks earlier voices on that track to preserve mix order.
         unsigned next_cost = assigned_cost + cost[j];
-        if (next_cost >= total_cost || (next_cost * 2u > total_cost &&
-            next_cost * 2u - total_cost >= total_cost - assigned_cost * 2u)) {
+        if (next_cost >= total_cost || (next_cost > target_cost &&
+            next_cost - target_cost > target_cost - assigned_cost)) {
             local_only |= 1u << voice->track;
             continue;
         }
@@ -985,10 +996,11 @@ static unsigned render_voice_batch(unsigned frames, unsigned muted, unsigned all
         if (voice->track != DRUMS)
             __builtin_memcpy(&worker_synth[index], &synths[j], SYNTH_STATE_BYTES);
         remote |= 1u << j;
-        if (assigned_cost * 2u >= total_cost) break;
+        if (assigned_cost >= target_cost) break;
     }
     unsigned split = remote && plat_cpu2_run(render_worker_voices, frames);
-    if (!split && !allow_fx) return 0;
+    if (remote && !split) ++voice_rejected_jobs;
+    if (!active && !allow_fx) return 0;
 
     for (unsigned i = 0; i < frames; ++i)
         for (unsigned t = 0; t < TRACKS; ++t) voice_bus[i][t] = 0.0f;
@@ -1025,6 +1037,9 @@ static unsigned render_voice_batch(unsigned frames, unsigned muted, unsigned all
            plat_ticks24() - wait_start < 60u * 24u &&
            plat_ticks24() - callback_start < budget * 3u / 4u) {}
     worker_wait_ticks += plat_ticks24() - wait_start;
+#ifdef PLAT_HOST
+    if (host_late_voice && worker_jobs >= 4u && !voice_late_jobs) busy = 1;
+#endif
     int unusable = busy;
 #ifdef PLAT_HOST
     // Simulate a rejected result after the worker has modified its private copy.
@@ -1037,22 +1052,31 @@ static unsigned render_voice_batch(unsigned frames, unsigned muted, unsigned all
         if (busy) {
             late_voice_pending = 1;
             late_voice_tick = wait_start;
-        }
+            ++voice_late_jobs;
+            if (worker_share > VOICE_SHARE_MIN) --worker_share;
+        } else ++voice_rejected_jobs;
+        worker_healthy_jobs = 0;
         ++worker_fallbacks;
-        // Core 1 can finish its discarded copy while Core 0 replays the
-        // original suffix. The mailbox and output stay reserved until drained.
-        for (unsigned i = 0; i < frames; ++i)
-            for (unsigned j = 0; j < VOICES; ++j) {
-                if (!(remote & (1u << j))) continue;
-                Voice *voice = &voices[j];
-                if (!voice->age) continue;
+        // Only independent voices can be assigned remotely. Replay their
+        // suffix in slot order without scanning every slot on every sample.
+        for (unsigned n = 0; n < active; ++n) {
+            unsigned j = active_slots[n];
+            if (!(remote & (1u << j))) continue;
+            Voice *voice = &voices[j];
+            unsigned track = voice->track;
+            unsigned audible = track != DRUMS || !(muted & (1u << voice->drum_family));
+            for (unsigned i = 0; i < frames && voice->age; ++i) {
                 float sample = render_voice(voice, &synths[j]);
-                if (voice->track != DRUMS || !(muted & (1u << voice->drum_family)))
-                    voice_bus[i][voice->track] += sample;
+                if (audible) voice_bus[i][track] += sample;
             }
+        }
         return frames;
     }
     ++worker_jobs;
+    if (worker_share < VOICE_SHARE_MAX && ++worker_healthy_jobs >= VOICE_SHARE_RECOVERY) {
+        ++worker_share;
+        worker_healthy_jobs = 0;
+    }
     worker_ticks += voice_worker.ticks;
     for (unsigned j = voice_worker.count; j-- > 0;) {
         unsigned slot = voice_worker.slot[j], track = voice_worker.voice[j].track;
@@ -1130,6 +1154,7 @@ static unsigned render_fx_batch(unsigned frames, unsigned mask, uint32_t start, 
         // Stop the worker before restoring any state or reusing its output bus.
         plat_cpu2_set(0);
         ++fx_worker_fallbacks;
+        if (busy) ++fx_late_jobs;
         for (unsigned slot = 0; slot < fx_worker_count; ++slot)
             slap_fx_rollback(slot);
         render_worker_fx(frames);
@@ -1161,20 +1186,25 @@ static float startup_sound(void)
 void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
 {
     uint32_t audio_started = plat_ticks24();
+    unsigned profile = slap_ui.page == GLOBAL && global_details == 2;
+    uint32_t serial[PROFILE_COUNT] = {0};
     if (dsp_reset_request) {
         dsp_peak_ticks = dsp_avg_ticks = dsp_overruns = dsp_callbacks = 0;
         peak_voice_batch = peak_fx_batch = peak_worker_work = peak_worker_wait = 0;
+        serial_peak = 0;
+        for (unsigned part = 0; part < PROFILE_COUNT; ++part) serial_at_peak[part] = 0;
         dsp_xrun_baseline = plat_xruns();
 #if FM1B_CPU2 && !defined(PLAT_WEB)
         worker_jobs = worker_fallbacks = worker_ticks = worker_wait_ticks = 0;
         fx_worker_jobs = fx_worker_fallbacks = fx_worker_ticks = 0;
+        voice_late_jobs = voice_rejected_jobs = voice_busy_jobs = fx_late_jobs = 0;
 #endif
         for (unsigned bin = 0; bin < DSP_BINS; ++bin) dsp_histogram[bin] = 0;
         dsp_reset_request = 0;
     }
     uint32_t mix[TRACKS], solo = mixer_solo;
     float left[TRACKS], right[TRACKS], level_at[TRACKS], wet[TRACKS];
-    unsigned automatic[TRACKS];
+    unsigned automatic[TRACKS], gain_needed[TRACKS];
     for (unsigned t = 0; t < TRACKS; ++t) {
         mix[t] = tracks[t].mix;
         float pan = ((mix[t] >> 8) & 255u) / 255.0f;
@@ -1183,6 +1213,7 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
         level_at[t] = level;
         wet[t] = mixer_proc[t] * (1.0f / 255.0f);
         automatic[t] = mixer_auto[t];
+        gain_needed[t] = automatic[t] || mixer_gain[t] != 1.0f;
         left[t] = level * (1.0f - pan);
         right[t] = level * pan;
     }
@@ -1215,7 +1246,9 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
     uint32_t voice_batch_ticks = 0, fx_batch_ticks = 0;
     uint32_t remote_start = worker_ticks + fx_worker_ticks, wait_start = worker_wait_ticks;
 #endif
+    if (profile) serial[PROFILE_INPUT] = plat_ticks24() - audio_started;
     for (uint32_t i = 0; i < frames; ++i) {
+        uint32_t section = profile ? plat_ticks24() : 0;
         if (playing && until_step == 0) {
             if (recording && !rec_running && rec_start_mode) {
                 if (step_number < 4) {
@@ -1238,6 +1271,7 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
         }
         if (until_step) --until_step;
         arp_render_clock();
+        if (profile) serial[PROFILE_EVENTS] += plat_ticks24() - section;
         float dry[TRACKS] = {0};
 #if FM1B_CPU2 && !defined(PLAT_WEB)
         if (i == next_batch) {
@@ -1262,39 +1296,51 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
             for (unsigned t = 0; t < TRACKS; ++t) dry[t] = voice_bus[i - batch_start][t];
         else
 #endif
-        for (unsigned j = 0; j < VOICES; ++j) {
-            Voice *v = &voices[j];
-            if (!v->age) continue;
-            float sample = render_voice(v, &synths[j]);
-            if (v->track != DRUMS || !(muted & (1u << v->drum_family)))
-                dry[v->track] += sample;
+        {
+            if (profile) section = plat_ticks24();
+            for (unsigned j = 0; j < VOICES; ++j) {
+                Voice *v = &voices[j];
+                if (!v->age) continue;
+                float sample = render_voice(v, &synths[j]);
+                if (v->track != DRUMS || !(muted & (1u << v->drum_family)))
+                    dry[v->track] += sample;
+            }
+            if (profile) serial[PROFILE_VOICES] += plat_ticks24() - section;
         }
         float l = 0.0f, r = 0.0f;
         for (unsigned t = 0; t < TRACKS; ++t) {
             unsigned sample_cost = measure_fx && i == 0u;
-            uint32_t started = sample_cost ? plat_ticks24() : 0u;
+            uint32_t started = sample_cost || profile ? plat_ticks24() : 0u;
             float processed;
 #if FM1B_CPU2 && !defined(PLAT_WEB)
             if (i < fx_batch_end) processed = fx_bus[t][i - batch_start];
             else
 #endif
             processed = (effect_mask & (1u << t)) ? slap_fx_sample(t, dry[t]) : dry[t];
-            if (sample_cost) {
-                uint32_t ticks = plat_ticks24() - started;
-                fx_cost_ticks[t] = (7u * fx_cost_ticks[t] + ticks + 4u) / 8u;
+            if (profile || sample_cost) {
+                section = plat_ticks24();
+                uint32_t ticks = section - started;
+                if (profile) serial[PROFILE_FX] += ticks;
+                if (sample_cost) fx_cost_ticks[t] = (7u * fx_cost_ticks[t] + ticks + 4u) / 8u;
             }
             float sample = dry[t] + wet[t] * (processed - dry[t]);
             float amplitude = fm_fabsf(sample);
             mixer_envelope[t] += (amplitude - mixer_envelope[t]) *
                 (amplitude > mixer_envelope[t] ? 0.003f : 0.00018f);
-            float goal = automatic[t] && mixer_envelope[t] > 0.003f ?
-                fm_maxf(0.45f, fm_minf(2.0f, 0.025f / mixer_envelope[t])) : 1.0f;
-            mixer_gain[t] += (goal - mixer_gain[t]) * 0.0008f;
-            sample *= mixer_gain[t];
+            if (gain_needed[t]) {
+                float goal = automatic[t] && mixer_envelope[t] > 0.003f ?
+                    fm_maxf(0.45f, fm_minf(2.0f, 0.025f / mixer_envelope[t])) : 1.0f;
+                mixer_gain[t] += (goal - mixer_gain[t]) * 0.0008f;
+                if (!automatic[t] && fm_fabsf(1.0f - mixer_gain[t]) < 0.00005f)
+                    mixer_gain[t] = 1.0f;
+                sample *= mixer_gain[t];
+            }
             energy_smooth[t] += (fm_fabsf(sample) * level_at[t] - energy_smooth[t]) * 0.0015f;
             l += sample * left[t];
             r += sample * right[t];
+            if (profile) serial[PROFILE_MIX] += plat_ticks24() - section;
         }
+        if (profile) section = plat_ticks24();
         if (!intro_skipped && !playing && startup_sample < RATE * 42u / 100u) {
             float tone = startup_sound();
             l += tone;
@@ -1313,10 +1359,8 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
         master_gain += (target - master_gain) * 0.003f;
         l /= 1.0f + fm_fabsf(l);
         r /= 1.0f + fm_fabsf(r);
-        l *= master_gain;
-        r *= master_gain;
-        lr[i * 2] = (int32_t)(l * 8300000.0f);
-        lr[i * 2 + 1] = (int32_t)(r * 8300000.0f);
+        // The visual bus represents the same limited mix at full master gain.
+        // Track mute, solo and level have already been applied.
         if (analyze) {
             meter_sum[0] += l * l;
             meter_sum[1] += r * r;
@@ -1324,6 +1368,11 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
             meter_peak[1] = fm_maxf(meter_peak[1], fm_fabsf(r));
             capture_spectrum(l, r);
         }
+        l *= master_gain;
+        r *= master_gain;
+        lr[i * 2] = (int32_t)(l * 8300000.0f);
+        lr[i * 2 + 1] = (int32_t)(r * 8300000.0f);
+        if (profile) serial[PROFILE_OUTPUT] += plat_ticks24() - section;
     }
     record_clock += frames;
     if (analyze && frames) {
@@ -1348,10 +1397,16 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
         dsp_budget_ticks = budget;
         unsigned bin = elapsed / DSP_BIN_TICKS;
         if (bin >= DSP_BINS) bin = DSP_BINS - 1u;
-        ++dsp_histogram[bin];
-        ++dsp_callbacks;
-        if (elapsed > budget) ++dsp_overruns;
-        if (elapsed > dsp_peak_ticks) {
+        if (!profile) {
+            ++dsp_histogram[bin];
+            ++dsp_callbacks;
+            if (elapsed > budget) ++dsp_overruns;
+        }
+        if (profile && elapsed > serial_peak) {
+            serial_peak = elapsed;
+            for (unsigned part = 0; part < PROFILE_COUNT; ++part) serial_at_peak[part] = serial[part];
+        }
+        if (!profile && elapsed > dsp_peak_ticks) {
 #if FM1B_CPU2 && !defined(PLAT_WEB)
             peak_voice_batch = voice_batch_ticks;
             peak_fx_batch = fx_batch_ticks;
@@ -1360,7 +1415,7 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
 #endif
             dsp_peak_ticks = elapsed;
         }
-        dsp_avg_ticks = dsp_avg_ticks - dsp_avg_ticks / 8u + elapsed / 8u;
+        if (!profile) dsp_avg_ticks = dsp_avg_ticks - dsp_avg_ticks / 8u + elapsed / 8u;
         unsigned active = 0;
         for (unsigned v = 0; v < VOICES; ++v) active += voices[v].age != 0;
         active_voices = active;
@@ -1860,7 +1915,7 @@ void app_input_only(void)
         slap_ui.page = MIXER;
         pressed &= ~(1u << B_SEL);
     } else if (pressed & (1u << B_GLO)) {
-        global_details = slap_ui.page == GLOBAL ? !global_details : 0;
+        global_details = slap_ui.page == GLOBAL ? (global_details + 1u) % 4u : 0u;
         slap_ui.page = GLOBAL;
     }
     if (pressed & (1u << B_SAVE)) {
@@ -2147,7 +2202,9 @@ static void draw_panel(void)
         cv_text(8, 4, &FONT_M, slap_ui.page == GLOBAL ? "SYSTEM" : patch_name, c);
         cv_text(8, 25, slap_ui.page == RECORD ? &FONT_S : &FONT_XS, slap_ui.page == MIXER ? "SEL MUTE  /  ARP SOLO" :
             slap_ui.page == RECORD ? (recording ? "SEL END TAKE  /  PLAY STOP" : playing ? "STOP TO ARM A TAKE" : "SEL ARM  /  PLAY TO START") :
-            global_details ? "PEAK BREAKDOWN  /  GLO BACK" : "SLAP-5 " APP_VERSION "  /  GLO FOR PEAK", C_WHITE);
+            global_details == 1 ? "PEAK BREAKDOWN  /  GLO NEXT" :
+            global_details == 2 ? "SERIAL PROFILE  /  TIMING OVERHEAD" :
+            global_details == 3 ? "WORKER COUNTERS  /  GLO NEXT" : "SLAP-5 " APP_VERSION "  /  GLO FOR PEAK", C_WHITE);
         cv_blit(0, 48);
         for (int strip = 0; strip < 3; ++strip) {
             cv_begin(240, 36, background);
@@ -2184,12 +2241,33 @@ static void draw_panel(void)
                     {peak / 24u, other / 24u}, {voice_ticks / 24u, fx_ticks / 24u},
                     {peak_worker_work / 24u, peak_worker_wait / 24u}
                 };
+                static const char *const serial_labels[PROFILE_COUNT] = {
+                    "INPUT / SETUP US", "EVENTS US", "DIRECT VOICE US", "SERIAL FX US", "TRACK MIX US", "OUTPUT / METER US"
+                };
+                static const char *const worker_labels[3][2] = {
+                    {"VOICE LATE", "FX LATE"}, {"VOICE BUSY", "VOICE REJECT"}, {"VOICE RERENDER", "FX ROLLBACK"}
+                };
+                unsigned worker_values[3][2] = {{0}};
+#if FM1B_CPU2 && !defined(PLAT_WEB)
+                worker_values[0][0] = voice_late_jobs;
+                worker_values[0][1] = fx_late_jobs;
+                worker_values[1][0] = voice_busy_jobs;
+                worker_values[1][1] = voice_rejected_jobs;
+                worker_values[2][0] = worker_fallbacks;
+                worker_values[2][1] = fx_worker_fallbacks;
+#endif
                 for (unsigned col = 0; col < 2; ++col) {
                     int x = 8 + (int)col * 116;
-                    cv_text(x, 0, &FONT_XS, global_details ? detail_labels[strip][col] : labels[strip][col], C_WHITE);
-                    unsigned value = global_details ? detail_values[strip][col] : values[strip][col];
-                    decimal(number, value > 9999 ? 9999 : value);
-                    cv_text(x, 13, &FONT_M, number, c);
+                    unsigned stage = (unsigned)strip * 2u + col;
+                    const char *label = global_details == 3 ? worker_labels[strip][col] :
+                        global_details == 2 ? serial_labels[stage] :
+                        global_details == 1 ? detail_labels[strip][col] : labels[strip][col];
+                    cv_text(x, 0, &FONT_XS, label, C_WHITE);
+                    unsigned value = global_details == 3 ? worker_values[strip][col] :
+                        global_details == 2 ? serial_at_peak[stage] / 24u :
+                        global_details == 1 ? detail_values[strip][col] : values[strip][col];
+                    decimal(number, value);
+                    cv_text(x, 13, text_w(&FONT_M, number) > 110 ? &FONT_S : &FONT_M, number, c);
                 }
             } else {
                 if (strip == 0) {
@@ -2240,8 +2318,8 @@ static void draw_panel(void)
             cv_text(55, 2, &FONT_XS, number, C_WHITE);
             cv_text(126, 2, &FONT_XS, "FALLBACKS", c);
             uint32_t total_fallbacks = worker_fallbacks + fx_worker_fallbacks;
-            decimal(number, total_fallbacks > 9999 ? 9999 : total_fallbacks);
-            cv_text(190, 2, &FONT_XS, number, C_WHITE);
+            decimal(number, total_fallbacks);
+            cv_text(238 - text_w(&FONT_XS, number), 2, &FONT_XS, number, C_WHITE);
 #else
             cv_text(8, 2, &FONT_XS, "K1 TEMPO  /  K2 SWING", C_WHITE);
 #endif
@@ -2252,8 +2330,8 @@ static void draw_panel(void)
             cv_text(113, 20, &FONT_XS, number, C_WHITE);
             cv_text(134, 20, &FONT_XS, "DMA XRUNS", c);
             unsigned xruns = plat_xruns() - dsp_xrun_baseline;
-            decimal(number, xruns > 9999 ? 9999 : xruns);
-            cv_text(201, 20, &FONT_XS, number, C_WHITE);
+            decimal(number, xruns);
+            cv_text(238 - text_w(&FONT_XS, number), 20, &FONT_XS, number, C_WHITE);
         } else {
             static const char *const labels[] = {"LENGTH", "START", "QUANT", "MODE"};
             char bars[5];
@@ -2533,8 +2611,22 @@ void app_frame(void)
     if (slap_ui.page == VISUAL) update_spectrum();
     else analysis_read = analysis_write;
     uint32_t now = plat_ms();
-    unsigned frame_interval = slap_ui.page == VISUAL && dsp_budget_ticks &&
-                              dsp_avg_ticks > dsp_budget_ticks * 3u / 4u ? 85u : 45u;
+    static uint32_t last_xruns, last_pressure;
+    static unsigned under_pressure;
+    unsigned frame_interval = 45u;
+    if (slap_ui.page == VISUAL) {
+        uint32_t xruns = plat_xruns();
+        if (xruns != last_xruns || (dsp_budget_ticks &&
+            dsp_avg_ticks > dsp_budget_ticks * 3u / 4u)) {
+            last_pressure = now;
+            under_pressure = 1;
+        }
+        last_xruns = xruns;
+        if (under_pressure && now - last_pressure >= 1000u) under_pressure = 0;
+        if (under_pressure) frame_interval = 85u;
+    } else {
+        last_xruns = plat_xruns();
+    }
     if (now - slap_ui.frame_at >= frame_interval) {
         slap_ui.frame_at = now;
         if (slap_ui.booting && now - slap_ui.boot_at < BOOT_MS)
@@ -2596,6 +2688,8 @@ int app_expect(const char *name, int *result)
 #if FM1B_CPU2 && !defined(PLAT_WEB)
     else if (name_matches(name, "worker_jobs")) *result = (int)worker_jobs;
     else if (name_matches(name, "worker_fallbacks")) *result = (int)worker_fallbacks;
+    else if (name_matches(name, "voice_late_jobs")) *result = (int)voice_late_jobs;
+    else if (name_matches(name, "worker_share")) *result = (int)worker_share;
     else if (name_matches(name, "fx_worker_jobs")) *result = (int)fx_worker_jobs;
     else if (name_matches(name, "fx_worker_fallbacks")) *result = (int)fx_worker_fallbacks;
 #endif
