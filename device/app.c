@@ -1089,24 +1089,37 @@ static void render_voice_into_bus(Voice *voice, SlapSynth *synth, unsigned muted
         voice->delay -= i;
         if (i == frames) return;
     }
-    // Between events a sustained, unmodulated synth voice only changes its
-    // oscillator, envelope and gate countdown. Keep the envelope in registers
-    // and hand the exact release sample back to the general renderer.
-    if (!i && frames && track < DRUMS && voice->age && voice->struck &&
-        !voice->releasing && !voice->delay && !voice->lfo_wave && voice->steal_tail == 0.0f) {
-        unsigned sustain_frames = frames;
-        if (!voice->manual && voice->remaining && sustain_frames >= voice->remaining)
-            sustain_frames = voice->remaining - 1u;
+    // Unmodulated tonal attacks and sustains have no per-sample work
+    // outside the oscillator and envelope. Stop before the gate-off sample.
+    if (i < frames && track < DRUMS && voice->age && !voice->releasing &&
+        !voice->delay && !voice->lfo_wave && voice->steal_tail == 0.0f) {
+        const unsigned first = i;
+        unsigned end = frames;
+        if (!voice->manual && voice->remaining && frames - i >= voice->remaining)
+            end = i + voice->remaining - 1u;
         float env = voice->env, sample = voice->last_sample;
-        const float target = voice->sustain, rate = voice->decay, velocity = voice->velocity;
-        for (; i < sustain_frames; ++i) {
+        const float velocity = voice->velocity;
+        if (!voice->struck) {
+            const float attack = voice->attack;
+            for (; i < end;) {
+                env += (1.0f - env) * attack;
+                sample = slap_synth_sample(synth) * env * velocity * 0.18f;
+                output[i++] += sample;
+                if (env > 0.94f) {
+                    voice->struck = 1;
+                    break;
+                }
+            }
+        }
+        const float target = voice->sustain, rate = voice->decay;
+        for (; i < end; ++i) {
             env += (target - env) * rate;
             sample = slap_synth_sample(synth) * env * velocity * 0.18f;
             output[i] += sample;
         }
         voice->env = env;
         voice->last_sample = sample;
-        if (!voice->manual && voice->remaining) voice->remaining -= i;
+        if (!voice->manual && voice->remaining) voice->remaining -= i - first;
     }
     // A released tonal voice has a fixed envelope target until a new event.
     // Leave modulated voices, steal tails and pending starts on the general path.

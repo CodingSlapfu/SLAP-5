@@ -1,0 +1,11 @@
+{
+  "identity": "FM-1_75000120",
+  "packageBytes": 611488,
+  "packageSha256": "daa5b5a85a1969187e63e2346b45edf25828383d664bd1090ae52347065ab856",
+  "appBytes": 162832,
+  "appSlotBytes": 581564,
+  "loaderBytes": 8332,
+  "flashImageBytes": 602112,
+  "appWriteStart": "0x4000",
+  "appWriteEndExclusive": "0x93000"
+}
