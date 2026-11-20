@@ -1,0 +1,20 @@
+wait 6100
+tap SEL
+expect page 8
+expect perfect_note 1
+expect chord_mode 0
+tap OCT-
+expect perfect_note 0
+tap OCT+
+expect chord_mode 1
+expect perfect_note 0
+tap OCT-
+expect perfect_note 1
+expect chord_mode 1
+tap OCT+
+tap OCT+
+tap OCT+
+expect chord_mode 0
+tap HOME
+tap OCT-
+expect perfect_note 1

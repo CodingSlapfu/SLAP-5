@@ -169,6 +169,7 @@ static Voice voices[VOICES];
 static PLAT_POOL SlapSynth synths[VOICES];
 static PLAT_POOL int16_t synth_strings[VOICES][SLAP_STRING_CAPACITY];
 static volatile uint32_t tempo = 112, swing, playing, positions, sequence_epoch;
+static volatile uint32_t perfect_note_off;
 static volatile uint32_t keys_audio, input_track, input_octave;
 static uint32_t old_keys, key_pitches[27], key_tracks[27], ages, noise = 13579;
 static uint32_t until_step, step_duration, step_number, running_epoch;
@@ -524,19 +525,24 @@ static void trigger_delayed(unsigned track, unsigned pitch, unsigned velocity, u
     uint32_t harmony = tracks[track].harmony;
     unsigned root = harmony & 255u, scale = (harmony >> 8) & 255u;
     unsigned chord = (harmony >> 16) & 255u, strum = harmony >> 24;
-    if (track == DRUMS || (!scale && !chord)) {
+    int correct = scale && !(perfect_note_off & (1u << track));
+    if (track == DRUMS || (!correct && !chord)) {
         trigger_voice(track, pitch, velocity, duration, manual, pitch, offset);
         return;
     }
-    unsigned tonic = note_in_scale(pitch, root, scale);
+    unsigned anchor = note_in_scale(pitch, root, scale);
+    unsigned tonic = correct ? anchor : pitch;
     unsigned pitches[4] = {tonic, tonic, tonic, tonic};
     unsigned count = 1;
     if (chord) {
-        unsigned third = scale ? scale_degree(tonic, 2, root, scale) : (unsigned)clamp((int)tonic + 4, 0, 127);
-        unsigned fifth = scale ? scale_degree(tonic, 4, root, scale) : (unsigned)clamp((int)tonic + 7, 0, 127);
+        unsigned third = scale ? scale_degree(anchor, 2, root, scale) - anchor : 4u;
+        unsigned fifth = scale ? scale_degree(anchor, 4, root, scale) - anchor : 7u;
+        unsigned seventh = scale ? scale_degree(anchor, 6, root, scale) - anchor : 11u;
+        third = (unsigned)clamp((int)(tonic + third), 0, 127);
+        fifth = (unsigned)clamp((int)(tonic + fifth), 0, 127);
         pitches[1] = chord == 3 ? fifth : third;
         pitches[2] = fifth;
-        pitches[3] = scale ? scale_degree(tonic, 6, root, scale) : (unsigned)clamp((int)tonic + 11, 0, 127);
+        pitches[3] = (unsigned)clamp((int)(tonic + seventh), 0, 127);
         count = chord == 3 ? 2u : chord == 2 ? 4u : 3u;
     }
     unsigned previous = 255;
@@ -887,7 +893,8 @@ static void arp_render_clock(unsigned track, uint32_t config)
     for (unsigned i = 0; i < (mode == 5 ? count : 1u); ++i) {
         unsigned n = index + i;
         unsigned pitch = (unsigned)clamp((int)key_pitches[keys[n % count]] + (int)(n / count) * 12, 0, 127);
-        pitch = note_in_scale(pitch, harmony & 255u, (harmony >> 8) & 255u);
+        if (!(perfect_note_off & (1u << track)))
+            pitch = note_in_scale(pitch, harmony & 255u, (harmony >> 8) & 255u);
         if (!i) first = pitch;
         trigger_voice(track, pitch, 100, gate, 0, pitch, 0);
     }
@@ -2419,8 +2426,18 @@ void app_input_only(void)
     }
     if ((pressed & (1u << B_ARP)) && slap_ui.page == MIXER)
         mixer_solo ^= 1u << slap_ui.track;
-    if (pressed & (1u << B_OCTDN)) slap_ui.octave = clamp(slap_ui.octave - 1, 0, 4);
-    if (pressed & (1u << B_OCTUP)) slap_ui.octave = clamp(slap_ui.octave + 1, 0, 4);
+    if (slap_ui.page == HARMONY && slap_ui.track < DRUMS) {
+        if (pressed & (1u << B_OCTDN)) perfect_note_off ^= 1u << slap_ui.track;
+        if (pressed & (1u << B_OCTUP)) {
+            uint32_t harmony = tracks[slap_ui.track].harmony;
+            unsigned next = (((harmony >> 16) & 255u) + 1u) % HARMONY_CHORDS;
+            tracks[slap_ui.track].harmony = (harmony & ~0x00ff0000u) | (next << 16);
+        }
+    } else {
+        if (pressed & (1u << B_OCTDN)) slap_ui.octave = clamp(slap_ui.octave - 1, 0, 4);
+        if (pressed & (1u << B_OCTUP)) slap_ui.octave = clamp(slap_ui.octave + 1, 0, 4);
+    }
+    int previous_track = slap_ui.track;
     int delta = plat_enc(EN_SELECT);
     if (slap_ui.page == SAVE) {
         for (int k = EN_ALGO; k < NE; ++k) (void)plat_enc(k);
@@ -2438,7 +2455,7 @@ void app_input_only(void)
     else if (slap_ui.page == HOME || slap_ui.page == MIXER || (slap_ui.page == RECORD && !recording) ||
              slap_ui.page == PATCH || slap_ui.page == ENV || slap_ui.page == LFO || slap_ui.page == FX)
         slap_ui.track = clamp(slap_ui.track + delta, 0, TRACKS - 1);
-    if (recording && (unsigned)slap_ui.track != rec_track)
+    if (recording && slap_ui.track != previous_track && (unsigned)slap_ui.track != rec_track)
         recording = 0;
     int algorithm = plat_enc(EN_ALGO);
     if (slap_ui.page == FX) slap_ui.fx_page = clamp(slap_ui.fx_page + algorithm, 0, SLAP_FX_PAGES - 1);
@@ -2963,7 +2980,8 @@ static void draw_panel(void)
         (slap_ui.lane ? drum_names[slap_ui.lane-1] : "DRUM NOTES") :
         melodic_names[slap_ui.lane];
     const char *name = slap_ui.page == SEQ ? lane_name : slap_ui.page == SAVE ? "SONG SLOTS" : slap_ui.page == FX ? slap_fx_pages[slap_ui.fx_page] :
-                       slap_ui.page == HARMONY ? "PERFORMANCE" : selected == DRUMS ? drum_kits[tracks[DRUMS].patch].name : patch->name;
+                       slap_ui.page == HARMONY ?
+                       ((perfect_note_off & (1u << selected)) ? "PERFECT NOTE OFF" : "PERFECT NOTE ON") : selected == DRUMS ? drum_kits[tracks[DRUMS].patch].name : patch->name;
     unsigned drum_sequence = selected == DRUMS && slap_ui.page == SEQ;
     const felucca_font_t *name_font = drum_sequence || text_w(&FONT_M, name) > 150 ? &FONT_B : &FONT_M;
     cv_text(8, 1, name_font, name, C_WHITE);
@@ -3341,6 +3359,7 @@ int app_expect(const char *name, int *result)
         for (unsigned slot = 0; slot < VOICES; ++slot)
             *result += voices[slot].age && !voices[slot].releasing && voices[slot].sequence_note;
     }
+    else if (name_matches(name, "perfect_note")) *result = !(perfect_note_off & (1u << slap_ui.track));
     else if (name_matches(name, "chord_mode")) *result = (int)((tracks[slap_ui.track].harmony >> 16) & 255u);
     else if (name_matches(name, "metronome")) *result = (int)metronome;
 #if FM1B_CPU2 && !defined(PLAT_WEB)

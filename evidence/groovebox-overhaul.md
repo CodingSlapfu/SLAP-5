@@ -22,3 +22,11 @@ Desktop build and `held-recording`, `wrapped-hold`, `poly-record`, `quick-record
 ## Remaining acceptance
 
 Redesign and audition the patch library. Implement sample decoding, assign all 400 slots, source acoustic recordings with verified provenance, migrate legacy kit references and expand the sequencer to 16 lanes. Complete transport preferences, playback-safe undo, confirmed clear and cancel controls. Implement black-key LIVE FX and independent Perfect Note controls. Build settings and its persistence. Redesign and benchmark all eight visualizers. Complete the firmware-wide audit, native/WASM and storage regressions, memory report and software release qualification. Physical performance remains unverified. Keep the existing public installers.
+
+## Quick REC regression and native build recovery
+
+The regression at `emulator.mjs:207` came from the physical control poll canceling a take whenever the UI's current track differed from the Studio recording target. The poll now requires an actual track selection change before it ends a take. The original Studio WASM Quick REC assertion passed, and the physical-gesture host fixture still ends a take when SELECT moves to another track.
+
+KEY & CHORDS now uses OCT− for a per-track Perfect Note switch (on by default) and OCT+ to cycle OFF, TRIAD, SEVENTH and FIFTH. With correction off, a chord starts from the played chromatic pitch and retains the intervals derived from the selected scale. Outside that page the OCT controls transpose as before. The switch is session-local; persistent keyboard defaults remain part of SETTINGS. Host tests covered the controls, recording, wrapped holds, arpeggiator and corrective UI fixtures.
+
+Native build recovered by fetching `uboot.boot` and `cfg/eq_cfg_hw.bin` from Gitee at the exact SDK commit specified in [SDK pinning](sdk-pinning.md), and reusing the cached `cfg_tool.bin` that already matched. All three checksums passed with no changes to the manifest. The JieLi compiler built the development package `FM-1_7500` and the package audit regenerated it byte-for-byte. Application size was 163,588 bytes (+756 versus published v0.1.20), static RAM 56,840 bytes and pool 312,420 bytes. This is a build check, with no physical performance claim. The full overhaul and qualified release remain open.
