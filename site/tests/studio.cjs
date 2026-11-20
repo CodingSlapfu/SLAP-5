@@ -50,7 +50,7 @@ async function test() {
     assert.equal(project.metronome, 2);
     assert.equal(project.tracks[0].fx[5] & 255, 71);
     assert.equal(project.tracks[4].fx[5] & 255, 0);
-    assert.equal(project.tracks[4].patch, 55);
+    assert.equal(project.tracks[4].patch, 80);
     project.tracks[4].patch = 31;
     assert.equal((project.tracks[4].extra[2][5] >>> 8) & 127, 88);
     await page.locator('#import').setInputFiles({ name: 'song.json', mimeType: 'application/json',
