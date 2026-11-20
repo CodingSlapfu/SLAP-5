@@ -48,3 +48,17 @@ A first factory voicing pass changed 32 presets across six engines: operator FM 
 The standard host audition fixture rendered all 128 presets before and after. Exactly 32 PCM renders changed. The other 96 matched byte-for-byte. The [comparison index](patch-audition-comparison.csv) gives peak and RMS levels. It is evidence of changed output and gain structure, not a subjective quality sign-off. Recreate playable WAVs with `python3 device/tests/audition-patches.py device/build/host/slap-5_host OUTPUT` using before and after builds. The isolated synthesis suite passed all 25 engines and 128 presets in both synthesis modes. The checksum-verified native build passed with 166,280 bytes of application flash (+1,932 from c65cbc5), 56,840 bytes of static RAM and 312,420 bytes of pool RAM.
 
 The remaining patch families and level-matched listening review are still open, as are the 25 sample-backed kits, 16 drum lanes, LIVE FX, SETTINGS, visualizer work and full release qualification.
+
+## Sample-backed factory drum bank
+
+The hosted browser run 44826392134 passed at c1760175 according to the owner. The bank changes Studio compatibility, so the new checkpoint requires its own browser result.
+
+`device/tools/drum_samples.py` generates 400 original synthetic one-shots at build time under the repository's MPL-2.0 terms. There are no third-party assets or recorded acoustic sources in this candidate. The acoustic-style names describe intended voicings. Convincing acoustic quality and level-matched listening have yet to be established.
+
+The 25 factory kits occupy IDs 56–80. Old IDs 0–55 retain their original synthesis and project references and appear in Studio when an imported project uses them. Older firmware cannot load projects saved with the new kit IDs. New kits map the 16 physical white keys to the 16 one-shots and accept corresponding GM notes. Closed, open and pedal hats share a short fade-out choke group. The decoder uses quarter-rate IMA ADPCM with linear interpolation and per-voice state, and reads an immutable XIP bank. It stays on Core 0 pending physical flash-bandwidth measurements. The sequencer still has six dedicated drum lanes and the existing general drum row. Live audition verifies 16 hits; dedicated recording and sequencing of all 16 are still open.
+
+All 400 new assignments and all 56 legacy kits passed finite, nonzero and unclipped WASM audition checks. The rapid-hit WASM test covered all 81 IDs at 240 BPM. The existing host drum take and generator fixtures passed. This measures functionality, not sound quality or hardware performance.
+
+Native compilation with pinned SDK inputs and exact package regeneration passed. The bank uses 309,343 compressed payload bytes. Application 480,208 bytes leaves 101,356 of the 581,564-byte package application slot. Static RAM rose 288 bytes to 57,128, with pool unchanged at 312,420 bytes. Verified update window 0x4000–0x92FFF inclusive. No physical flash, timing or audio acceptance was performed.
+
+Remaining drum gates: 16 independently editable and recordable lanes, generator updates, on-device XIP/audio performance, and musical comparison, particularly the acoustic-style kits. The rest of the patch review, LIVE FX, SETTINGS, visualizers and full release qualification remain open.

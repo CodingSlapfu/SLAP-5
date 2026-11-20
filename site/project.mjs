@@ -2,8 +2,8 @@
 /* Copyright (C) 2026 Ziao */
 export const within = (v, min, max) => Number.isInteger(v) && v >= min && v <= max;
 export const maxSteps = 512;
-export const legacyDrumKits = 32;
-export const primaryDrumKits = 24;
+export const legacyDrumKits = 56;
+export const primaryDrumKits = 25;
 export const modernSynth = 1 << 27;
 export const patternLength = mix => (mix & 255) | (mix >>> 17 & 768);
 export const withPatternLength = (mix, length) =>

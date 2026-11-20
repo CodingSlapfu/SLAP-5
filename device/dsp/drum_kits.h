@@ -71,6 +71,39 @@ static const struct DrumKit {
     {"AMBIENT",     1,  64,  80,  78,  66, 197, 23, 30, 12, DRUM_BRUSH | DRUM_PLATE},
     {"CINEMATIC",   0,  63,  68,  70,  68, 183, 77, 112, 66, DRUM_SUB | DRUM_BEATER | DRUM_MEMBRANE | DRUM_PLATE},
 };
-enum { DRUM_LEGACY_KITS = 32, DRUM_KITS = sizeof(drum_kits) / sizeof(drum_kits[0]),
-       DRUM_PRIMARY_KITS = DRUM_KITS - DRUM_LEGACY_KITS };
-_Static_assert(DRUM_PRIMARY_KITS == 24, "Expected 24 primary drum kits");
+static const char *const sample_kit_names[SAMPLE_KITS] = {
+    "STUDIO ACOUSTIC",
+    "ROOMY ROCK",
+    "JAZZ BRUSH",
+    "VINTAGE FUNK",
+    "LIVE BREAKS",
+    "DEEP 808",
+    "PUNCH 909",
+    "CLASSIC HOUSE",
+    "DEEP HOUSE",
+    "RUFF HOUSE",
+    "WAREHOUSE",
+    "DETROIT ELECTRO",
+    "BOOM BAP",
+    "MODERN HIP-HOP",
+    "TRAP",
+    "JUNGLE BREAKS",
+    "HARD DNB",
+    "DUBSTEP",
+    "ACID JAZZ",
+    "SYNTHWAVE",
+    "IDM LABORATORY",
+    "FM PERCUSSION",
+    "LO-FI DUST",
+    "AMBIENT PERC",
+    "CINEMATIC HYBRID",
+};
+enum { DRUM_LEGACY_KITS = sizeof(drum_kits) / sizeof(drum_kits[0]),
+       DRUM_KITS = DRUM_LEGACY_KITS + SAMPLE_KITS };
+_Static_assert(DRUM_LEGACY_KITS == 56, "Legacy drum IDs must stay stable");
+
+static const char *drum_kit_name(unsigned kit)
+{
+    return kit < DRUM_LEGACY_KITS ? drum_kits[kit].name :
+           kit < DRUM_KITS ? sample_kit_names[kit - DRUM_LEGACY_KITS] : "";
+}

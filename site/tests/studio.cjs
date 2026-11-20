@@ -27,9 +27,9 @@ async function test() {
     assert.equal(await page.locator('h1').textContent(), 'Drum sequencer');
     assert.equal(await wet.inputValue(), '0');
     assert.equal(await page.locator('#gen-style option').count(), 16);
-    assert.equal(await page.locator('#patch option').count(), 24);
-    assert.equal(await page.locator('#patch').inputValue(), '32');
-    await page.locator('#patch').selectOption({ label: 'CINEMATIC' });
+    assert.equal(await page.locator('#patch option').count(), 25);
+    assert.equal(await page.locator('#patch').inputValue(), '56');
+    await page.locator('#patch').selectOption({ label: 'CINEMATIC HYBRID' });
     assert.ok(await page.locator('#gen-apply').isDisabled());
     const roll = page.locator('#roll');
     const box = await roll.boundingBox();

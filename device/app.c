@@ -4,6 +4,7 @@
 #include "synthesis.h"
 #include "oscillator.h"
 #include "effects.h"
+#include "drum_samples.h"
 #include "drum_kits.h"
 
 #ifdef PLAT_HOST
@@ -32,6 +33,7 @@ typedef struct {
     uint32_t delay, rng;
     uint8_t lfo_wave, origin, kit, drum_family;
     uint32_t remaining, age, sequence_note;
+    DrumSampleVoice sample;
     uint8_t track, pitch, manual, releasing, struck, drum_circuit, drum_layers;
 #if FM1B_CPU2 && !defined(PLAT_WEB)
     uint8_t dispatch_cost;
@@ -397,6 +399,8 @@ static unsigned voice_dispatch_cost(const Voice *voice, const SlapSynth *synth)
         7, 4, 7, 4, 4, 6, 3, 10, 4, 5, 4, 4, 8,
         4, 5, 6, 8, 9, 7, 6, 5, 4, 7, 6, 5
     };
+    if (voice->track == DRUMS && voice->kit >= DRUM_LEGACY_KITS)
+        return 4u | VOICE_LOCAL_ONLY; /* Serialized XIP reads until measured on FM-1. */
     if (voice->track == DRUMS)
         return (voice->drum_family == 0 ? 5u : 4u) + (voice->drum_layers ? 2u : 0u);
     unsigned engine = synth->engine;
@@ -482,6 +486,20 @@ static void trigger_voice(unsigned track, unsigned pitch, unsigned velocity, uin
                          patch->color, patch->motion, random_word(),
                          tracks[track].mix & MODERN_SYNTH);
         voice->inc = synths[slot].inc;
+    } else if (tracks[DRUMS].patch >= DRUM_LEGACY_KITS) {
+        voice->kit = (uint8_t)tracks[DRUMS].patch;
+        unsigned hit = drum_sample_hit(pitch);
+        voice->sample.id = (uint16_t)((voice->kit - DRUM_LEGACY_KITS) * SAMPLE_HITS + hit);
+        voice->env = 1.0f;
+        voice->remaining = 0;
+        if (hit >= 4u && hit <= 6u)
+            for (unsigned slot = 0; slot < VOICES; ++slot) {
+                Voice *other = &voices[slot];
+                unsigned other_hit = other->sample.id % SAMPLE_HITS;
+                if (other != voice && other->age && other->track == DRUMS &&
+                    other->kit >= DRUM_LEGACY_KITS && other_hit >= 4u && other_hit <= 6u)
+                    other->releasing = 1;
+            }
     } else {
         voice->rng = random_word();
         voice->kit = (uint8_t)tracks[track].patch;
@@ -613,7 +631,8 @@ static void schedule_event(unsigned track, unsigned row, unsigned step, uint32_t
 static void release_note(unsigned track, unsigned pitch)
 {
     for (unsigned i = 0; i < VOICES; ++i)
-        if (voices[i].manual && voices[i].origin == pitch && voices[i].track == track)
+        if (voices[i].manual && voices[i].origin == pitch && voices[i].track == track &&
+            (track != DRUMS || voices[i].kit < DRUM_LEGACY_KITS))
             voices[i].releasing = 1;
 }
 
@@ -853,6 +872,14 @@ static void read_notes(void)
             if (keys & bit) {
                 unsigned pitch = 29 + k + input_octave * 12;
                 unsigned track = input_track;
+                if (track == DRUMS && tracks[DRUMS].patch >= DRUM_LEGACY_KITS) {
+                    static const uint8_t hits[SAMPLE_HITS] = {
+                        36,35,38,40,42,46,44,39,37,45,47,50,49,51,70,81
+                    };
+                    const uint8_t white[SAMPLE_HITS] = PLAT_WHITE_KEYS;
+                    for (unsigned hit = 0; hit < SAMPLE_HITS; ++hit)
+                        if (white[hit] == k) { pitch = hits[hit]; break; }
+                }
                 key_pitches[k] = pitch;
                 key_tracks[k] = track;
                 arp_arrival[k] = ++arp_stamp;
@@ -975,6 +1002,16 @@ static inline __attribute__((always_inline)) float render_voice_signal(Voice *v,
         if (v->releasing) v->age = 0;
         else --v->delay;
         return 0.0f;
+    }
+    if (v->track == DRUMS && v->kit >= DRUM_LEGACY_KITS) {
+        int finished = 0;
+        int pcm = drum_sample_next(&v->sample, &finished);
+        if (v->releasing) v->env *= 0.985f;
+        if (finished || v->env < 0.0001f) {
+            v->age = 0;
+            return 0.0f;
+        }
+        return pcm * (0.19f / 32768.0f) * v->velocity * v->env;
     }
     if (!v->manual && v->remaining && !--v->remaining) v->releasing = 1;
     float target = v->releasing ? 0.0f : v->struck ? v->sustain : 1.0f;
@@ -2721,7 +2758,7 @@ static void draw_panel(void)
             continue;
         }
         cv_text(x + 1, 25, &FONT_T, number, C_BLACK);
-        const char *name = t == DRUMS ? drum_kits[tracks[t].patch].name :
+        const char *name = t == DRUMS ? drum_kit_name(tracks[t].patch) :
             slap_patches[tracks[t].patch].name;
         for (unsigned row = 0; row < 2 && *name; ++row) {
             char label[24];
@@ -2747,7 +2784,7 @@ static void draw_panel(void)
         static const char *const mixer_labels[] = {"LEVEL", "PAN", "AUTO", "PROC"};
         unsigned values[] = {(settings >> 16) & 255u, (settings >> 8) & 255u,
             mixer_auto[selected], mixer_proc[selected]};
-        const char *patch_name = selected == DRUMS ? drum_kits[tracks[selected].patch].name :
+        const char *patch_name = selected == DRUMS ? drum_kit_name(tracks[selected].patch) :
             slap_patches[tracks[selected].patch].name;
         cv_begin(240, 40, background);
         HalfTrace dma = {0};
@@ -3030,7 +3067,7 @@ static void draw_panel(void)
         melodic_names[slap_ui.lane];
     const char *name = slap_ui.page == SEQ ? lane_name : slap_ui.page == SAVE ? "SONG SLOTS" : slap_ui.page == FX ? slap_fx_pages[slap_ui.fx_page] :
                        slap_ui.page == HARMONY ?
-                       ((perfect_note_off & (1u << selected)) ? "PERFECT NOTE OFF" : "PERFECT NOTE ON") : selected == DRUMS ? drum_kits[tracks[DRUMS].patch].name : patch->name;
+                       ((perfect_note_off & (1u << selected)) ? "PERFECT NOTE OFF" : "PERFECT NOTE ON") : selected == DRUMS ? drum_kit_name(tracks[DRUMS].patch) : patch->name;
     unsigned drum_sequence = selected == DRUMS && slap_ui.page == SEQ;
     const felucca_font_t *name_font = drum_sequence || text_w(&FONT_M, name) > 150 ? &FONT_B : &FONT_M;
     cv_text(8, 1, name_font, name, C_WHITE);
@@ -3076,7 +3113,7 @@ static void draw_panel(void)
         int first = clamp(current - 1, minimum, count - 3);
         for (int row = 0; row < 3; ++row) {
             int item = legacy_kit ? (row == 0 ? current : minimum + row - 1) : first + row;
-            const char *name = selected == DRUMS ? drum_kits[item].name : slap_patches[item].name;
+            const char *name = selected == DRUMS ? drum_kit_name(item) : slap_patches[item].name;
             cv_begin(240, 30, background);
             cv_rect(7, 2, 226, 26, item == current ? c : track_surface[selected]);
             const felucca_font_t *font = &FONT_S;
@@ -3640,7 +3677,7 @@ STUDIO_EXPORT uint32_t studio_kit_count(void) { return DRUM_KITS; }
 
 STUDIO_EXPORT const char *studio_kit_name(uint32_t kit)
 {
-    return kit < DRUM_KITS ? drum_kits[kit].name : "";
+    return drum_kit_name(kit);
 }
 
 STUDIO_EXPORT const char *studio_patch_name(uint32_t patch)

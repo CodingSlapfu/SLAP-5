@@ -110,25 +110,30 @@ render(900);
 const kitProject = structuredClone(validateProject(frames[0].project));
 const kitPeaks = [];
 const { kitNames } = frames[0];
-assert.equal(kitNames.length, 56);
-assert.deepEqual(kitNames.slice(32), [
+assert.equal(kitNames.length, 81);
+assert.deepEqual(kitNames.slice(32, 56), [
   'STUDIO', 'BRUSH', 'VINTAGE', 'DEEP 808', 'PUNCH 909', 'ACID JAZZ', 'HOUSE',
   'DEEP HOUSE', 'RUFF HOUSE', 'TECHNO', 'ELECTRO', 'HIP-HOP', 'BOOM BAP', 'TRAP',
   'JUNGLE', 'HARD DNB', 'BREAKS', 'DUBSTEP', 'SYNTHWAVE', 'IDM LAB', 'FM LAB',
   'LO-FI', 'AMBIENT', 'CINEMATIC'
 ]);
+assert.equal(new Set(kitNames.slice(56)).size, 25);
+const samplePitches = [36, 35, 38, 40, 42, 46, 44, 39, 37, 45, 47, 50, 49, 51, 70, 81];
+let sampleAssignments = 0;
 for (let kit = 0; kit < kitNames.length; kit++) {
   kitProject.tracks[4].patch = kit;
   await app.onMessage({ type: 'app', command: 'project', project: kitProject });
-  for (const pitch of [36, 38, 42, 37, 39, 49]) {
+  for (const pitch of kit < 56 ? [36, 38, 42, 37, 39, 49] : samplePitches) {
     await app.onMessage({ type: 'app', command: 'audition', track: 4, pitch });
     const peak = render(120);
+    if (kit >= 56) ++sampleAssignments;
     assert.ok(peak > 0.0001 && peak < 0.95, `kit ${kit}, drum ${pitch}: unexpected peak ${peak}`);
     kitPeaks.push(peak);
     render(210);
   }
 }
-console.log(`${kitNames.length} kits, six drum lanes each: peak range ${Math.min(...kitPeaks).toFixed(4)}–${Math.max(...kitPeaks).toFixed(4)}.`);
+assert.equal(sampleAssignments, 400);
+console.log(`56 legacy kits and ${sampleAssignments} sample-backed assignments: peak range ${Math.min(...kitPeaks).toFixed(4)}–${Math.max(...kitPeaks).toFixed(4)}.`);
 
 const rapid = structuredClone(validateProject(frames[0].project));
 rapid.bpm = 240;
