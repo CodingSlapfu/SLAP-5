@@ -12,6 +12,8 @@ import subprocess
 import tempfile
 import wave
 
+from pcm_parity import compare_pcm
+
 
 def scenario(seed, bpm, bars, fx, visual):
     rng = random.Random(seed)
@@ -71,8 +73,8 @@ def main():
             if mode == "single":
                 env["SLAP_TEST_SINGLE_CORE"] = "1"
             subprocess.run([host, script, directory], env=env, check=True)
-            wavs[mode] = (directory / "dense.wav").read_bytes()
-        assert wavs["worker"] == wavs["single"], "dense render differs across worker modes"
+            wavs[mode] = directory / "dense.wav"
+        compare_pcm(wavs["worker"], wavs["single"])
         with wave.open(str(work / "worker/dense.wav")) as audio:
             assert audio.getnframes() >= audio.getframerate() * 9
     print(f"Dense recording and replay matched at {args.bpm} BPM, seed {args.seed}, {args.bars} bars.")

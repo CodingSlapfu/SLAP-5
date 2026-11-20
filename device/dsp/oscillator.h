@@ -6,6 +6,9 @@
 enum { SLAP_SINE_SIZE = 1024 };
 extern const float slap_sine_table[SLAP_SINE_SIZE + 1];
 
+#if !defined(PLAT_HOST)
+__attribute__((always_inline))
+#endif
 static inline float slap_oscillator(float phase)
 {
     float scaled = phase * SLAP_SINE_SIZE;

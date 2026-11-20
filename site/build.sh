@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MPL-2.0
 set -eu
 cd "$(dirname "$0")/.."
-python3 vendor/fm1-base/tools/build.py device --web --release 0.1.14
+python3 vendor/fm1-base/tools/build.py device --web --release 0.1.16
 out="${1:-device/build/studio}"
 mkdir -p "$out/emulator" "$out/protocol" "$out/screens"
 mkdir -p "$out/fonts"
@@ -28,6 +28,9 @@ cp "$release_dir/SLAP-5-0.1.13.fwsc" "$out/"
 tar -xJf engineering/SLAP-5-0.1.14-candidate.tar.xz -C "$release_dir"
 (cd "$release_dir" && sha256sum -c SHA256SUMS)
 cp "$release_dir/SLAP-5-0.1.14.fwsc" "$out/"
+tar -xJf engineering/SLAP-5-0.1.16-candidate.tar.xz -C "$release_dir"
+(cd "$release_dir" && sha256sum -c SHA256SUMS)
+cp "$release_dir/SLAP-5-0.1.16.fwsc" "$out/"
 mkdir -p "$out/tests"
 cp site/tests/flash.mjs "$out/tests/"
 printf '{"type":"module"}\n' > "$out/package.json"

@@ -18,6 +18,7 @@ await engine.onMessage({ type: 'app', command: 'read' });
 const encode = (pitch, velocity) => (pitch | 128 | velocity << 8 | 190 << 16 | 100 << 24) >>> 0;
 for (const [t, track] of project.tracks.entries()) {
   track.patch = [0, 28, 86, 116, 21][t];
+  if (mode !== 'modern') track.mix &= ~(1 << 27);
   if (mode === 'wet') {
     const fx = (a, b, c, d) => (a | b << 8 | c << 16 | d << 24) >>> 0;
     track.fx[2] = fx(2, 3 + t, 1, 102);

@@ -6,7 +6,7 @@
 #include <stdio.h>
 #include <string.h>
 
-int main(void)
+static void check_patches(int modern)
 {
     uint32_t signatures[SLAP_PATCHES];
     int engine_counts[SLAP_ENGINES] = {0};
@@ -21,7 +21,7 @@ int main(void)
         for (unsigned pitch = 36; pitch <= 96; pitch += 24) {
             SlapSynth synth;
             int16_t string[SLAP_STRING_CAPACITY];
-            slap_synth_start(&synth, string, patch->engine, pitch, patch->color, patch->motion, 0x51616942u);
+            slap_synth_start(&synth, string, patch->engine, pitch, patch->color, patch->motion, 0x51616942u, modern);
             for (int f = 0; f < 8192; ++f) {
                 const float sample = slap_synth_sample(&synth);
                 assert(isfinite(sample) && fabsf(sample) <= 2.8f);
@@ -41,4 +41,11 @@ int main(void)
     for (unsigned i = 0; i < SLAP_ENGINES; ++i) assert(engine_counts[i] >= 5);
     printf("Rendered %u factory patches across %u engines at three pitches.\n", SLAP_PATCHES, SLAP_ENGINES);
     puts("Every patch produced finite audio, measurable energy, and a distinct sample signature.");
+}
+
+int main(void)
+{
+    check_patches(0);
+    check_patches(1);
+    return 0;
 }

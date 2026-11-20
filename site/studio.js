@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MPL-2.0 */
 /* Copyright (C) 2026 Ziao */
-import { decodeNote, drumNotes, encodeNote, eventLanes, fxLimit, fxPanels, legacyDrumKits, maxSteps, patternLength, validateProject, withPatternLength, within } from './project.mjs';
+import { decodeNote, drumNotes, encodeNote, eventLanes, fxLimit, fxPanels, legacyDrumKits, maxSteps, modernSynth, patternLength, validateProject, withPatternLength, within } from './project.mjs';
 
 const $ = id => document.getElementById(id);
 const colors = ['#1ce2ff', '#ab70ff', '#ff59b0', '#ffb43a', '#3ef289'];
@@ -381,7 +381,10 @@ numberInput('hold-ms', 0, 190214, (p, value) => {
   setNote(p.tracks[track], lane, step, note);
 });
 $('patch').addEventListener('change', () => {
-  edit(p => { p.tracks[track].patch = Number($('patch').value); });
+  edit(p => {
+    p.tracks[track].patch = Number($('patch').value);
+    if (track !== 4) p.tracks[track].mix |= modernSynth;
+  });
   send('audition', { track, pitch: track === 4 ? 36 : 60 });
 });
 $('mute').addEventListener('change', () => edit(p => {

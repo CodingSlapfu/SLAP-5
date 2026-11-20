@@ -4,6 +4,7 @@ export const within = (v, min, max) => Number.isInteger(v) && v >= min && v <= m
 export const maxSteps = 512;
 export const legacyDrumKits = 32;
 export const primaryDrumKits = 24;
+export const modernSynth = 1 << 27;
 export const patternLength = mix => (mix & 255) | (mix >>> 17 & 768);
 export const withPatternLength = (mix, length) =>
   ((mix & ~0x060000ff) | (length & 255) | ((length & 768) << 17)) >>> 0;
@@ -39,7 +40,8 @@ export function validateProject(project) {
   if (!legacy && (!within(project.drumFilters, 0, 0x3f3f) || (project.drumFilters & ~0x3f3f)))
     throw new Error('Invalid drum filters.');
   for (const [i, track] of project.tracks.entries()) {
-    if (!track || !within(track.mix, 0, extended ? 0x7ffffff : 0x1ffffff) || !within(patternLength(track.mix), 1, bankSize) ||
+    const mixMask = (extended ? 0x7ffffff : 0x1ffffff) | (i === 4 ? 0 : modernSynth);
+    if (!track || !within(track.mix, 0, mixMask) || (track.mix & ~mixMask) || !within(patternLength(track.mix), 1, bankSize) ||
         !within(track.patch, 0, i === 4 ? legacyDrumKits + primaryDrumKits - 1 : 127) || !Array.isArray(track.steps) || track.steps.length !== bankSize) {
       throw new Error('Invalid track data.');
     }

@@ -21,8 +21,8 @@ for mode in worker single discard; do
         build/host/slap-5_host "$tmp/$mode/input.txt" "$tmp/$mode"
     )
 done
-cmp "$tmp/single/dual-core.wav" "$tmp/worker/dual-core.wav"
-cmp "$tmp/single/dual-core.wav" "$tmp/discard/dual-core.wav"
+python3 tests/pcm_parity.py "$tmp/single/dual-core.wav" "$tmp/worker/dual-core.wav"
+python3 tests/pcm_parity.py "$tmp/single/dual-core.wav" "$tmp/discard/dual-core.wav"
 
 # Five simultaneous wet FX chains. The discard occurs after feedback has built
 # up, so the WAV comparison covers restored delay, chorus, room and slicer state.
@@ -58,8 +58,8 @@ for mode in worker single discard; do
         build/host/slap-5_host "$tmp/fx/$mode/input.txt" "$tmp/fx/$mode"
     )
 done
-cmp "$tmp/fx/single/fx.wav" "$tmp/fx/worker/fx.wav"
-cmp "$tmp/fx/single/fx.wav" "$tmp/fx/discard/fx.wav"
+python3 tests/pcm_parity.py "$tmp/fx/single/fx.wav" "$tmp/fx/worker/fx.wav"
+python3 tests/pcm_parity.py "$tmp/fx/single/fx.wav" "$tmp/fx/discard/fx.wav"
 
 # Record Track 5 from a fresh boot, disarm, then let the drum-only take loop
 # with FX off. Compare the whole playback window after recording has ended.
@@ -78,7 +78,7 @@ for mode in worker single; do
         build/host/slap-5_host "$tmp/drum-$mode/input.txt" "$tmp/drum-$mode"
     )
 done
-cmp "$tmp/drum-single/drum-take.wav" "$tmp/drum-worker/drum-take.wav"
+python3 tests/pcm_parity.py "$tmp/drum-single/drum-take.wav" "$tmp/drum-worker/drum-take.wav"
 
 for mode in worker single; do
     mkdir "$tmp/synth-$mode"
@@ -99,14 +99,14 @@ for mode in worker single; do
         build/host/slap-5_host "$tmp/synth-$mode/input.txt" "$tmp/synth-$mode"
     )
 done
-cmp "$tmp/synth-single/synth.wav" "$tmp/synth-worker/synth.wav"
+python3 tests/pcm_parity.py "$tmp/synth-single/synth.wav" "$tmp/synth-worker/synth.wav"
 
 # Late voice output retires the worker. Single-core recovery preserves PCM.
 mkdir "$tmp/late"
 cp tests/dual-core.txt "$tmp/late/input.txt"
 printf '%s\n' 'expect voice_late_jobs 1' 'expect worker_jobs 4' 'expect worker_fallbacks 1' >> "$tmp/late/input.txt"
 SLAP_TEST_LATE_VOICE=1 build/host/slap-5_host "$tmp/late/input.txt" "$tmp/late"
-cmp "$tmp/single/dual-core.wav" "$tmp/late/dual-core.wav"
+python3 tests/pcm_parity.py "$tmp/single/dual-core.wav" "$tmp/late/dual-core.wav"
 
 # Held chord arpeggios can allocate several voices. Batch only up to their
 # next sample-accurate tick and compare with the single-core render.
@@ -129,4 +129,4 @@ for mode in worker single; do
         build/host/slap-5_host "$tmp/arp-$mode/input.txt" "$tmp/arp-$mode"
     )
 done
-cmp "$tmp/arp-worker/arp.wav" "$tmp/arp-single/arp.wav"
+python3 tests/pcm_parity.py "$tmp/arp-worker/arp.wav" "$tmp/arp-single/arp.wav"

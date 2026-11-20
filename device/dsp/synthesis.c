@@ -19,16 +19,31 @@ const char *const slap_engine_names[SLAP_ENGINES] = {
     "BRASS", "WOODWIND", "FLUTE", "BELLS", "GRAIN CLOUD", "SPECTRAL"
 };
 
-static float wrap(float phase)
+#if !defined(PLAT_HOST)
+#define SLAP_SYNTH_SRAM __attribute__((section(".c1_text.slap_synthesis")))
+#define SLAP_SYNTH_INLINE __attribute__((always_inline))
+#else
+#define SLAP_SYNTH_SRAM
+#define SLAP_SYNTH_INLINE
+#endif
+
+static inline SLAP_SYNTH_INLINE float wrap(float phase)
 {
     return phase - (float)(int)phase + (phase < 0.0f && phase != (float)(int)phase ? 1.0f : 0.0f);
 }
 
-static float sine(float phase) { return slap_oscillator(phase); }
-static float tri(float phase) { return 1.0f - 4.0f * fm_fabsf(wrap(phase) - 0.5f); }
-static float limit(float v) { return v / (1.0f + fm_fabsf(v)); }
+static inline SLAP_SYNTH_INLINE float synth_abs(float value)
+{
+    fm_bits_t bits = {.f = value};
+    bits.u &= 0x7fffffffu;
+    return bits.f;
+}
 
-static float noise_sample(SlapSynth *s)
+static SLAP_SYNTH_SRAM float sine(float phase) { return slap_oscillator(phase); }
+static SLAP_SYNTH_SRAM float tri(float phase) { return 1.0f - 4.0f * synth_abs(wrap(phase) - 0.5f); }
+static SLAP_SYNTH_SRAM float limit(float v) { return v / (1.0f + synth_abs(v)); }
+
+static inline SLAP_SYNTH_INLINE float noise_sample(SlapSynth *s)
 {
     uint32_t x = s->rng;
     x ^= x << 13;
@@ -38,7 +53,7 @@ static float noise_sample(SlapSynth *s)
     return (float)(x & 65535u) * (1.0f / 32768.0f) - 1.0f;
 }
 
-static float blep(float phase, float delta)
+static SLAP_SYNTH_SRAM float blep(float phase, float delta)
 {
     if (phase < delta) {
         float t = phase / delta;
@@ -51,12 +66,12 @@ static float blep(float phase, float delta)
     return 0.0f;
 }
 
-static float saw(float phase, float delta)
+static SLAP_SYNTH_SRAM float saw(float phase, float delta)
 {
     return 2.0f * phase - 1.0f - blep(phase, delta);
 }
 
-static float pulse(float phase, float delta, float width)
+static SLAP_SYNTH_SRAM float pulse(float phase, float delta, float width)
 {
     return (phase < width ? 1.0f : -1.0f) + blep(phase, delta) - blep(wrap(phase - width), delta);
 }
@@ -68,7 +83,7 @@ float slap_pitch_increment(unsigned pitch)
 }
 
 void slap_synth_start(SlapSynth *s, int16_t *string, unsigned engine, unsigned pitch,
-                      unsigned color, unsigned motion, uint32_t seed)
+                      unsigned color, unsigned motion, uint32_t seed, int modern)
 {
     s->phase = s->second = s->third = s->slow = s->pole = s->feedback = 0.0f;
     s->strike = 1.0f;
@@ -77,6 +92,7 @@ void slap_synth_start(SlapSynth *s, int16_t *string, unsigned engine, unsigned p
     s->motion = motion * (1.0f / 127.0f);
     s->rng = seed | 1u;
     s->engine = (uint8_t)engine;
+    s->modern = modern != 0;
     s->string = string;
     switch (engine) {
     case 2: case 5: case 18: case 21: case 23: case 24:
@@ -91,6 +107,7 @@ void slap_synth_start(SlapSynth *s, int16_t *string, unsigned engine, unsigned p
         s->length = period > SLAP_STRING_CAPACITY ? SLAP_STRING_CAPACITY :
                     period < 2 ? 2 : (uint16_t)period;
         s->index = 0;
+        s->pickup = modern ? (unsigned)(s->length * (0.11f + 0.14f * s->color)) : s->length / 5u;
         float excitation = 0.0f;
         for (unsigned j = 0; j < s->length; ++j) {
             excitation += (noise_sample(s) - excitation) * (0.16f + s->color * 0.7f);
@@ -99,7 +116,7 @@ void slap_synth_start(SlapSynth *s, int16_t *string, unsigned engine, unsigned p
     }
 }
 
-static float string_sample(SlapSynth *s, int pickup)
+static SLAP_SYNTH_SRAM float string_sample(SlapSynth *s, int pickup)
 {
     unsigned i = s->index, n = i + 1u, length = s->length;
     if (n == length) n = 0;
@@ -108,7 +125,7 @@ static float string_sample(SlapSynth *s, int pickup)
     s->string[i] = (int16_t)((a + (b - a) * damp) * (0.980f + 0.019f * s->motion));
     s->index = (uint16_t)n;
     if (pickup) {
-        unsigned tap = i + length / 5u;
+        unsigned tap = i + s->pickup;
         if (tap >= length) tap -= length;
         a -= s->string[tap] * 0.70f;
         s->pole += (a - s->pole) * 0.08f;
@@ -117,13 +134,13 @@ static float string_sample(SlapSynth *s, int pickup)
     return a * (1.0f / 32768.0f);
 }
 
-static float additive(float p, float brightness)
+static SLAP_SYNTH_SRAM float additive(float p, float brightness)
 {
     return (sine(p) + brightness * 0.53f * sine(2*p) +
             brightness * brightness * (0.28f * sine(3*p) + 0.16f * sine(5*p))) * 0.54f;
 }
 
-float slap_synth_sample(SlapSynth *s)
+SLAP_SYNTH_SRAM float slap_synth_sample(SlapSynth *s)
 {
     const float p = s->phase, d = s->inc, c = s->color, m = s->motion;
     const float x = s->second, y = s->third, t = s->slow;
@@ -140,7 +157,16 @@ float slap_synth_sample(SlapSynth *s)
         float op4 = sine(y + 0.15f * c * s->feedback);
         float op3 = sine(2.0f * p + op4 * m * 0.22f);
         float op2 = sine(x + op3 * c * s->strike * 0.34f);
-        out = 0.8f * sine(p + op2 * (0.02f + 0.34f*c) + m * 0.055f * op4);
+        if (s->modern) {
+            // Two carriers. The bright pair falls away faster than the body.
+            float transient = s->strike * s->strike;
+            float upper_mod = sine(2.0f * y + 0.24f * m * op4);
+            float upper = sine(2.0f * p + (0.025f + 0.25f * c * transient) * upper_mod);
+            float body = sine(p + op2 * (0.025f + 0.27f * c) + 0.07f * m * op4);
+            out = (0.70f + 0.05f * (1.0f - c)) * body + (0.04f + 0.13f * c * transient) * upper;
+        } else {
+            out = 0.8f * sine(p + op2 * (0.02f + 0.34f*c) + m * 0.055f * op4);
+        }
         s->feedback = op4;
         next_x = x + d * (m > 0.60f ? 3.0f : 2.0f);
         next_y = y + d * (m > 0.29f ? 3.01f : 1.0f);
@@ -210,7 +236,14 @@ float slap_synth_sample(SlapSynth *s)
         float spread = 0.002f + c*0.022f;
         next_x = x + d*(1.0f+spread);
         next_y = y + d*(1.0f-spread*1.31f);
-        out = 0.23f*saw(p,d) + 0.24f*saw(x,d) + 0.24f*saw(y,d) + 0.23f*tri(p);
+        if (s->modern) {
+            float sides = saw(x,d) + saw(y,d);
+            float body = 0.24f*saw(p,d) + (0.31f - 0.15f*c)*sides + (0.37f - 0.10f*c)*tri(p);
+            s->pole += (body - s->pole) * (0.14f + 0.47f*c);
+            out = s->pole;
+        } else {
+            out = 0.23f*saw(p,d) + 0.24f*saw(x,d) + 0.24f*saw(y,d) + 0.23f*tri(p);
+        }
         break;
     }
     case 13:
@@ -232,10 +265,20 @@ float slap_synth_sample(SlapSynth *s)
         s->strike *= 0.99972f + 0.00017f*m;
         break;
     case 16:
-        next_x = x + d*2.007f;
-        next_y = y + d*3.028f;
-        out = (0.55f*sine(p)+0.24f*c*sine(x)+0.16f*c*sine(y) +
-               0.12f*s->strike*noise_sample(s)) * (0.42f+0.58f*s->strike);
+        if (s->modern) {
+            next_x = x + d*(2.006f + 0.012f*c);
+            next_y = y + d*(3.016f + 0.034f*c);
+            float hammer = s->strike * s->strike;
+            s->pole += (noise_sample(s) - s->pole) * (0.12f + 0.30f*c);
+            out = 0.59f*sine(p)*(0.43f+0.57f*s->strike) +
+                  (0.08f+0.24f*c*s->strike)*sine(x) +
+                  (0.025f+0.20f*c*hammer)*sine(y) + 0.09f*hammer*s->pole;
+        } else {
+            next_x = x + d*2.007f;
+            next_y = y + d*3.028f;
+            out = (0.55f*sine(p)+0.24f*c*sine(x)+0.16f*c*sine(y) +
+                   0.12f*s->strike*noise_sample(s)) * (0.42f+0.58f*s->strike);
+        }
         s->strike *= 0.99969f + 0.00023f*m;
         break;
     case 17:
@@ -256,12 +299,29 @@ float slap_synth_sample(SlapSynth *s)
         out = 0.67f*s->pole + 0.28f*sine(p);
         break;
     case 20:
-        s->pole += (pulse(p,d,0.48f-c*0.09f)-s->pole)*(0.05f+0.30f*c);
-        out = 0.65f*s->pole + 0.23f*sine(p) + 0.06f*m*noise_sample(s);
+        if (s->modern) {
+            float bore = pulse(p,d,0.49f-c*0.15f);
+            float breath = noise_sample(s);
+            s->pole += (bore - s->pole) * (0.045f + 0.31f*c);
+            s->feedback += (s->pole - s->feedback) * (0.035f + 0.12f*m);
+            out = 0.48f*s->pole + (0.16f+0.27f*c)*(s->pole-s->feedback) +
+                  0.28f*sine(p) + (0.012f+0.04f*s->strike)*m*breath;
+            s->strike *= 0.9987f;
+        } else {
+            s->pole += (pulse(p,d,0.48f-c*0.09f)-s->pole)*(0.05f+0.30f*c);
+            out = 0.65f*s->pole + 0.23f*sine(p) + 0.06f*m*noise_sample(s);
+        }
         break;
     case 21:
         s->pole += (noise_sample(s)-s->pole)*(0.015f+c*0.13f);
-        out = 0.75f*sine(p+0.007f*m*sine(t))+0.12f*c*sine(2*p)+0.37f*s->pole;
+        if (s->modern) {
+            float vibrato = 0.014f*m*(1.0f-s->strike)*sine(t);
+            out = 0.76f*sine(p+vibrato) + (0.035f+0.10f*c)*sine(2*p) +
+                  (0.14f+0.35f*s->strike+0.12f*c)*s->pole;
+            s->strike *= 0.99955f;
+        } else {
+            out = 0.75f*sine(p+0.007f*m*sine(t))+0.12f*c*sine(2*p)+0.37f*s->pole;
+        }
         break;
     case 22:
         next_x = x + d*2.756f;
