@@ -105,7 +105,7 @@ static int spike_enabled, engine_profile;
 volatile unsigned app_audio_half_profile_enabled;
 enum { HALF_TRACE_SIZE = 8 };
 static struct {
-    uint32_t observed, half, app, note_on, span, wait, overlap, nested, xrun;
+    uint32_t observed, half, app, note_on, span, wait, overlap, nested, timer5, xrun;
 } volatile half_trace[HALF_TRACE_SIZE];
 static volatile unsigned half_trace_written;
 static uint32_t half_app_ticks, half_wait_ticks, half_overlap_ticks;
@@ -113,7 +113,7 @@ static volatile uint32_t longest_half_ticks;
 enum { TRACE_DRUM_ENGINE = SLAP_ENGINES, TRACE_ENGINES = SLAP_ENGINES + 1 };
 static volatile uint32_t local_engine_peaks[TRACE_ENGINES], remote_engine_peaks[TRACE_ENGINES];
 
-void app_audio_half_profile(uint32_t ticks, uint32_t nested, unsigned xrun)
+void app_audio_half_profile(uint32_t ticks, uint32_t nested, uint32_t timer5_ticks, unsigned xrun)
 {
     if (!spike_enabled) return;
     if (!xrun && ticks <= longest_half_ticks) return;
@@ -127,6 +127,7 @@ void app_audio_half_profile(uint32_t ticks, uint32_t nested, unsigned xrun)
     half_trace[index].wait = half_wait_ticks;
     half_trace[index].overlap = half_overlap_ticks;
     half_trace[index].nested = nested;
+    half_trace[index].timer5 = timer5_ticks;
     half_trace[index].xrun = xrun;
     ++half_trace_written;
 }
@@ -164,6 +165,8 @@ static float master_gain, energy_smooth[TRACKS];
 static volatile uint32_t track_energy[TRACKS];
 #if FM1B_CPU2 && defined(PLAT_HOST) && !defined(PLAT_WEB)
 static int host_discard_worker_result, host_discard_fx_result, host_late_voice;
+enum { HOST_COST_SPLIT, HOST_SLOT_SPLIT, HOST_TRACK_SPLIT };
+static unsigned host_voice_split;
 #endif
 enum { SPECTRUM_BANDS = 7, VISUAL_COUNT = 8 };
 static volatile float visual_rms[2], visual_peak[2], visual_band[SPECTRUM_BANDS];
@@ -269,6 +272,9 @@ void app_init(void)
     slap_fx_init();
 #if FM1B_CPU2 && !defined(PLAT_WEB)
 #ifdef PLAT_HOST
+    const char *split = getenv("SLAP_TEST_VOICE_SPLIT");
+    host_voice_split = split && strcmp(split, "slots") == 0 ? HOST_SLOT_SPLIT :
+        split && strcmp(split, "tracks") == 0 ? HOST_TRACK_SPLIT : HOST_COST_SPLIT;
     host_discard_worker_result = getenv("SLAP_TEST_DISCARD_WORKER") != 0;
     host_discard_fx_result = getenv("SLAP_TEST_DISCARD_FX") != 0;
     const char *late_voice = getenv("SLAP_TEST_LATE_VOICE");
@@ -1235,6 +1241,46 @@ static void render_worker_voices(uint32_t frames)
     voice_worker.ticks = plat_ticks24() - started;
 }
 
+#ifdef PLAT_HOST
+/* Compare alternatives with the production mailbox, snapshots and recovery.
+ * The fixed slot experiment never moves a slot between cores to fill a gap.
+ * The track experiment moves at most one complete eligible track per span. */
+static unsigned experimental_voice_split(const unsigned *slots, unsigned active, unsigned budget)
+{
+    unsigned mask = 0, used = 0;
+    if (host_voice_split == HOST_SLOT_SPLIT) {
+        for (unsigned i = 0; i < active; ++i) {
+            unsigned slot = slots[i], cost = voices[slot].dispatch_cost;
+            if ((slot & 1u) && cost <= MAX_VOICE_COST) {
+                mask |= 1u << slot;
+                used += cost;
+            }
+        }
+        // Keep the same conservative worker ceiling. A skewed split stays local.
+        return used <= budget ? mask : 0u;
+    }
+
+    unsigned masks[TRACKS] = {0}, costs[TRACKS] = {0}, counts[TRACKS] = {0};
+    unsigned blocked = 0;
+    for (unsigned i = 0; i < active; ++i) {
+        unsigned slot = slots[i], cost = voices[slot].dispatch_cost;
+        unsigned track = voices[slot].track;
+        if (cost > MAX_VOICE_COST) blocked |= 1u << track;
+        masks[track] |= 1u << slot;
+        costs[track] += cost;
+        ++counts[track];
+    }
+    for (unsigned track = 0; track < TRACKS; ++track) {
+        if (!(blocked & (1u << track)) && counts[track] <= REMOTE_VOICES &&
+            costs[track] <= budget && costs[track] > used) {
+            mask = masks[track];
+            used = costs[track];
+        }
+    }
+    return mask;
+}
+#endif
+
 static unsigned render_voice_batch(unsigned frames, unsigned muted,
                                    uint32_t callback_start, uint32_t budget)
 {
@@ -1271,7 +1317,13 @@ static unsigned render_voice_batch(unsigned frames, unsigned muted,
         unsigned remaining = (total_cost * 7u + 8u) / 16u;
         // Keep two-voice chords eligible without offloading the entire workload.
         if (active == 2) remaining = (total_cost + 1u) / 2u;
-        for (unsigned cost = MAX_VOICE_COST; cost && remote_count < REMOTE_VOICES; --cost) {
+#ifdef PLAT_HOST
+        if (host_voice_split != HOST_COST_SPLIT)
+            remote = experimental_voice_split(active_slots, active, remaining);
+        else
+#endif
+        for (unsigned cost = remaining < MAX_VOICE_COST ? remaining : MAX_VOICE_COST;
+             cost && remote_count < REMOTE_VOICES; --cost) {
             unsigned slots = eligible_by_cost[cost];
             while (slots && cost <= remaining && remote_count < REMOTE_VOICES) {
                 unsigned slot_bit = slots & (0u - slots);
@@ -1396,11 +1448,17 @@ static unsigned render_voice_batch(unsigned frames, unsigned muted,
 
 static unsigned select_fx_worker_tracks(void)
 {
-    unsigned cost[TRACKS], total = 0;
+    // Each track costs at most 19 units, so five bits encode its cost.
+    // Runtime effect state does not influence the existing split policy.
+    static unsigned previous_key, previous_mask;
+    _Static_assert(TRACKS * 5u <= 32u, "FX cost key fits in one word");
+    unsigned cost[TRACKS], total = 0, key = 0;
     for (unsigned t = 0; t < TRACKS; ++t) {
         cost[t] = slap_fx_work(t);
+        key |= cost[t] << (t * 5u);
         total += cost[t];
     }
+    if (key == previous_key) return previous_mask;
     unsigned best = 0, difference = total;
     // Keep track zero on Core 0 as the sole owner of the FX display clock.
     for (unsigned a = 1; a < TRACKS; ++a) {
@@ -1415,6 +1473,8 @@ static unsigned select_fx_worker_tracks(void)
             }
         }
     }
+    previous_key = key;
+    previous_mask = best;
     return best;
 }
 
@@ -2675,13 +2735,13 @@ static void draw_panel(void)
                     if (global_details == 8) {
                         static const char *const labels_dma[] = {
                             "DMA HALF US", "APP CALLBACK US", "WORKER WAIT US",
-                            "CORE 1 OVERLAP US", "NESTED TIMER IRQ", "HALF XRUN"
+                            "CORE 1 OVERLAP US", "NESTED T5 US", "HALF XRUN"
                         };
                         unsigned written = half_trace_written;
                         unsigned i = (written - 1u) & (HALF_TRACE_SIZE - 1u);
                         unsigned values[] = {half_trace[i].half / 24u, half_trace[i].app / 24u,
                             half_trace[i].wait / 24u, half_trace[i].overlap / 24u,
-                            half_trace[i].nested, half_trace[i].xrun};
+                            half_trace[i].timer5 / 24u, half_trace[i].xrun};
                         cv_text(x, 0, &FONT_XS, labels_dma[stage], C_WHITE);
                         decimal(number, written ? values[stage] : 0);
                         cv_text(x, 13, text_w(&FONT_M, number) > 110 ? &FONT_S : &FONT_M, number, c);

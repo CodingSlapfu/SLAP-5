@@ -65,6 +65,7 @@ def main():
     parser.add_argument("--fx", action="store_true")
     parser.add_argument("--visual", action="store_true")
     parser.add_argument("--chords", action="store_true")
+    parser.add_argument("--voice-split", choices=("cost", "slots", "tracks"), default="cost")
     parser.add_argument("--async-worker", action="store_true")
     parser.add_argument("--modulated", action="store_true")
     parser.add_argument("--soak-ms", type=int, default=0)
@@ -96,6 +97,8 @@ def main():
                 assertions += ["expect worker_fallbacks 0"]
             script.write_text("\n".join([*commands, *assertions]) + "\n")
             env = {key: value for key, value in os.environ.items() if not key.startswith("SLAP_TEST_")}
+            if mode == "worker":
+                env["SLAP_TEST_VOICE_SPLIT"] = args.voice_split
             if mode == "worker" and args.async_worker:
                 env["SLAP_TEST_ASYNC"] = "1"
             if mode == "single":

@@ -101,6 +101,9 @@ static void render_block(int32_t *o)                /* ALNK0: one half, measured
     fm1b_dbg.in_audio = 0;
 }
 
+#ifdef APP_AUDIO_HALF_PROFILE
+static volatile uint32_t audio_timer5_ticks;
+#endif
 void fm1_alnk0_irq(void)                            /* via isr_alnk0 (hal/fm1_isr.S) */
 {
     uint8_t p = fm1_audio_pending();
@@ -109,6 +112,7 @@ void fm1_alnk0_irq(void)                            /* via isr_alnk0 (hal/fm1_is
         uint32_t half = fm1_audio_free_half();
 #ifdef APP_AUDIO_HALF_PROFILE
         unsigned trace = app_audio_half_profile_enabled;
+        if (trace) audio_timer5_ticks = 0;
         uint32_t started = trace ? fm1_ticks() : 0u, nested = trace ? fm1b_dbg.nested : 0u;
 #endif
         render_block(&abuf[half * HALF_WORDS]);
@@ -120,7 +124,7 @@ void fm1_alnk0_irq(void)                            /* via isr_alnk0 (hal/fm1_is
         }
 #ifdef APP_AUDIO_HALF_PROFILE
         if (trace && app_audio_half_profile_enabled)
-            app_audio_half_profile(fm1_ticks() - started, fm1b_dbg.nested - nested, xrun);
+            app_audio_half_profile(fm1_ticks() - started, fm1b_dbg.nested - nested, audio_timer5_ticks, xrun);
 #endif
     }
 }
@@ -207,6 +211,10 @@ void fm1_timer5_irq(void)
             fm1_ms++;
         }
     }
+#ifdef APP_AUDIO_HALF_PROFILE
+    if (fm1b_dbg.in_audio && app_audio_half_profile_enabled)
+        audio_timer5_ticks += fm1_ticks() - t5_prev;
+#endif
 }
 extern void isr_timer5(void);
 
