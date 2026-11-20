@@ -47,6 +47,14 @@ typedef struct {
     int16_t slice[256];
 } Fx;
 static Fx fx[SLAP_FX_TRACKS];
+
+// These coefficients stay fixed throughout a callback, including while the
+// worker renders or Core 0 rolls back an FX job.
+typedef struct {
+    float room_damping, room_feedback, echo_damping, echo_feedback;
+    float drive_gain, drive_damping, chorus_damping;
+} FxCoefficients;
+static FxCoefficients coefficients[SLAP_FX_TRACKS];
 static volatile uint32_t settings_revision[SLAP_FX_TRACKS];
 static PLAT_POOL int16_t echo_line[SLAP_FX_TRACKS][TRACK_DELAY];
 static PLAT_POOL int16_t chorus_line[SLAP_FX_TRACKS][CHORUS];
@@ -218,6 +226,15 @@ void slap_fx_begin(unsigned bpm)
             f->rv[k] = unit((room >> shift) & 255u);
             f->dr[k] = unit((drive >> shift) & 255u);
         }
+        coefficients[t] = (FxCoefficients) {
+            .room_damping = 0.12f + 0.58f * (1.0f - f->rv[3]),
+            .room_feedback = 0.31f + 0.63f * f->rv[1],
+            .echo_damping = 0.11f + f->dp[3] * 0.78f,
+            .echo_feedback = 0.12f + 0.80f * f->dp[2],
+            .drive_gain = 1.0f + 16.0f * f->dr[1],
+            .drive_damping = 0.009f + f->dr[2] * 0.9f,
+            .chorus_damping = 0.025f + 0.7f * f->ch[3]
+        };
         f->phase_step = (0.18f + 3.5f * fm_maxf(f->ch[2], f->speed)) / 44100.0f;
         f->room_long = 300u + (unsigned)(f->rv[2] * 1100.0f);
         f->room_short = f->room_long * 11u / 17u;
@@ -290,6 +307,7 @@ __attribute__((section(".c1_text.slap_fx"), noinline))
 float slap_fx_sample(unsigned track, float dry)
 {
     Fx *f = &fx[track];
+    const FxCoefficients *c = &coefficients[track];
     float x = dry;
     if (f->filter_scale > 0.0f) {
         float hp = x - f->lp - f->damp * f->bp;
@@ -299,9 +317,9 @@ float slap_fx_sample(unsigned track, float dry)
         x = fm_clampf(x, -0.9f, 0.9f);
     }
     if (f->dr[0] > 0.0f) {
-        float driven = x * (1.0f + 16.0f*f->dr[1]);
+        float driven = x * c->drive_gain;
         driven = 0.68f * soft(driven) + 0.32f * f->dr[3] * fold(driven);
-        f->drive_lp += (driven - f->drive_lp) * (0.009f + f->dr[2]*0.9f);
+        f->drive_lp += (driven - f->drive_lp) * c->drive_damping;
         x += f->dr[0] * (f->drive_lp - x);
     }
     if (f->ch[0] > 0.0f || f->insert) {
@@ -316,7 +334,7 @@ float slap_fx_sample(unsigned track, float dry)
             chorus_line[track][pos] = pack(x);
             f->chorus_pos = (pos + 1u) & (CHORUS - 1u);
             if (f->insert) x = insert_sample(f, x, lfo, ch);
-            f->chorus_lp += (ch - f->chorus_lp) * (0.025f + 0.7f * f->ch[3]);
+            f->chorus_lp += (ch - f->chorus_lp) * c->chorus_damping;
             x += 0.7f * f->ch[0] * f->chorus_lp;
         } else {
             x = insert_sample(f, x, lfo, 0.0f);
@@ -344,8 +362,8 @@ float slap_fx_sample(unsigned track, float dry)
         unsigned idx = f->room_pos;
         float a = unpack(room_line[track][preceding(idx, f->room_long, ROOM)]);
         float b = unpack(room_line[track][preceding(idx, f->room_short, ROOM)]);
-        f->reverb_lp += ((a * 0.61f + b * 0.39f) - f->reverb_lp) * (0.12f + 0.58f*(1.0f - f->rv[3]));
-        room_line[track][idx] = pack(x * 0.58f + f->reverb_lp * (0.31f + 0.63f*f->rv[1]));
+        f->reverb_lp += ((a * 0.61f + b * 0.39f) - f->reverb_lp) * c->room_damping;
+        room_line[track][idx] = pack(x * 0.58f + f->reverb_lp * c->room_feedback);
         f->room_pos = (idx + 1u) & (ROOM - 1u);
         x += f->rv[0] * f->reverb_lp;
     }
@@ -353,8 +371,8 @@ float slap_fx_sample(unsigned track, float dry)
         if ((f->delay_div++ & 3u) == 0) {
             unsigned pos = f->delay_pos;
             float wet = unpack(echo_line[track][preceding(pos, f->time, TRACK_DELAY)]);
-            f->delay_lp += (wet - f->delay_lp) * (0.11f + f->dp[3]*0.78f);
-            echo_line[track][pos] = pack(x + f->delay_lp * (0.12f + 0.80f*f->dp[2]));
+            f->delay_lp += (wet - f->delay_lp) * c->echo_damping;
+            echo_line[track][pos] = pack(x + f->delay_lp * c->echo_feedback);
             if (++pos == TRACK_DELAY) pos = 0;
             f->delay_pos = pos;
         }

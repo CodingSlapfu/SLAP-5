@@ -33,6 +33,9 @@ typedef struct {
     uint8_t lfo_wave, origin, kit, drum_family;
     uint32_t remaining, age, sequence_note;
     uint8_t track, pitch, manual, releasing, struck, drum_circuit, drum_layers;
+#if FM1B_CPU2 && !defined(PLAT_WEB)
+    uint8_t dispatch_cost;
+#endif
 } Voice;
 
 static PLAT_POOL Track tracks[TRACKS];
@@ -322,6 +325,34 @@ static float drum_decay(unsigned family, const struct DrumKit *kit, unsigned ide
     return decay;
 }
 
+#if FM1B_CPU2 && !defined(PLAT_WEB)
+enum { MAX_VOICE_COST = 14, VOICE_LOCAL_ONLY = 128 };
+
+static unsigned voice_dispatch_cost(const Voice *voice, const SlapSynth *synth)
+{
+    static const uint8_t engine_cost[SLAP_ENGINES] = {
+        7, 4, 7, 4, 4, 6, 3, 10, 4, 5, 4, 4, 8,
+        4, 5, 6, 8, 9, 7, 6, 5, 4, 7, 6, 5
+    };
+    if (voice->track == DRUMS)
+        return (voice->drum_family == 0 ? 5u : 4u) + (voice->drum_layers ? 2u : 0u);
+    unsigned engine = synth->engine;
+    unsigned cost = engine_cost[engine] + (voice->lfo_wave ? 2u : 0u);
+    if (synth->modern && (engine == 0 || engine == 16 || engine == 20)) cost += 2u;
+    // Shared sample-and-hold RNG and mutable string lines stay on Core 0.
+    if (voice->lfo_wave == 5 || engine == 4 || engine == 6) cost |= VOICE_LOCAL_ONLY;
+    return cost;
+}
+#endif
+
+// These coefficients depend only on the track settings. The audio thread
+// snapshots the packed settings at note-on and owns the cache.
+static struct {
+    uint32_t envelope, lfo;
+    float attack, decay, sustain, release, lfo_inc, lfo_fade;
+    int valid;
+} note_coefficients[DRUMS];
+
 static void trigger_voice(unsigned track, unsigned pitch, unsigned velocity, uint32_t duration,
                           int manual, unsigned origin, unsigned delay)
 {
@@ -349,18 +380,32 @@ static void trigger_voice(unsigned track, unsigned pitch, unsigned velocity, uin
         unsigned trim = factory_trim[patch_id];
         if (trim) voice->velocity *= trim * 0.01f;
         uint32_t env = tracks[track].envelope;
-        float a = env & 255u, d = (env >> 8) & 255u, r = env >> 24;
-        voice->attack = 1.0f / (25.0f + 1.3f*a*a);
-        voice->decay = 1.0f / (38.0f + 1.9f*d*d);
-        voice->sustain = ((env >> 16) & 255u) * (1.0f / 127.0f);
-        voice->release = 1.0f / (48.0f + 0.85f*r*r);
         uint32_t lfo = tracks[track].lfo;
+        if (!note_coefficients[track].valid || note_coefficients[track].envelope != env ||
+            note_coefficients[track].lfo != lfo) {
+            float a = env & 255u, d = (env >> 8) & 255u, r = env >> 24;
+            note_coefficients[track].attack = 1.0f / (25.0f + 1.3f*a*a);
+            note_coefficients[track].decay = 1.0f / (38.0f + 1.9f*d*d);
+            note_coefficients[track].sustain = ((env >> 16) & 255u) * (1.0f / 127.0f);
+            note_coefficients[track].release = 1.0f / (48.0f + 0.85f*r*r);
+            if (lfo & 255u) {
+                const float hz = 0.1f * fm_exp2f(((lfo >> 8) & 255u) * (8.643856f / 127.0f));
+                note_coefficients[track].lfo_inc = hz * (1.0f / RATE);
+                note_coefficients[track].lfo_fade = 1.0f / (1.0f + (lfo >> 24) * 690.0f);
+            }
+            note_coefficients[track].envelope = env;
+            note_coefficients[track].lfo = lfo;
+            note_coefficients[track].valid = 1;
+        }
+        voice->attack = note_coefficients[track].attack;
+        voice->decay = note_coefficients[track].decay;
+        voice->sustain = note_coefficients[track].sustain;
+        voice->release = note_coefficients[track].release;
         voice->lfo_wave = lfo & 255u;
         if (voice->lfo_wave) {
-            const float hz = 0.1f * fm_exp2f(((lfo >> 8) & 255u) * (8.643856f / 127.0f));
-            voice->lfo_inc = hz * (1.0f / RATE);
+            voice->lfo_inc = note_coefficients[track].lfo_inc;
             voice->lfo_phase = ((lfo >> 16) & 255u) * (1.0f / 128.0f);
-            voice->lfo_fade = 1.0f / (1.0f + (lfo >> 24) * 690.0f);
+            voice->lfo_fade = note_coefficients[track].lfo_fade;
             voice->lfo_hold = (int16_t)(random_word() & 65535u) * (1.0f / 32768.0f);
         }
         unsigned slot = (unsigned)(voice - voices);
@@ -400,6 +445,9 @@ static void trigger_voice(unsigned track, unsigned pitch, unsigned velocity, uin
         voice->sustain = 1.0f;
         voice->release = 0.00065f;
     }
+#if FM1B_CPU2 && !defined(PLAT_WEB)
+    voice->dispatch_cost = voice_dispatch_cost(voice, &synths[voice - voices]);
+#endif
 }
 
 static void trigger_delayed(unsigned track, unsigned pitch, unsigned velocity, uint32_t duration, int manual, unsigned offset)
@@ -886,8 +934,10 @@ static inline __attribute__((always_inline)) float render_voice_signal(Voice *v,
                 float head = slap_oscillator(v->phase * 2.13f) + 0.38f * slap_oscillator(v->phase * 3.91f);
                 wave = 0.65f * wave + 0.25f * head * v->bend;
             }
-            if (layers & DRUM_BRUSH)
-                wave = 0.52f * wave + 0.48f * v->drum_noise * (1.0f + slap_oscillator(v->phase));
+            if (layers & DRUM_BRUSH) {
+                float brush = kit == 2 ? slap_oscillator(v->phase) : skin;
+                wave = 0.52f * wave + 0.48f * v->drum_noise * (1.0f + brush);
+            }
         } else if (family == 4) {
             v->bend *= 0.999f;
             float burst_width = 0.07f + 0.23f * v->drum_snap;
@@ -1031,7 +1081,7 @@ _Static_assert((unsigned)VOICE_BATCH <= (unsigned)SLAP_FX_BATCH, "FX checkpoint 
 static struct {
     Voice voice[REMOTE_VOICES];
     unsigned slot[REMOTE_VOICES];
-    unsigned count, muted;
+    unsigned count, muted, track_mask;
     float bus[TRACKS][VOICE_BATCH];
     uint32_t start, ticks;
 } voice_worker __attribute__((aligned(32)));
@@ -1081,7 +1131,9 @@ static void render_worker_voices(uint32_t frames)
 {
     if (frames > VOICE_BATCH) return;
     uint32_t started = plat_ticks24();
-    clear_voice_bus(voice_worker.bus, frames);
+    for (unsigned track = 0; track < TRACKS; ++track)
+        if (voice_worker.track_mask & (1u << track))
+            __builtin_memset(voice_worker.bus[track], 0, frames * sizeof(float));
     for (unsigned i = 0; i < voice_worker.count; ++i)
         dsp_render_voice_into_bus(&voice_worker.voice[i], &worker_synth[i], voice_worker.muted,
                               voice_worker.bus, frames);
@@ -1093,7 +1145,6 @@ static unsigned render_voice_batch(unsigned frames, unsigned muted,
                                    uint32_t callback_start, uint32_t budget)
 {
     unsigned active_slots[VOICES], active = 0, total_cost = 0;
-    enum { MAX_VOICE_COST = 14 };
     unsigned eligible_by_cost[MAX_VOICE_COST + 1];
     int ordered_rng = 0;
     service_late_voice(budget);
@@ -1107,28 +1158,15 @@ static unsigned render_voice_batch(unsigned frames, unsigned muted,
         else dispatch = 1;
     }
     if (dispatch) __builtin_memset(eligible_by_cost, 0, sizeof eligible_by_cost);
-    static const uint8_t engine_cost[SLAP_ENGINES] = {
-        7, 4, 7, 4, 4, 6, 3, 10, 4, 5, 4, 4, 8,
-        4, 5, 6, 8, 9, 7, 6, 5, 4, 7, 6, 5
-    };
     for (unsigned j = 0; j < VOICES; ++j) {
         const Voice *voice = &voices[j];
         if (!voice->age) continue;
         active_slots[active++] = j;
         ordered_rng |= voice->track != DRUMS && voice->lfo_wave == 5;
         if (!dispatch) continue;
-        unsigned cost, eligible = 1;
-        if (voice->track == DRUMS) {
-            unsigned layers = voice->drum_layers;
-            cost = (voice->drum_family == 0 ? 5u : 4u) + (layers != 0 ? 2u : 0u);
-        } else {
-            unsigned engine = synths[j].engine;
-            cost = engine_cost[engine] + (voice->lfo_wave ? 2u : 0u);
-            if (synths[j].modern && (engine == 0 || engine == 16 || engine == 20)) cost += 2u;
-            // Shared sample-and-hold RNG and mutable string lines stay on Core 0.
-            eligible = voice->lfo_wave != 5 && engine != 4 && engine != 6;
-        }
-        if (eligible && cost <= MAX_VOICE_COST) eligible_by_cost[cost] |= 1u << j;
+        unsigned hint = voice->dispatch_cost;
+        unsigned cost = hint & (VOICE_LOCAL_ONLY - 1u);
+        if (hint <= MAX_VOICE_COST) eligible_by_cost[cost] |= 1u << j;
         total_cost += cost;
     }
     // A callback already in single-core mode needs only one live mix bus.
@@ -1155,12 +1193,14 @@ static unsigned render_voice_batch(unsigned frames, unsigned muted,
     if (remote) {
         voice_worker.count = 0;
         voice_worker.muted = muted;
+        voice_worker.track_mask = 0;
         for (unsigned n = 0; n < active; ++n) {
             unsigned slot = active_slots[n];
             if (!(remote & (1u << slot))) continue;
             unsigned i = voice_worker.count++;
             voice_worker.slot[i] = slot;
             voice_worker.voice[i] = voices[slot];
+            voice_worker.track_mask |= 1u << voices[slot].track;
             if (voices[slot].track != DRUMS) {
                 worker_synth[i] = synths[slot];
                 worker_synth[i].string = 0;
@@ -1240,9 +1280,11 @@ static unsigned render_voice_batch(unsigned frames, unsigned muted,
         }
     }
     if (completed) {
-        for (unsigned t = 0; t < TRACKS; ++t)
+        for (unsigned t = 0; t < TRACKS; ++t) {
+            if (!(voice_worker.track_mask & (1u << t))) continue;
             for (unsigned i = 0; i < frames; ++i)
                 voice_bus[t][i] += voice_worker.bus[t][i];
+        }
     }
     return frames;
 }

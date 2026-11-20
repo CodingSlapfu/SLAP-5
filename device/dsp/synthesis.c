@@ -32,6 +32,13 @@ static inline SLAP_SYNTH_INLINE float wrap(float phase)
     return phase - (float)(int)phase + (phase < 0.0f && phase != (float)(int)phase ? 1.0f : 0.0f);
 }
 
+static inline SLAP_SYNTH_INLINE float wrap_advance(float phase)
+{
+    if (phase < 1.0f) return phase;
+    // The higher partials can advance by more than a full cycle at high notes.
+    return phase - (float)(int)phase;
+}
+
 static inline SLAP_SYNTH_INLINE float synth_abs(float value)
 {
     fm_bits_t bits = {.f = value};
@@ -149,7 +156,7 @@ SLAP_SYNTH_SRAM float slap_synth_sample(SlapSynth *s)
     const float next_p = p + d;
     if (s->slow_inc) {
         float next = t + s->slow_inc;
-        s->slow = next - (float)(int)next;
+        s->slow = wrap_advance(next);
     }
 
     switch (s->engine) {
@@ -251,7 +258,10 @@ SLAP_SYNTH_SRAM float slap_synth_sample(SlapSynth *s)
         out = 0.51f*sine(p) + 0.22f*sine(x) + 0.22f*c*pulse(p,d,0.35f+0.12f*m);
         break;
     case 14: {
-        float input = 0.72f*saw(p,d) + 0.25f*c*pulse(p,d,0.50f);
+        float edge = blep(p, d);
+        float saw_input = 2.0f * p - 1.0f - edge;
+        float pulse_input = (p < 0.50f ? 1.0f : -1.0f) + edge - blep(wrap(p - 0.50f), d);
+        float input = 0.72f * saw_input + 0.25f * c * pulse_input;
         float cutoff = 0.016f + 0.30f*c*s->strike;
         s->pole += cutoff*(input - s->pole - s->feedback*(0.55f+1.5f*m));
         s->feedback += cutoff*(s->pole - s->feedback);
@@ -340,14 +350,15 @@ SLAP_SYNTH_SRAM float slap_synth_sample(SlapSynth *s)
     case 24:
         next_x = x + d*(3.07f+1.03f*c);
         next_y = y + d*(6.47f+1.71f*m);
-        out = 0.38f*sine(p)+(0.18f+0.13f*sine(t))*sine(x)+0.18f*sine(y+0.0064f*sine(x));
+        float overtone = sine(x);
+        out = 0.38f*sine(p)+(0.18f+0.13f*sine(t))*overtone+0.18f*sine(y+0.0064f*overtone);
         break;
     default: out = sine(p); break;
     }
 
     // Voice oscillator advances are nonnegative. Shaping still uses signed wrap.
-    s->phase = next_p - (float)(int)next_p;
-    s->second = next_x - (float)(int)next_x;
-    s->third = next_y - (float)(int)next_y;
+    s->phase = wrap_advance(next_p);
+    s->second = wrap_advance(next_x);
+    s->third = wrap_advance(next_y);
     return out;
 }
