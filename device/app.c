@@ -101,7 +101,36 @@ static volatile uint32_t serial_peak, serial_at_peak[PROFILE_COUNT];
 enum { SPIKE_NOTE_ON, SPIKE_LOCAL, SPIKE_DISPATCH, SPIKE_SPAN, SPIKE_FX, SPIKE_COUNT };
 static volatile uint32_t spike_values[SPIKE_COUNT], spike_callback;
 static uint32_t spike_current[SPIKE_COUNT];
-static int spike_enabled;
+static int spike_enabled, engine_profile;
+volatile unsigned app_audio_half_profile_enabled;
+enum { HALF_TRACE_SIZE = 8 };
+static struct {
+    uint32_t observed, half, app, note_on, span, wait, overlap, nested, xrun;
+} volatile half_trace[HALF_TRACE_SIZE];
+static volatile unsigned half_trace_written;
+static uint32_t half_app_ticks, half_wait_ticks, half_overlap_ticks;
+static volatile uint32_t longest_half_ticks;
+enum { TRACE_DRUM_ENGINE = SLAP_ENGINES, TRACE_ENGINES = SLAP_ENGINES + 1 };
+static volatile uint32_t local_engine_peaks[TRACE_ENGINES], remote_engine_peaks[TRACE_ENGINES];
+
+void app_audio_half_profile(uint32_t ticks, uint32_t nested, unsigned xrun)
+{
+    if (!spike_enabled) return;
+    if (!xrun && ticks <= longest_half_ticks) return;
+    if (ticks > longest_half_ticks) longest_half_ticks = ticks;
+    unsigned index = half_trace_written & (HALF_TRACE_SIZE - 1u);
+    half_trace[index].observed = plat_ticks24();
+    half_trace[index].half = ticks;
+    half_trace[index].app = half_app_ticks;
+    half_trace[index].note_on = spike_current[SPIKE_NOTE_ON];
+    half_trace[index].span = spike_current[SPIKE_SPAN];
+    half_trace[index].wait = half_wait_ticks;
+    half_trace[index].overlap = half_overlap_ticks;
+    half_trace[index].nested = nested;
+    half_trace[index].xrun = xrun;
+    ++half_trace_written;
+}
+
 
 static volatile uint32_t peak_voice_batch, peak_fx_batch, peak_worker_work, peak_worker_wait;
 #if FM1B_CPU2 && !defined(PLAT_WEB)
@@ -109,6 +138,9 @@ static volatile uint32_t peak_worker_overlap, peak_voice_recovery, peak_fx_recov
 #endif
 
 static volatile uint32_t active_voices, voice_steals;
+#if defined(PLAT_HOST)
+static unsigned host_peak_voices;
+#endif
 static volatile uint8_t mixer_auto[TRACKS], mixer_proc[TRACKS];
 static uint32_t boot_suppressed_keys;
 static float mixer_envelope[TRACKS], mixer_gain[TRACKS];
@@ -795,17 +827,10 @@ static void read_notes(void)
     }
 }
 
-static void arp_render_clock(void)
+static void arp_render_clock(unsigned track, uint32_t config)
 {
     static const uint8_t ratios[] = {4, 8, 16, 32, 12, 24};
-    unsigned track = input_track;
-    uint32_t config = track < DRUMS ? arp_setup[track] : 0u;
     unsigned mode = config & 255u;
-    if (!mode || !old_keys || arp_last_track != track) {
-        arp_wait = arp_pulse = 0;
-        arp_last_track = track;
-        if (!mode || !old_keys) return;
-    }
     if (arp_wait) { --arp_wait; return; }
     unsigned keys[NKEYS], count = 0;
     for (unsigned k = 0; k < NKEYS; ++k) {
@@ -1030,10 +1055,22 @@ static void render_voice_into_bus(Voice *voice, SlapSynth *synth, unsigned muted
     int audible = track != DRUMS || !(muted & (1u << voice->drum_family));
     float *output = bus[track];
     unsigned i = 0;
+    // A delayed start with no steal tail contributes zero until its onset.
+    // Advance its delay in one step while preserving the exact onset frame.
+    if (frames && voice->delay && voice->steal_tail == 0.0f) {
+        voice->last_sample = 0.0f;
+        if (voice->releasing) {
+            voice->age = 0;
+            return;
+        }
+        i = frames < voice->delay ? frames : voice->delay;
+        voice->delay -= i;
+        if (i == frames) return;
+    }
     // Between events a sustained, unmodulated synth voice only changes its
     // oscillator, envelope and gate countdown. Keep the envelope in registers
     // and hand the exact release sample back to the general renderer.
-    if (frames && track < DRUMS && voice->age && voice->struck &&
+    if (!i && frames && track < DRUMS && voice->age && voice->struck &&
         !voice->releasing && !voice->delay && !voice->lfo_wave && voice->steal_tail == 0.0f) {
         unsigned sustain_frames = frames;
         if (!voice->manual && voice->remaining && sustain_frames >= voice->remaining)
@@ -1088,6 +1125,16 @@ static void (*volatile dsp_render_voice_into_bus)(Voice *, SlapSynth *, unsigned
     = render_voice_into_bus;
 #endif
 
+static void profile_voice_span(Voice *voice, SlapSynth *synth, unsigned muted,
+                               float bus[][VOICE_BATCH], unsigned frames, volatile uint32_t *peaks)
+{
+    unsigned engine = voice->track == DRUMS ? TRACE_DRUM_ENGINE : synth->engine;
+    uint32_t started = plat_ticks24();
+    dsp_render_voice_into_bus(voice, synth, muted, bus, frames);
+    uint32_t elapsed = plat_ticks24() - started;
+    if (elapsed > peaks[engine]) peaks[engine] = elapsed;
+}
+
 static void render_local_voice_bus(const unsigned *slots, unsigned active, unsigned remote,
                                    int ordered_rng, unsigned muted, unsigned frames)
 {
@@ -1107,7 +1154,10 @@ static void render_local_voice_bus(const unsigned *slots, unsigned active, unsig
     } else {
         for (unsigned n = 0; n < active; ++n) {
             unsigned slot = slots[n];
-            if (!(remote & (1u << slot)))
+            if (remote & (1u << slot)) continue;
+            if (engine_profile)
+                profile_voice_span(&voices[slot], &synths[slot], muted, voice_bus, frames, local_engine_peaks);
+            else
                 dsp_render_voice_into_bus(&voices[slot], &synths[slot], muted, voice_bus, frames);
         }
     }
@@ -1119,7 +1169,8 @@ _Static_assert((unsigned)VOICE_BATCH <= (unsigned)SLAP_FX_BATCH, "FX checkpoint 
 static struct {
     Voice voice[REMOTE_VOICES];
     unsigned slot[REMOTE_VOICES];
-    unsigned count, muted, track_mask;
+    unsigned count, muted, track_mask, profile;
+    uint32_t engine_peaks[TRACE_ENGINES];
     float bus[TRACKS][VOICE_BATCH];
     uint32_t start, ticks;
 } voice_worker __attribute__((aligned(32)));
@@ -1172,9 +1223,14 @@ static void render_worker_voices(uint32_t frames)
     for (unsigned track = 0; track < TRACKS; ++track)
         if (voice_worker.track_mask & (1u << track))
             __builtin_memset(voice_worker.bus[track], 0, frames * sizeof(float));
-    for (unsigned i = 0; i < voice_worker.count; ++i)
-        dsp_render_voice_into_bus(&voice_worker.voice[i], &worker_synth[i], voice_worker.muted,
-                              voice_worker.bus, frames);
+    for (unsigned i = 0; i < voice_worker.count; ++i) {
+        if (voice_worker.profile)
+            profile_voice_span(&voice_worker.voice[i], &worker_synth[i], voice_worker.muted,
+                               voice_worker.bus, frames, voice_worker.engine_peaks);
+        else
+            dsp_render_voice_into_bus(&voice_worker.voice[i], &worker_synth[i], voice_worker.muted,
+                                      voice_worker.bus, frames);
+    }
     voice_worker.start = started;
     voice_worker.ticks = plat_ticks24() - started;
 }
@@ -1233,6 +1289,9 @@ static unsigned render_voice_batch(unsigned frames, unsigned muted,
         voice_worker.count = 0;
         voice_worker.muted = muted;
         voice_worker.track_mask = 0;
+        voice_worker.profile = (unsigned)engine_profile;
+        if (voice_worker.profile)
+            __builtin_memset(voice_worker.engine_peaks, 0, sizeof voice_worker.engine_peaks);
         for (unsigned n = 0; n < active; ++n) {
             unsigned slot = active_slots[n];
             if (!(remote & (1u << slot))) continue;
@@ -1299,6 +1358,11 @@ static unsigned render_voice_batch(unsigned frames, unsigned muted,
         if (voice_jobs_since_late < 16) ++voice_jobs_since_late;
         if (voice_worker.ticks > peak_voice_job_ticks) peak_voice_job_ticks = voice_worker.ticks;
         worker_ticks += voice_worker.ticks;
+        if (voice_worker.profile) {
+            for (unsigned engine = 0; engine < TRACE_ENGINES; ++engine)
+                if (voice_worker.engine_peaks[engine] > remote_engine_peaks[engine])
+                    remote_engine_peaks[engine] = voice_worker.engine_peaks[engine];
+        }
         for (unsigned i = 0; i < voice_worker.count; ++i) {
             unsigned slot = voice_worker.slot[i];
             voices[slot] = voice_worker.voice[i];
@@ -1454,13 +1518,21 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
 {
     uint32_t audio_started = plat_ticks24();
     unsigned profile = slap_ui.page == GLOBAL && global_details == 2;
-    spike_enabled = slap_ui.page == GLOBAL && global_details == 7;
-    if (spike_enabled) __builtin_memset(spike_current, 0, sizeof spike_current);
+    app_audio_half_profile_enabled = slap_ui.page == GLOBAL && global_details == 8;
+    engine_profile = slap_ui.page == GLOBAL && global_details == 9;
+    spike_enabled = app_audio_half_profile_enabled || engine_profile ||
+        (slap_ui.page == GLOBAL && global_details == 7);
+    if (spike_enabled) {
+        __builtin_memset(spike_current, 0, sizeof spike_current);
+    }
     uint32_t serial[PROFILE_COUNT] = {0};
     if (dsp_reset_request) {
         dsp_peak_ticks = dsp_avg_ticks = dsp_overruns = dsp_callbacks = 0;
         peak_voice_batch = peak_fx_batch = peak_worker_work = peak_worker_wait = 0;
         serial_peak = spike_callback = 0;
+        half_trace_written = longest_half_ticks = 0;
+        for (unsigned engine = 0; engine < TRACE_ENGINES; ++engine)
+            local_engine_peaks[engine] = remote_engine_peaks[engine] = 0;
         for (unsigned part = 0; part < SPIKE_COUNT; ++part) spike_values[part] = 0;
         for (unsigned part = 0; part < PROFILE_COUNT; ++part) serial_at_peak[part] = 0;
         dsp_xrun_baseline = plat_xruns();
@@ -1502,10 +1574,13 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
     if (!recording) rec_countdown = 0;
     if (recording && playing && rec_loop && !rec_start_mode && !rec_running) begin_recording();
     read_notes();
-    const int has_held_keys = old_keys != 0;
-    if (!has_held_keys) {
+    // The UI publishes these settings; the callback consumes one snapshot.
+    const unsigned arp_track = input_track;
+    const uint32_t arp_config = arp_track < DRUMS ? arp_setup[arp_track] : 0u;
+    const int arp_active = old_keys && (arp_config & 255u);
+    if (!arp_active || arp_last_track != arp_track) {
         arp_wait = arp_pulse = 0;
-        arp_last_track = input_track;
+        arp_last_track = arp_track;
     }
     if (rec_running) mix[rec_track] = tracks[rec_track].mix;
     if (!playing) click_remaining = 0;
@@ -1514,14 +1589,16 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
     unsigned measure_fx = slap_ui.page == FX && slap_ui.fx_page == 4;
     const unsigned analyze = slap_ui.page == VISUAL;
     const unsigned inspect_fx = slap_ui.page == FX || slap_ui.page == PATCH;
-    const unsigned effect_mask = inspect_fx ? (1u << TRACKS) - 1u : slap_fx_active_mask();
+    const unsigned active_effects = slap_fx_active_mask();
+    const unsigned effect_mask = inspect_fx ? (1u << TRACKS) - 1u : active_effects;
     float meter_sum[2] = {0}, meter_peak[2] = {0};
     float target = master_q12 * (1.0f / 4096.0f);
     unsigned batch_start = 0, batch_end = 0;
     uint32_t callback_budget = (24000000u / RATE) * frames;
 #if FM1B_CPU2 && !defined(PLAT_WEB)
     unsigned fx_batch_end = 0;
-    unsigned fx_mask = measure_fx || !plat_cpu2_on() ? 0 : select_fx_worker_tracks();
+    unsigned fx_mask = !measure_fx && (active_effects & (active_effects - 1u)) && plat_cpu2_on()
+        ? select_fx_worker_tracks() : 0;
     uint32_t voice_batch_ticks = 0, fx_batch_ticks = 0;
     uint32_t remote_start = worker_ticks + fx_worker_ticks, wait_start = worker_wait_ticks;
     uint32_t overlap_start = worker_overlap_ticks;
@@ -1550,7 +1627,7 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
             if (!recording || rec_running) next_step(mix);
         }
         if (until_step) --until_step;
-        if (has_held_keys) arp_render_clock();
+        if (arp_active) arp_render_clock(arp_track, arp_config);
         if (profile) serial[PROFILE_EVENTS] += plat_ticks24() - section;
         if (i == batch_end) {
             unsigned amount = frames - i;
@@ -1558,8 +1635,7 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
             if (playing && amount > until_step + 1u) amount = until_step + 1u;
             // The current sample's arpeggio tick has already run. End this
             // batch before the next tick can allocate or steal a voice.
-            if (has_held_keys && input_track < DRUMS && (arp_setup[input_track] & 255u) &&
-                amount > arp_wait + 1u)
+            if (arp_active && amount > arp_wait + 1u)
                 amount = arp_wait + 1u;
             batch_start = i;
 #if FM1B_CPU2 && !defined(PLAT_WEB)
@@ -1676,6 +1752,13 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
     }
     if (frames) {
         uint32_t elapsed = plat_ticks24() - audio_started;
+        if (spike_enabled) {
+            half_app_ticks = elapsed;
+#if FM1B_CPU2 && !defined(PLAT_WEB)
+            half_wait_ticks = worker_wait_ticks - wait_start;
+            half_overlap_ticks = worker_overlap_ticks - overlap_start;
+#endif
+        }
         if (spike_enabled && elapsed > spike_callback) {
 #if FM1B_CPU2 && !defined(PLAT_WEB)
             spike_current[SPIKE_FX] = fx_batch_ticks;
@@ -1711,6 +1794,9 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
         unsigned active = 0;
         for (unsigned v = 0; v < VOICES; ++v) active += voices[v].age != 0;
         active_voices = active;
+#if defined(PLAT_HOST)
+        if (active > host_peak_voices) host_peak_voices = active;
+#endif
     }
 }
 
@@ -2207,7 +2293,7 @@ void app_input_only(void)
         slap_ui.page = MIXER;
         pressed &= ~(1u << B_SEL);
     } else if (pressed & (1u << B_GLO)) {
-        global_details = slap_ui.page == GLOBAL ? (global_details + 1u) % 8u : 0u;
+        global_details = slap_ui.page == GLOBAL ? (global_details + 1u) % 10u : 0u;
         slap_ui.page = GLOBAL;
     }
     if (pressed & (1u << B_SAVE)) {
@@ -2499,6 +2585,8 @@ static void draw_panel(void)
             global_details == 3 ? "WORKER COUNTERS  /  GLO NEXT" :
             global_details == 4 ? "CORE TIMING  /  GLO NEXT" :
             global_details == 5 ? "CORE 1 STATUS  /  GLO NEXT" :
+            global_details == 9 ? "ENGINE SPAN PEAKS  /  TIMING OVERHEAD" :
+            global_details == 8 ? "DMA TRACE  /  TIMING OVERHEAD" :
             global_details == 7 ? "SPIKE PROFILE  /  TIMING OVERHEAD" :
             global_details == 6 ? "DISPATCH  /  GLO NEXT" : "SLAP-5 " APP_VERSION "  /  GLO FOR PEAK", C_WHITE);
         cv_blit(0, 48);
@@ -2566,6 +2654,39 @@ static void draw_panel(void)
                 for (unsigned col = 0; col < 2; ++col) {
                     int x = 8 + (int)col * 116;
                     unsigned stage = (unsigned)strip * 2u + col;
+                    if (global_details == 9) {
+                        const volatile uint32_t *peaks = col ? remote_engine_peaks : local_engine_peaks;
+                        unsigned engine = 0;
+                        for (unsigned j = 1; j < TRACE_ENGINES; ++j)
+                            if (peaks[j] > peaks[engine]) engine = j;
+                        const char *label = strip == 0 ? (col ? "C1 ENGINE" : "C0 ENGINE") :
+                            strip == 1 ? "PEAK SPAN US" : "ENGINE ID";
+                        cv_text(x, 0, &FONT_XS, label, C_WHITE);
+                        if (strip == 0) {
+                            const char *name = !peaks[engine] ? "NONE" :
+                                engine == TRACE_DRUM_ENGINE ? "DRUMS" : slap_engine_names[engine];
+                            cv_text(x, 13, &FONT_XS, name, c);
+                        } else {
+                            decimal(number, strip == 1 ? peaks[engine] / 24u : engine);
+                            cv_text(x, 13, &FONT_M, number, c);
+                        }
+                        continue;
+                    }
+                    if (global_details == 8) {
+                        static const char *const labels_dma[] = {
+                            "DMA HALF US", "APP CALLBACK US", "WORKER WAIT US",
+                            "CORE 1 OVERLAP US", "NESTED TIMER IRQ", "HALF XRUN"
+                        };
+                        unsigned written = half_trace_written;
+                        unsigned i = (written - 1u) & (HALF_TRACE_SIZE - 1u);
+                        unsigned values[] = {half_trace[i].half / 24u, half_trace[i].app / 24u,
+                            half_trace[i].wait / 24u, half_trace[i].overlap / 24u,
+                            half_trace[i].nested, half_trace[i].xrun};
+                        cv_text(x, 0, &FONT_XS, labels_dma[stage], C_WHITE);
+                        decimal(number, written ? values[stage] : 0);
+                        cv_text(x, 13, text_w(&FONT_M, number) > 110 ? &FONT_S : &FONT_M, number, c);
+                        continue;
+                    }
                     if (global_details == 7) {
                         static const char *const labels_spike[] = {
                             "NOTE-ON US", "LOCAL VOICE US", "VOICE DISPATCH US",
@@ -3032,6 +3153,10 @@ static int name_matches(const char *a, const char *b)
 int app_expect(const char *name, int *result)
 {
     if (name_matches(name, "track")) *result = slap_ui.track + 1;
+#if defined(PLAT_HOST)
+    else if (name_matches(name, "peak_voices")) *result = (int)host_peak_voices;
+    else if (name_matches(name, "voice_steals")) *result = (int)voice_steals;
+#endif
     else if (name_matches(name, "tempo")) *result = (int)tempo;
     else if (name_matches(name, "boot")) *result = (int)slap_ui.booting;
     else if (name_matches(name, "recording")) *result = (int)recording;
@@ -3055,6 +3180,10 @@ int app_expect(const char *name, int *result)
     else if (name_matches(name, "chord_mode")) *result = (int)((tracks[slap_ui.track].harmony >> 16) & 255u);
     else if (name_matches(name, "metronome")) *result = (int)metronome;
 #if FM1B_CPU2 && !defined(PLAT_WEB)
+    else if (name_matches(name, "worker_wait_us")) *result = (int)(worker_wait_ticks / 24u);
+    else if (name_matches(name, "worker_work_us")) *result = (int)((worker_ticks + fx_worker_ticks) / 24u);
+    else if (name_matches(name, "worker_voice_peak_us")) *result = (int)(peak_voice_job_ticks / 24u);
+    else if (name_matches(name, "worker_online")) *result = plat_cpu2_on();
     else if (name_matches(name, "worker_overlap_us")) *result = (int)(worker_overlap_ticks / 24u);
     else if (name_matches(name, "worker_jobs")) *result = (int)worker_jobs;
     else if (name_matches(name, "worker_fallbacks")) *result = (int)worker_fallbacks;

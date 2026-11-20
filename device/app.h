@@ -23,5 +23,9 @@ void app_frame(void);
 void app_input_only(void);
 void app_say(const char *title, const char *message);
 
+#define APP_AUDIO_HALF_PROFILE
+extern volatile unsigned app_audio_half_profile_enabled;
+void app_audio_half_profile(uint32_t ticks, uint32_t nested, unsigned xrun);
+
 #define APP_HOST_EXPECT
 int app_expect(const char *name, int *result);

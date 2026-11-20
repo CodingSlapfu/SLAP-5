@@ -15,7 +15,7 @@ import wave
 from pcm_parity import compare_pcm
 
 
-def scenario(seed, bpm, bars, fx, visual, chords=False, arrangement=False):
+def scenario(seed, bpm, bars, fx, visual, chords=False, arrangement=False, modulated=False):
     rng = random.Random(seed)
     commands = ["wait 6100", f"turn ALGO {bpm - 112}", f"expect tempo {bpm}"]
     if bars > 1:
@@ -30,6 +30,9 @@ def scenario(seed, bpm, bars, fx, visual, chords=False, arrangement=False):
             commands += [f"turn K2 {steps - 16}", f"expect length {steps}"]
         if chords and track < 4:
             commands += ["tap SEL", "turn K3 1", "expect chord_mode 1", "tap HOME"]
+        if modulated and track < 4:
+            commands += ["tap LFO", "expect page 9", "turn K1 1", "turn K2 17",
+                         "expect lfo_rate 48", "tap HOME"]
         commands += ["tap REC", "wait 6400", "expect rec_running 1"]
         for _ in range(steps if bars == 1 else steps // 2):
             keys = rng.sample(range(8 if track == 4 else 19), rng.choice((2, 2, 3, 4)))
@@ -40,15 +43,15 @@ def scenario(seed, bpm, bars, fx, visual, chords=False, arrangement=False):
         commands += ["tap REC", "expect rec_running 0", "expect playing 1"]
     commands += ["expect recorded >35", "expect events >35"]
     if fx:
-        commands += ["tap FX", "turn SELECT -4", "turn ALGO 1"]
+        commands += ["tap FX", "turn SELECT -4", "turn ALGO 2", "expect fx_page 3"]
         for track in range(5):
             if track:
                 commands.append("turn SELECT 1")
-            commands += ["turn K1 2", "turn K2 5", "turn ALGO -2", "turn K1 50",
+            commands += ["turn K1 2", "expect fx_k1 2", "turn K2 5", "turn ALGO -2", "turn K1 50",
                          "turn K2 45", "turn K3 40", "turn K4 30", "turn ALGO 2"]
         commands.append("tap HOME")
     if arrangement:
-        commands += ["tap FX", "turn ALGO 1", "turn K1 2", "turn K2 5", "tap HOME"]
+        commands += ["tap FX", "turn ALGO 2", "expect fx_page 3", "turn K1 1", "expect fx_k1 1", "turn K2 5", "tap HOME"]
     if visual:
         commands += ["tap HOME", "turn SELECT 6", "expect page 6"]
     return commands + ["wav dense.wav", "wait 10000", "wavstop"]
@@ -63,10 +66,16 @@ def main():
     parser.add_argument("--visual", action="store_true")
     parser.add_argument("--chords", action="store_true")
     parser.add_argument("--async-worker", action="store_true")
+    parser.add_argument("--modulated", action="store_true")
+    parser.add_argument("--soak-ms", type=int, default=0)
     parser.add_argument("--arrangement", action="store_true", help="Use two synth tracks and drum slicer")
     args = parser.parse_args()
     host = Path(__file__).resolve().parents[1] / "build/host/slap-5_host"
-    commands = scenario(args.seed, args.bpm, args.bars, args.fx, args.visual, args.chords, args.arrangement)
+    commands = scenario(args.seed, args.bpm, args.bars, args.fx, args.visual, args.chords, args.arrangement, args.modulated)
+    if args.soak_ms < 0:
+        parser.error("--soak-ms must be nonnegative")
+    if args.soak_ms:
+        commands += [f"wait {args.soak_ms}"]
     with tempfile.TemporaryDirectory() as work_path:
         work = Path(work_path)
         wavs = {}
@@ -75,12 +84,14 @@ def main():
             directory.mkdir()
             script = directory / "case.txt"
             worker_assert = "expect worker_jobs >0" if mode == "worker" else "expect worker_jobs 0"
-            assertions = [worker_assert]
+            assertions = [worker_assert, "expect peak_voices 16", "expect voice_steals >0"]
             if mode == "worker" and args.async_worker:
                 # A general-purpose OS can preempt the worker. Verify actual
                 # overlap and PCM parity here. The deterministic failure tests
                 # verify which faults retire the worker and which can drain.
-                assertions += ["expect worker_overlap_us >0"]
+                assertions += ["expect worker_overlap_us >0", "expect worker_wait_us >-1",
+                               "expect worker_work_us >0", "expect worker_voice_peak_us >0",
+                               "expect worker_fallbacks >-1", "expect worker_online >-1"]
             else:
                 assertions += ["expect worker_fallbacks 0"]
             script.write_text("\n".join([*commands, *assertions]) + "\n")

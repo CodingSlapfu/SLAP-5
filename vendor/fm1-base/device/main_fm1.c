@@ -107,12 +107,21 @@ void fm1_alnk0_irq(void)                            /* via isr_alnk0 (hal/fm1_is
     fm1_audio_ack_aux(p);
     if (p & FM1_AUDIO_HALF) {
         uint32_t half = fm1_audio_free_half();
+#ifdef APP_AUDIO_HALF_PROFILE
+        unsigned trace = app_audio_half_profile_enabled;
+        uint32_t started = trace ? fm1_ticks() : 0u, nested = trace ? fm1b_dbg.nested : 0u;
+#endif
         render_block(&abuf[half * HALF_WORDS]);
         fm1_audio_ack_half();
-        if (fm1_audio_free_half() != half) {
+        unsigned xrun = fm1_audio_free_half() != half;
+        if (xrun) {
             fm1b_dbg.late++;                         /* the DMA moved on while we rendered */
             audio_xruns++;
         }
+#ifdef APP_AUDIO_HALF_PROFILE
+        if (trace && app_audio_half_profile_enabled)
+            app_audio_half_profile(fm1_ticks() - started, fm1b_dbg.nested - nested, xrun);
+#endif
     }
 }
 extern void isr_alnk0(void);
