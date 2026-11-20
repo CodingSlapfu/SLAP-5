@@ -72,3 +72,44 @@ Resume from the commit containing this milestone. Continue with versioned extend
 - Large SLAP BLOCK retained. The Barlow companion face is used for small LCD text. All 128 patch names and 32 kit names fit the measured HOME layout. Studio reads both name lists from WASM. The next unresolved requirements are FM-1 timing results, measured load-based partition tuning, a stage-level timing breakdown and listening acceptance of the inherited 32 kits.
 - On hardware, turn K3 on GLOBAL to zero the measurement window. Use the same pattern and BPM. Read peak, P95/P99, misses, XRUNs and fallbacks separately before recording, across take completion and during sustained no-FX replay. Repeat on dense five-track playback with slicers and effects.
 - [GitHub release](https://github.com/CodingSlapfu/SLAP-5/releases/tag/v0.1.13-testing) and [direct installer](https://slap-5.jminie66.chatgpt.site/flash).
+
+## Consolidated Red Alert and recording acceptance for v0.1.14
+
+This table is the current acceptance record for both owner work orders.
+Earlier sections describe the released baselines and historical milestones.
+v0.1.13 failed on the physical FM-1 at 112 BPM after dense five-track recording:
+107% load, 8,630 µs peak, 5,400 µs P95, 6,200 µs P99, 5,804 µs budget,
+1,092 cumulative deadline misses, 1,113 cumulative XRUNs and 46 worker fallbacks.
+
+| Requirement | Status | Evidence or remaining acceptance |
+|---|---|---|
+| Preserve ongoing work, patch/kit IDs, controls, releases and banks | Verified in software | Resume base fae1422. Source and package are pinned together on the single v0.1.14 backup branch. Existing host controls, save/load, graphics, GEN DRUMS and all 128 patch and 32 kit auditions passed. |
+| AQUORA and SLOOP architecture comparison | Reviewed | AQUORA's experimental FM worker freezes independent inputs and uses SRAM oscillators; its display frame policy is separate. SLOOP renders independent local buses before track FX and master mixing, and feeds its foreground visualizer through compact telemetry. SLAP-5 uses original estimated-cost allocation, an SRAM sine table and a bounded spectrum queue. See the repository references in evidence/dual-core-fx.md. |
+| Audio scheduling and rendering | Verified for tested sequences | device/app.c. An eligible batch previously crossed a sequencer boundary when the countdown was zero. The seeded 144 BPM 32-bar fixture differed at 34,841 PCM samples before the correction and matched byte-for-byte afterward. The renderer compacts active slots and batches independent local voices, keeping sample/slot order for shared random modulation. |
+| Dual-core DSP, workload allocation, waits and fallback | Partially verified | Estimated engine costs choose worker lanes. Private state, ordered mixing, existing bounded wait and recomputation remain in use. Host worker/single comparisons and forced result rejection passed. Actual Core 0/Core 1 overlap, worst fallback cost and deadline behavior require FM-1 timing; string delay lines and shared-RNG modulation stay local. |
+| Voice engine and overload protection | Partial | Active voice list, SRAM interpolated oscillator, sustained-event retrigger guard and capacity reporting are implemented. Existing 16-voice capacity and fallback policies remain. Further voice-steal and overload tuning requires device traces. |
+| FX, slicers and shared buses | Partial | Existing concurrent per-track FX, five-slicer stress and independent controls are preserved. Fully inactive chains bypass per-sample FX outside inspection pages. Common-bus redesign and live tail tuning remain open because the current wet paths have independent feedback state and no comparable on-device profiling data. |
+| Graphics and visual scheduling | Partial | The callback sends decimated samples to a bounded queue; foreground processing performs spectral filtering. Existing load-based frame pacing and all eight visualizers remain. Exact LCD hold time, dirty-region work and adaptive P99/XRUN tuning remain open on hardware. |
+| GLOBAL measurement windows | Verified in software | K3 resets the window. GLO again shows the worst callback's voice-batch wall time, FX-batch wall time, successful Core 1 work, wait and unclassified remainder. C1 work and wait overlap the other figures; the remainder includes direct synthesis, sequencing, individual FX, mix and telemetry. |
+| Polyphonic recording and capacity | Verified within documented limits | Four per-step melodic lanes. Fifth note reports capacity and preserves the first four. device/tests/poly-record.txt verifies save/reload and four triggers. A V7 bank can store at most 440 sparse events; over-capacity saves report BANK TOO DENSE and retain the active song. |
+| Held notes and intentional note-off | Verified in software | Independent elapsed sample intervals at 128-sample resolution. device/tests/held-recording.txt preserved a 2.002 s hold through V7 save/reload and the voice remained held on replay. Replace/undo restored the same interval. device/tests/wrapped-hold.txt kept a 4.702 s note held across two wraps without a duplicate trigger. |
+| Quantization, timing and expression | Verified within supported resolution | Default 50%. Off, 25%, 50%, 75% and 100% plus straight 1/8, 1/16 and 1/32 grids. The WASM test produced five different onsets for the same ~0.5 s hold. Onsets use sixteenth-step subdivisions; triplet grids and finer timestamp capture remain open. |
+| Migration, Studio and emulator | Verified in software | Native V2–V6 reader retained. V7 stores explicit held durations; v0.1.13 cannot reopen V6/V7 saves. Studio imports JSON V1–V4 and uses v5 for explicit holds. Four-note 32-bar capture, old project migration, long-note length rendering and Hold ms edit are integrated. |
+| Heavy randomized recording and replay | Verified for listed host workloads | device/tests/dense-recording.py. Worker and single-core audio matched at 112 BPM with no FX, 137 BPM with five slicers, wet FX and spectrum, and for 16- and 32-bar scenarios at 112 and 144 BPM. Seed 78893 is the step-boundary regression. Host execution is synchronous and does not establish native timing. |
+| Callback improvements, zero deadline misses, zero XRUNs and physical listening | Blocked on access to an FM-1 | Host WASM with the same preloaded dense five-track pattern and 10,000 blocks per pass had median-of-three mean 138.89 to 77.31 µs and P99 535.15 to 396.73 µs. These are x86 host results. They do not resolve the owner's device baseline. |
+| Native audit, backup, browser and OTA | Verified | Audited app 152,580 bytes, .data+.bss 58,932 / 98,304 and pool 328,612 / 344,064 bytes. Firmware 8cf3240a239e92eee2b7fef2c9ef5fec6803a3444ebb035faf5e422484bb2689. The fetched archive and all three assets matched. Exact candidate Chromium run 44666852284 passed. Simulated v0.1.13 OTA and rollback-path rejection passed. |
+| Release publication and direct installer | In progress | Staged website source 160eef9af7a4aef4d591fe35a6b3a3c41df5da85. Verify downloaded GitHub and live FWSC bytes and the staged WASM before closing this row. |
+
+The FM-1 acceptance run should start with a spare bank at 112 BPM, K3 reset
+on GLOBAL, then record sustained chords and dense input on all five tracks
+with FX off. Capture both GLOBAL pages after the take and after replay.
+Repeat with five slicers, wet FX, and the spectrum visualizer. Compare
+peak/P99, deadline misses, XRUNs, fallbacks and the peak breakdown against
+the v0.1.13 baseline. Listen for full held lengths and a clean release.
+
+Host reproduction: build the host target, run each device/tests/*.txt,
+device/tests/dual-core.sh, and device/tests/dense-recording.py using
+--bars 16 and --bars 32 --bpm 144 --seed 78893. Run the 137 BPM wet/visual
+case with --fx --visual --seed 220507. The benchmark script is in
+evidence/slap14-host-profile.mjs and accepts a built emulator directory and
+a short label. Run the same Node runtime and fixture for both release builds.
