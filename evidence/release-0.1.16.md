@@ -30,7 +30,7 @@ marks and installation recovery still require device validation.
 
 The native image is 156,344 bytes. Data/BSS is 55,140 of 98,304 bytes.
 The pool uses 312,420 of 344,064 bytes, leaving 31,644 bytes. The code
-mapped to the SRAM text region fits the linker budget.
+mapped to the SRAM text region uses 14,124 of 32,768 bytes.
 
 Package size is 611,488 bytes. SHA-256 is
 `ad54f3b64f7ab730b6f63584908b11b713f610fda6e3f93395bdfe3234dec6e1`.
@@ -40,6 +40,40 @@ recording and replay through 32 bars, sustained notes, quantization,
 arpeggiator boundaries, worker rejection, late voice and FX recovery,
 all 128 patches, all 56 available kit IDs, all eight visualizers at four
 master levels, Studio projects and the direct updater transaction.
+
+### Desktop audio callback comparison
+
+Pinned host timing compared the v0.1.15 engineering checkpoint and the
+0.1.16 candidate using five alternating runs per workload. The numbers are
+medians of five runs over the last 1,600 playback callbacks, in microseconds.
+The host executes worker calls synchronously. These values do not measure
+concurrent hardware execution, flash timing or the FM-1 DMA deadline.
+
+| Workload | Source | Mean | P95 | P99 | Peak |
+|---|---|---:|---:|---:|---:|
+| Dry, simulated worker | 0.1.15 | 64.15 | 102.54 | 166.51 | 1,246.01 |
+| Dry, simulated worker | 0.1.16 | 56.13 | 77.18 | 135.42 | 369.94 |
+| Heavy FX, simulated worker | 0.1.15 | 96.06 | 140.43 | 208.86 | 872.60 |
+| Heavy FX, simulated worker | 0.1.16 | 88.46 | 124.82 | 174.97 | 370.98 |
+| Dry, single core | 0.1.15 | 60.24 | 89.57 | 141.28 | 383.86 |
+| Dry, single core | 0.1.16 | 54.11 | 73.48 | 122.22 | 421.98 |
+| Heavy FX, single core | 0.1.15 | 89.72 | 121.64 | 166.38 | 371.11 |
+| Heavy FX, single core | 0.1.16 | 86.50 | 119.80 | 167.66 | 334.14 |
+
+Reproduce with `python3 device/tests/compare-dsp-timing.py bd43dd9 HEAD`.
+Worker and single-core PCM agree within one 16-bit rounding unit in the
+dense and forced-failure fixtures. Legacy dry and wet workloads agreed
+byte for byte between the old and new WebAssembly engines. All 192
+legacy kit and percussion combinations rendered byte-identically.
+The 24 new kits were checked for onset RMS, decay and spectral centroid.
+The new kick centroids spanned 33–100 Hz. New snares spanned about 4.5–10.6 kHz.
+The tests establish acoustic differences. Musical preference remains
+subject to listening on the unit.
+
+Implementation references were AQUORA `dc188d7` for bounded frozen-state
+worker jobs and SRAM placement, and SLOOP 3.4 `2228313` for independent
+core accumulators and fixed-size scheduling. The SLAP-5 implementation
+uses original source. Chromium CI passed on source commit `08a1543`.
 
 ## Physical FM-1 acceptance
 
@@ -52,7 +86,7 @@ master levels, Studio projects and the direct updater transaction.
    overdubbing, rapid parameter changes and playback after disarming REC.
 3. Record GLOBAL summary, peak breakdown, worker counters and CORE TIMING
    after each run. Check mean, P95/P99, peak, core overlap, wait, recovery,
-   DMA XRUNs and stack high-water. The audio deadline for each 256-frame DMA
+   DMA XRUNs. Capture stack high-water separately with hardware instrumentation. The audio deadline for each 256-frame DMA
    half is about 5.8 ms. Success requires zero new XRUNs and deadline misses
    during the stress and soak runs, with audible notes and feedback intact.
 4. Check that master zero silences the output while all eight visualizers

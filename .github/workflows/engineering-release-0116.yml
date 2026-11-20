@@ -1,0 +1,42 @@
+name: Publish SLAP-5 0.1.16 corrective TESTING
+on:
+  push:
+    branches: [slap-5-red-alert-dsp]
+    paths: ['.github/workflows/engineering-release-0116.yml']
+permissions:
+  actions: read
+  contents: write
+concurrency:
+  group: slap-5-0.1.16-release
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    env:
+      SOURCE: 08a1543961c4388afb8f8e88a869d0bb96ce6f0d
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify tested source and archive
+        run: |
+          set -eu
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/44692394463" |
+            jq -e --arg source "$SOURCE" '.head_sha == $source and .conclusion == "success"'
+          git diff --exit-code "$SOURCE" HEAD -- device site vendor engineering
+          echo 'a01170119b379853ea2982c1c799c80c1d925071053ec1e60871d4e8a23f3723  engineering/SLAP-5-0.1.16-candidate.tar.xz' | sha256sum -c
+          mkdir "$RUNNER_TEMP/slap-release"
+          tar -xJf engineering/SLAP-5-0.1.16-candidate.tar.xz -C "$RUNNER_TEMP/slap-release"
+          cd "$RUNNER_TEMP/slap-release"
+          sha256sum -c SHA256SUMS
+          echo 'ad54f3b64f7ab730b6f63584908b11b713f610fda6e3f93395bdfe3234dec6e1  SLAP-5-0.1.16.fwsc' | sha256sum -c
+      - name: Publish the corrective testing image
+        run: |
+          set -eu
+          gh release create v0.1.16-testing --target "$SOURCE" --prerelease --latest=false \
+            --title 'SLAP-5 0.1.16 corrective TESTING' \
+            --notes-file evidence/release-0.1.16.md \
+            "$RUNNER_TEMP/slap-release/SLAP-5-0.1.16.fwsc" \
+            "$RUNNER_TEMP/slap-release/SLAP-5-0.1.16-application.bin" \
+            "$RUNNER_TEMP/slap-release/SLAP-5-0.1.16-loader.bin" \
+            "$RUNNER_TEMP/slap-release/SHA256SUMS"
