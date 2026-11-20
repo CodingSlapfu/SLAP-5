@@ -7,6 +7,7 @@ const colors = ['#1ce2ff', '#ab70ff', '#ff59b0', '#ffb43a', '#3ef289'];
 const ctx2d = $('roll').getContext('2d');
 const piano = ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'];
 const drums = ['Kick', 'Snare', 'Closed Hat', 'Rim', 'Clap', 'Crash', 'Sub Kick', 'Alt Snare', 'Open Hat', 'Pedal Hat', 'Low Tom', 'Mid Tom', 'High Tom', 'Ride', 'Shaker', 'Perc FX'];
+$('drum-lane').replaceChildren(...drums.map((name, i) => new Option(name, i)));
 const drumStyles = ['IDM', 'Acid Jazz', 'Drum & Bass', 'Jungle', 'Dubstep', 'Synthwave', 'House', 'Deep House',
   'Ruff House', 'Hip-Hop', 'Boom Bap', 'Trap', 'Breakbeat', 'Techno', 'Electro', 'Ambient / Downtempo'];
 $('gen-style').replaceChildren(...drumStyles.map((name, value) => new Option(name, value)));
