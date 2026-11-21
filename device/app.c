@@ -213,6 +213,7 @@ typedef struct {
 } PerformancePole;
 
 static PerformancePole performance_poles[TRACKS + 1][2];
+static int8_t applied_performance_filter[TRACKS + 1];
 
 static float performance_sample(PerformancePole *pole, unsigned channel, float sample, unsigned high_pass)
 {
@@ -453,7 +454,7 @@ void app_init(void)
         mixer_duck[t] = (uint8_t)clamp((int)((duck >> (8u * t)) & 255u), 0, 100);
     drum_duck_envelope = 0.0f;
     for (unsigned t = 0; t <= TRACKS; ++t) {
-        performance_filter[t] = 0;
+        performance_filter[t] = applied_performance_filter[t] = 0;
         for (unsigned type = 0; type < 2; ++type)
             performance_poles[t][type] = (PerformancePole){.wet = 0.0f};
     }
@@ -2270,11 +2271,13 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
     unsigned filter_mask = 0;
     for (unsigned t = 0; t <= TRACKS; ++t) {
         int value = performance_filter[t];
-        for (unsigned type = 0; type < 2; ++type) {
-            PerformancePole *pole = &performance_poles[t][type];
-            performance_target(pole, type ? value : -value, type);
-            if (pole->target_wet || pole->wet) filter_mask |= 1u << t;
+        PerformancePole *low = &performance_poles[t][0], *high = &performance_poles[t][1];
+        if (value != applied_performance_filter[t]) {
+            performance_target(low, -value, 0);
+            performance_target(high, value, 1);
+            applied_performance_filter[t] = (int8_t)value;
         }
+        if (value || low->wet || high->wet) filter_mask |= 1u << t;
     }
     float duck_depth[DRUMS];
     unsigned duck_enabled = 0;
@@ -3969,7 +3972,7 @@ static void draw_performance_knob(int x, const char *label, const char *value, i
     unsigned angle = 384u + (unsigned)(position + 100) * 768u / 200u;
     cv_line(center + visual_wave(angle + 256u, 4), 13 + visual_wave(angle, 4),
         center + visual_wave(angle + 256u, 8), 13 + visual_wave(angle, 8), color);
-    cv_text(x + 27, 2, &FONT_XS, label, color);
+    cv_text(x + 27, 2, text_w(&FONT_XS, label) <= 32 ? &FONT_XS : &FONT_T, label, color);
     cv_text(x + 27, 12, &FONT_T, value, C_WHITE);
 }
 
@@ -4579,13 +4582,18 @@ static void draw_panel(void)
                 unsigned duck = mixer_duck[selected];
                 decimal(number, duck);
                 draw_performance_knob(60, "DUCK", number, (int)duck * 2 - 100, c);
-            } else cv_text(67, 9, &FONT_XS, "SOURCE", c);
+            } else {
+                cv_text(62, 2, &FONT_XS, "DUCK", c);
+                cv_text(62, 15, &FONT_T, "SOURCE", C_WHITE);
+            }
             for (unsigned k = 0; k < 2; ++k) {
                 int filter = performance_filter[k ? selected : TRACKS];
                 int x = 120 + (int)k * 60;
-                decimal(number, (unsigned)(filter < 0 ? -filter : filter));
+                number[0] = filter < 0 ? 'L' : 'H';
+                number[1] = 'P';
+                decimal(number + (filter ? 2 : 0), (unsigned)(filter < 0 ? -filter : filter));
                 draw_performance_knob(x, k ? "TRACK" : "ALL", number, filter, c);
-                cv_text(x + 6, 28, &FONT_XS, filter < 0 ? "LOW PASS" : filter > 0 ? "HI PASS" : "NEUTRAL", c);
+                cv_text(x + 3, 28, &FONT_T, k ? "TRACK FILTER" : "ALL FILTER", c);
             }
         } else if (slap_ui.page == GLOBAL) {
 #if FM1B_CPU2 && !defined(PLAT_WEB)
@@ -5174,8 +5182,26 @@ static void draw_panel(void)
             values[3] = (melodic_duration[selected][slap_ui.lane][slap_ui.step] + unit / 2u) / unit;
         }
     }
-    if (slap_ui.page == ENV)
-        for (unsigned k = 0; k < 4; ++k) values[k] = (env >> (k*8u)) & 255u;
+    if (slap_ui.page == ENV) {
+        for (unsigned k = 0; k < 4; ++k) {
+            unsigned value = env >> (k * 8u) & 127u;
+            decimal(number, value);
+            static const char *const adsr_labels[] = {"ATK", "DECAY", "SUST", "REL"};
+            draw_performance_knob((int)k * 60, adsr_labels[k], number, (int)(value * 200u / 127u) - 100, c);
+        }
+        cv_blit(0, 188);
+        return;
+    }
+    if (slap_ui.page == LFO) {
+        for (unsigned k = 0; k < 4; ++k) {
+            unsigned value = modulation >> (k * 8u) & 255u;
+            decimal(number, value);
+            draw_performance_knob((int)k * 60, lfo_labels[k], k ? number : lfo_waves[value],
+                (int)(value * 200u / (k ? 127u : 5u)) - 100, c);
+        }
+        cv_blit(0, 188);
+        return;
+    }
     for (unsigned k = 0; k < 4; ++k) {
         int x = 8 + (int)k * 58;
         const char *label = slap_ui.page == FX ? slap_fx_labels[slap_ui.fx_page][k] :

@@ -2,29 +2,6 @@
 /* Copyright (C) 2026 Ziao */
 #pragma once
 
-/* SLAP BLOCK display lettering. Seven rows of deliberately wide stems. */
-static const unsigned char slap_block[37][7] = {
-    {14,31,27,27,31,27,27}, {30,31,27,30,27,31,30},
-    {15,31,24,24,24,31,15}, {30,31,27,27,27,31,30},
-    {31,31,24,30,24,31,31}, {31,31,24,30,24,24,24},
-    {15,31,24,27,27,31,15}, {27,27,27,31,27,27,27},
-    {31,31,14,14,14,31,31}, {15,15,3,3,27,31,14},
-    {27,30,28,28,30,27,27}, {24,24,24,24,24,31,31},
-    {17,27,31,31,27,27,27}, {27,31,31,31,27,27,27},
-    {14,31,27,27,27,31,14}, {30,31,27,31,30,24,24},
-    {14,31,27,27,31,31,15}, {30,31,27,31,30,27,27},
-    {15,31,24,30,3,31,30}, {31,31,14,14,14,14,14},
-    {27,27,27,27,27,31,14}, {27,27,27,27,27,14,4},
-    {27,27,27,31,31,31,17}, {27,27,14,4,14,27,27},
-    {27,27,27,14,4,4,4}, {31,31,6,12,24,31,31},
-    {14,31,27,27,27,31,14}, {12,28,12,12,12,31,31},
-    {14,31,3,14,24,31,31}, {30,31,3,14,3,31,30},
-    {27,27,27,31,31,3,3}, {31,31,24,30,3,31,30},
-    {15,31,24,30,27,31,14}, {31,31,3,6,12,12,12},
-    {14,31,27,14,27,31,14}, {14,31,27,15,3,31,30},
-    {0,0,0,31,31,0,0}
-};
-
 static void slap_wordmark(int center, int y)
 {
     cv_text(center - text_w(&FONT_L, "SLAP-5") / 2, y, &FONT_L, "SLAP-5", C_WHITE);
@@ -62,6 +39,25 @@ static void visual_disc(int x, int y, int radius, int sy, uint16_t color)
 
 #include "dancer-art.h"
 
+static const uint8_t *dancer_row(const uint8_t *run, int y, int sway, uint16_t outline)
+{
+    int source_x = 0;
+    while (*run) {
+        unsigned code = *run++;
+        unsigned gap = code >> 6;
+        unsigned width = (code >> 3 & 7u) + 1u;
+        if (gap == 3u) gap = *run++;
+        if (width == 8u) width = *run++;
+        source_x += (int)gap;
+        int start = 24 + source_x * 3 / 2 + sway;
+        source_x += (int)width;
+        int end = 24 + source_x * 3 / 2 + sway;
+        if (outline) cv_rect(start - 1, y, end - start + 2, 1, outline);
+        else cv_rect(start, y, end - start, 1, dancer_palette[code & 7u]);
+    }
+    return run + 1;
+}
+
 static void dancer_draw(unsigned time)
 {
     unsigned energy = 0;
@@ -74,6 +70,17 @@ static void dancer_draw(unsigned time)
     unsigned light_track = ((positions >> 2) + dancer_pattern) % TRACKS;
     int sway = active ? 0 : visual_wave(time * 2u, 2);
     const uint8_t *span = dancer_frames[pose];
+    enum { DANCER_LIFT = 14 };
+    int source_row = 0;
+    while (source_row < DANCER_LIFT * DANCER_HEIGHT / 240) {
+        while (*span) {
+            unsigned code = *span++;
+            if (code >> 6 == 3u) ++span;
+            if ((code >> 3 & 7u) == 7u) ++span;
+        }
+        ++span;
+        ++source_row;
+    }
     for (int sy = 0; sy < 240; sy += 40) {
         cv_begin(240, 40, C_BLACK);
         if (active && dancer_lighting) {
@@ -82,26 +89,15 @@ static void dancer_draw(unsigned time)
             cv_line(201, 9 - sy, 120 + spread, 218 - sy, track_rule[(light_track + 2u) % TRACKS]);
         }
         if (active) cv_rect(15, 218 - sy, 210, 2, track_rule[light_track]);
-        for (int y = 0; y < 40; y += 2) {
-            const uint8_t *row = span;
-            if (dancer_outline) {
-                while (*row != 255u) {
-                    cv_rect(row[0] * 2 + sway - 1, y, (row[1] >> 3) * 2 + 4, 2,
-                        active ? track_rule[light_track] : RGB(23, 14, 35));
-                    row += 2;
-                }
+        for (int y = 0; y < 40 && source_row < DANCER_HEIGHT; ++y) {
+            if (dancer_outline)
+                dancer_row(span, y, sway, active ? track_rule[light_track] : RGB(23, 14, 35));
+            const uint8_t *next = dancer_row(span, y, sway, 0);
+            int next_row = (sy + y + DANCER_LIFT + 1) * DANCER_HEIGHT / 240;
+            if (next_row != source_row) {
+                span = next;
+                source_row = next_row;
             }
-            while (*span != 255u) {
-                int x = span[0] * 2 + sway;
-                int width = ((span[1] >> 3) + 1) * 2;
-                uint16_t color = dancer_palette[span[1] & 7u];
-                cv_rect(x, y, width, 2, color);
-                /* Keep sub-pixel contour transitions one LCD dot wide. */
-                if (span[0] * 2 > 0 && width >= 4 && (span[1] & 7u) == 0u)
-                    cv_rect(x - 1, y + 1, 1, 1, RGB(26, 15, 40));
-                span += 2;
-            }
-            ++span;
         }
         if (sy == 0) cv_text(8, 5, &FONT_B, "DANCER", C_WHITE);
         if (sy == 200) {
