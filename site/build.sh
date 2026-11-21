@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MPL-2.0
 set -eu
 cd "$(dirname "$0")/.."
-python3 vendor/fm1-base/tools/build.py device --web --release "${SLAP_WEB_RELEASE:-0.1.23}"
+python3 vendor/fm1-base/tools/build.py device --web --release "${SLAP_WEB_RELEASE:-0.1.24}"
 out="${1:-device/build/studio}"
 mkdir -p "$out/emulator" "$out/protocol" "$out/screens"
 mkdir -p "$out/fonts"
@@ -47,6 +47,6 @@ device/build/host/slap-5_host device/tests/groovebox.txt device/build/host
 device/build/host/slap-5_host device/tests/transport-mixer.txt device/build/host
 cp device/build/host/home.png device/build/host/dancer.png "$out/screens/"
 if [ -n "${SLAP_TESTING_ASSETS:-}" ]; then
-    cp "$SLAP_TESTING_ASSETS/release-testing.json" "$SLAP_TESTING_ASSETS/SLAP-5-0.1.23.fwsc" \
-        "$SLAP_TESTING_ASSETS/SLAP-5-0.1.23-Studio.zip" "$SLAP_TESTING_ASSETS/SHA256SUMS-0.1.23" "$out/"
+    cp "$SLAP_TESTING_ASSETS/release-testing.json" "$SLAP_TESTING_ASSETS/SLAP-5-0.1.24.fwsc" \
+        "$SLAP_TESTING_ASSETS/SLAP-5-0.1.24-Studio.zip" "$SLAP_TESTING_ASSETS/SHA256SUMS-0.1.24" "$out/"
 fi

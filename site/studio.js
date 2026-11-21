@@ -18,7 +18,7 @@ const drumRow = pitch => {
 };
 const left = 69, width = 40, top = 27, height = 23;
 let context, worklet, project, stateBefore = [], stateAfter = [];
-let track = 0, step = 0, lane = 0, playing = false, drag, patches = [], drumKits = [];
+let track = 0, step = 0, lane = 0, playing = false, drag, patches = [], engines = [], drumKits = [];
 let displayedKit = false, displayedLegacy = -1;
 
 const songKey = 'slap-5-arrangement-v1';
@@ -229,9 +229,106 @@ const pitchAt = row => track === 4 ? drumNotes[row] : 84 - row;
 const noteLabel = (pitch) => track === 4 ? drums[drumRow(pitch)] :
   piano[pitch % 12] + (Math.floor(pitch / 12) - 1);
 
+const defaultMixer = () => ({ solo: 0, duck: [0, 0, 0, 0], autoLevel: true, autoMix: false });
+function drawMixer() {
+  const mixer = project.mixer ?? defaultMixer();
+  $('mix-level').checked = mixer.autoLevel;
+  $('mix-auto').checked = mixer.autoMix;
+  const channels = project.tracks.map((part, index) => {
+    const channel = document.createElement('div');
+    channel.className = 'mixer-channel settings';
+    channel.style.setProperty('--clip-color', colors[index]);
+    const title = document.createElement('strong');
+    title.textContent = index === 4 ? 'Drums' : `Track ${index + 1}`;
+    const meter = document.createElement('meter');
+    meter.id = `meter-${index}`;
+    meter.max = 160;
+    meter.setAttribute('aria-label', `${title.textContent} activity`);
+    channel.append(title, meter);
+    const control = (name, type, value, update, limit = [0, 100]) => {
+      const label = document.createElement('label');
+      const input = document.createElement('input');
+      input.type = type;
+      if (type === 'checkbox') input.checked = !!value;
+      else {
+        input.min = limit[0]; input.max = limit[1]; input.value = value;
+      }
+      input.disabled = songPlaying;
+      input.addEventListener('change', () => {
+        const next = type === 'checkbox' ? input.checked : input.valueAsNumber;
+        if (type === 'checkbox' || within(next, ...limit)) edit(p => update(p, next));
+      });
+      label.append(name, input);
+      channel.append(label);
+    };
+    control('Level', 'number', Math.round((part.mix >>> 16 & 255) * 100 / 255), (p, value) => {
+      p.tracks[index].mix = (p.tracks[index].mix & ~(255 << 16)) | Math.round(value * 255 / 100) << 16;
+    });
+    control('Pan', 'number', Math.round(((part.mix >>> 8 & 255) - 128) * 100 / 128), (p, value) => {
+      p.tracks[index].mix = (p.tracks[index].mix & ~(255 << 8)) |
+        (128 + Math.round(value * (value < 0 ? 128 : 127) / 100)) << 8;
+    }, [-100, 100]);
+    control('Mute', 'checkbox', part.mix & (1 << 24), (p, value) => {
+      p.tracks[index].mix = (p.tracks[index].mix & ~(1 << 24)) | Number(value) << 24;
+    });
+    control('Solo', 'checkbox', mixer.solo & (1 << index), (p, value) => {
+      const state = p.mixer ??= defaultMixer();
+      state.solo = state.solo & ~(1 << index) | Number(value) << index;
+    });
+    if (index < 4) control('Duck', 'number', mixer.duck[index], (p, value) => {
+      (p.mixer ??= defaultMixer()).duck[index] = value;
+    });
+    return channel;
+  });
+  $('mixer-channels').replaceChildren(...channels);
+}
+for (const [id, field] of [['mix-level', 'autoLevel'], ['mix-auto', 'autoMix']])
+  $(id).onchange = () => { if (project) edit(p => { (p.mixer ??= defaultMixer())[field] = $(id).checked; }); };
+$('studio-mixer').ontoggle = () => { if (worklet) send('meters', { enabled: $('studio-mixer').open }); if (project && $('studio-mixer').open) drawMixer(); };
+
+function drawInstrument(part) {
+  const panel = $('instrument-editor');
+  const engine = engines[part.patch];
+  panel.hidden = track === 4 || (engine !== 0 && engine !== 2);
+  if (panel.hidden) return;
+  const heading = document.createElement('strong');
+  heading.textContent = engine === 0 ? 'FM6' : 'Wavetable';
+  panel.replaceChildren(heading);
+  const field = (label, options, value, change) => {
+    const wrapper = document.createElement('label');
+    const select = document.createElement('select');
+    select.replaceChildren(...options.map((name, index) => new Option(name, index)));
+    select.value = value;
+    select.addEventListener('change', () => change(Number(select.value)));
+    wrapper.append(label, select);
+    panel.append(wrapper);
+  };
+  const update = config => edit(next => {
+    next.tracks[track].timbre = config >>> 0;
+    next.tracks[track].mix |= advancedSynth | modernSynth;
+  });
+  if (engine === 0) {
+    const config = part.timbre || 0x3ffda249;
+    field('Routing', ['Serial', 'Branch', 'Layer'], config >>> 30, value => update((config & 0x3fffffff) | value << 30));
+    for (let op = 0; op < 6; op++) {
+      const ratioShift = op * 3, levelShift = 18 + op * 2;
+      field(`Op ${op + 1} ratio`, Array.from({ length: 8 }, (_, i) => ((i + 1) / 2).toFixed(1)),
+        config >>> ratioShift & 7, value => update(config & ~(7 << ratioShift) | value << ratioShift));
+      field(`Op ${op + 1} level`, ['Off', 'Low', 'Mid', 'Full'],
+        config >>> levelShift & 3, value => update(config & ~(3 << levelShift) | value << levelShift));
+    }
+  } else {
+    const config = part.timbre || 0x80002040;
+    const values = Array.from({ length: 128 }, (_, i) => String(i));
+    field('Morph', values, config & 127, value => update(config & ~127 | value));
+    field('Movement', values, config >>> 8 & 127, value => update(config & ~(127 << 8) | value << 8));
+  }
+}
+
 function draw() {
   if (!project) return;
   drawSong();
+  if ($('studio-mixer').open) drawMixer();
   const current = selected(), steps = patternLength(current.mix), first = pageStart(), last = Math.min(steps, first + 64);
   const rows = track === 4 ? drums.length : 49;
   document.documentElement.style.setProperty('--accent', colors[track]);
@@ -253,6 +350,7 @@ function draw() {
     patchSelect.replaceChildren(...options);
   }
   patchSelect.value = current.patch;
+  drawInstrument(current);
   const normalSteps = [16, 32, 48, 64];
   const lengths = $('length');
   lengths.replaceChildren(...normalSteps.map(length => new Option(length, length)));
@@ -572,7 +670,13 @@ numberInput('hold-ms', 0, 190214, (p, value) => {
 $('patch').addEventListener('change', () => {
   edit(p => {
     p.tracks[track].patch = Number($('patch').value);
-    if (track !== 4) p.tracks[track].mix |= modernSynth | advancedSynth;
+    if (track !== 4) {
+      delete p.tracks[track].timbre;
+      p.tracks[track].mix |= modernSynth;
+      if (engines[p.tracks[track].patch] === 0 || engines[p.tracks[track].patch] === 2)
+        p.tracks[track].mix |= advancedSynth;
+      else p.tracks[track].mix &= ~advancedSynth;
+    }
   });
   send('audition', { track, pitch: track === 4 ? 36 : 60 });
 });
@@ -638,6 +742,13 @@ $('start').addEventListener('click', async () => {
     worklet = new AudioWorkletNode(context, 'fm1', { outputChannelCount: [2] });
     worklet.port.onmessage = ({ data }) => {
       if (data.type === 'ready') send('read');
+      if (data.type === 'mixer-meters') {
+        data.levels.forEach((value, track) => {
+          const meter = $(`meter-${track}`);
+          if (meter) meter.value = value;
+        });
+        return;
+      }
       if (data.type === 'song-position') {
         activeScene = data.scene;
         $('song-position').textContent = `${arrangement.scenes[data.scene].name} · Bar ${data.bar + 1} · Repeat ${data.repeat + 1}`;
@@ -669,7 +780,7 @@ $('start').addEventListener('click', async () => {
         if (stateBefore.length > 100) stateBefore.shift();
         stateAfter = [];
         take = undefined;
-        project = validateProject(data.project);
+        project = validateProject(project.mixer ? { ...data.project, mixer: project.mixer } : data.project);
         $('take').textContent = 'Record track';
         $('quick-take').textContent = 'Quick REC';
         $('take-state').textContent = 'Take captured';
@@ -700,6 +811,7 @@ $('start').addEventListener('click', async () => {
         $('status').textContent = 'The saved project could not be restored.';
       }
       patches = data.names;
+      engines = data.engines;
       drumKits = data.kitNames;
       const initial = { format: 'slap-5-song', version: 1, name: 'Untitled song',
         scenes: [{ name: 'Scene 1', bars: 4, repeats: 1, project: structuredClone(project) }] };

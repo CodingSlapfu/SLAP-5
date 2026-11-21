@@ -79,3 +79,7 @@ header nav { margin: 0; }
 .song-clip small { display: block; color: #babfd2; }
 .song-clip[aria-pressed="true"] { border-color: var(--clip-color, #fff); background: #253047; }
 .song-clip.active { box-shadow: inset 0 0 0 2px #fff; }
+
+.mixer-channel { padding: .5rem 0 .5rem .65rem; border-left: .25rem solid var(--clip-color); margin-bottom: .4rem; }
+.mixer-channel > strong { min-width: 4rem; color: var(--clip-color); }
+.mixer-channel meter { inline-size: 6rem; }

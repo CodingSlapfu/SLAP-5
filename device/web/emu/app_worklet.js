@@ -12,18 +12,23 @@ globalThis.fm1App = {
       } });
   },
   process({ ex, port }) {
+    if (this.meter && (++this.meterFrame % 25 === 0))
+      port.postMessage({ type: 'mixer-meters', levels: Array.from({ length: 5 }, (_, track) => ex.studio_track_energy(track)) });
     if (!this.generation || ex.studio_drum_generation_pending()) return;
     const { id, before } = this.generation;
     this.generation = undefined;
     this.sendDrums(ex, port, id, ex.studio_drum_generation() !== before);
   },
   loadProject(ex, project) {
-      const { bpm, swing, tracks, drumFilters, metronome } = project;
+      const { bpm, swing, tracks, drumFilters, metronome, mixer } = project;
+      const ducks = mixer?.duck?.reduce((word, depth, track) => word | (depth << (track * 8)), 0) ?? 0;
+      ex.studio_set_mixer(mixer?.solo ?? 0, ducks, (mixer?.autoLevel === false ? 0 : 1) | (mixer?.autoMix ? 2 : 0));
       ex.studio_set_metronome(metronome ?? 0);
       ex.studio_set_drum_filters(drumFilters ?? 0);
       ex.studio_set_clock(bpm, swing);
-      tracks.forEach(({ mix, patch, steps, extra, fx, offsets, durations, modes }, t) => {
+      tracks.forEach(({ mix, patch, steps, extra, fx, offsets, durations, modes, timbre }, t) => {
         ex.studio_set_track(t, mix, patch);
+        ex.studio_set_timbre(t, timbre ?? 0);
         fx?.forEach((word, page) => ex.studio_set_fx(t, page, word));
         for (let lane = 0; lane <= (t === 4 ? 16 : 3); lane++) {
           const events = lane ? extra?.[lane - 1] : steps;
@@ -88,7 +93,10 @@ globalThis.fm1App = {
     return true;
   },
   message({ ex, mem, port }, m) {
-    if (m.command === 'read' || m.command === 'read-take') {
+    if (m.command === 'meters') {
+      this.meter = !!m.enabled;
+      this.meterFrame = 0;
+    } else if (m.command === 'read' || m.command === 'read-take') {
       const byte = new Uint8Array(mem.buffer);
       const namesFor = (count, nameAt) => Array.from({ length: count }, (_, i) => {
         const start = nameAt(i);
@@ -97,6 +105,7 @@ globalThis.fm1App = {
       port.postMessage({
         type: m.command === 'read-take' ? 'studio-take-project' : 'studio-project',
         names: namesFor(128, ex.studio_patch_name),
+        engines: Array.from({ length: 128 }, (_, patch) => ex.studio_patch_engine(patch)),
         kitNames: namesFor(ex.studio_kit_count(), ex.studio_kit_name),
         project: {
           version: 6,
@@ -107,6 +116,7 @@ globalThis.fm1App = {
           tracks: Array.from({ length: 5 }, (_, t) => ({
             mix: ex.studio_mix(t) >>> 0,
             patch: ex.studio_patch(t),
+            ...(ex.studio_timbre(t) ? { timbre: ex.studio_timbre(t) >>> 0 } : {}),
             fx: Array.from({ length: 9 }, (_, page) => ex.studio_fx(t, page) >>> 0),
             steps: Array.from({ length: 512 }, (_, s) => (ex.studio_event(t, s, 0) & 0x7fff7fff) >>> 0),
             offsets: Array.from({ length: t === 4 ? 17 : 4 }, (_, lane) =>

@@ -50,6 +50,14 @@
         <output id="song-position" aria-live="polite"></output>
       </div>
     </section>
+    <details id="studio-mixer" class="editor song">
+      <summary>Mixer</summary>
+      <div class="settings">
+        <label><input id="mix-level" type="checkbox" checked> Auto Level</label>
+        <label><input id="mix-auto" type="checkbox"> Auto Mix</label>
+      </div>
+      <div id="mixer-channels"></div>
+    </details>
     <section class="toolbar" aria-label="Record a take">
       <label>Bars<select id="take-bars"><option>1</option><option>2</option><option>4</option></select></label>
       <label>Start<select id="take-start"><option value="0">First note</option><option value="1">Count-in</option></select></label>
@@ -79,6 +87,7 @@
         </select></label>
         <div id="fx-knobs" class="settings"></div>
       </div>
+      <div id="instrument-editor" class="settings" aria-label="Instrument editor" hidden></div>
       <div id="generator" class="settings" hidden>
         <label>Style<select id="gen-style"></select></label>
         <label>Bars<select id="gen-bars"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option></select></label>

@@ -43,6 +43,8 @@ export function validateProject(project) {
     throw new Error('Invalid drum filters.');
   for (const [i, track] of project.tracks.entries()) {
     const mixMask = (extended ? 0x7ffffff : 0x1ffffff) | (i === 4 ? 0 : modernSynth | advancedSynth);
+    if (track?.timbre !== undefined && (i === 4 || !within(track.timbre, 0, 0xffffffff)))
+      throw new Error('Invalid instrument settings.');
     if (!track || !within(track.mix, 0, mixMask) || (track.mix & ~mixMask) || !within(patternLength(track.mix), 1, bankSize) ||
         !within(track.patch, 0, i === 4 ? legacyDrumKits + primaryDrumKits - 1 : 127) || !Array.isArray(track.steps) || track.steps.length !== bankSize) {
       throw new Error('Invalid track data.');
@@ -80,6 +82,13 @@ export function validateProject(project) {
           throw new Error('Invalid note data.');
       }
     }
+  }
+  if (project.mixer !== undefined) {
+    const { solo, duck, autoLevel, autoMix } = project.mixer ?? {};
+    if (!within(solo, 0, 31) || !Array.isArray(duck) || duck.length !== 4 ||
+        !duck.every(depth => within(depth, 0, 100)) ||
+        typeof autoLevel !== 'boolean' || typeof autoMix !== 'boolean')
+      throw new Error('Invalid mixer settings.');
   }
   return { ...project, version: 6, drumFilters: legacy ? 0 : expanded ? project.drumFilters : ((project.drumFilters & 63) | (project.drumFilters & 0x3f00) << 8),
     metronome: project.metronome ?? 0,

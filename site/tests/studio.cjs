@@ -100,6 +100,23 @@ async function test() {
     await page.locator('#start').click();
     await page.waitForFunction(() => !document.getElementById('play').disabled);
     assert.equal(await page.locator('#bpm').inputValue(), '138');
+    await page.locator('#scene-bars').fill('1');
+    await page.locator('#scene-bars').press('Tab');
+    await page.locator('#scene-copy').click();
+    assert.equal(await page.locator('.song-row').first().locator('button').count(), 2);
+    await page.locator('#scene-name').fill('Second');
+    await page.locator('#scene-name').press('Tab');
+    await page.locator('#scene-earlier').click();
+    await page.locator('#song-loop').selectOption('song');
+    await page.locator('#song-play').click();
+    await page.waitForFunction(() => document.getElementById('song-position').textContent.includes('Second'));
+    await page.waitForFunction(() => document.getElementById('song-position').textContent.includes('Scene 1'));
+    await page.locator('#song-play').click();
+    await page.waitForFunction(() => document.getElementById('song-position').textContent === 'Song stopped');
+    await page.locator('#studio-mixer summary').click();
+    assert.equal(await page.locator('#mixer-channels meter').count(), 5);
+    await page.locator('#mix-auto').check();
+    assert.ok(await page.locator('#mix-auto').isChecked());
     assert.deepEqual(errors, []);
     console.log('Chromium loaded DSP, 128 patches, transport, drum edits, undo/redo and project round-trip.');
   } finally {

@@ -41,7 +41,7 @@ class Fm1 extends AudioWorkletProcessor {
       this.ex = instance.exports;
       this.mem = this.ex.memory;
       if (this.ex._initialize) this.ex._initialize();
-      this.app = globalThis.fm1App || {};
+      this.app = { ...globalThis.fm1App };
       if (this.app.load) this.app.load(this);
       const max = this.ex.web_store_max();
       for (const [obj, bytes] of Object.entries(m.store || {})) {

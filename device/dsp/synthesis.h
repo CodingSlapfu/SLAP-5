@@ -13,7 +13,7 @@ typedef struct {
 typedef struct {
     float phase, second, third, slow, pole, feedback, strike;
     float inc, color, motion, slow_inc;
-    uint32_t rng;
+    uint32_t rng, timbre;
     uint16_t length, index, pickup;
     uint8_t engine, modern;
     int16_t *string;
@@ -26,3 +26,7 @@ float slap_pitch_increment(unsigned pitch);
 void slap_synth_start(SlapSynth *synth, int16_t *string, unsigned engine, unsigned pitch,
                       unsigned color, unsigned motion, uint32_t seed, int modern);
 float slap_synth_sample(SlapSynth *synth);
+
+/* An unset timbre uses the factory program. */
+void slap_synth_timbre(SlapSynth *synth, uint32_t settings);
+float slap_wave_preview(unsigned morph, unsigned point);

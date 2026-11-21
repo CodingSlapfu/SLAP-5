@@ -98,6 +98,7 @@ void slap_synth_start(SlapSynth *s, int16_t *string, unsigned engine, unsigned p
     s->color = color * (1.0f / 127.0f);
     s->motion = motion * (1.0f / 127.0f);
     s->rng = seed | 1u;
+    s->timbre = 0;
     s->engine = (uint8_t)engine;
     s->modern = (uint8_t)modern;
     s->string = string;
@@ -147,6 +148,26 @@ static SLAP_SYNTH_SRAM float additive(float p, float brightness)
             brightness * brightness * (0.28f * sine(3*p) + 0.16f * sine(5*p))) * 0.54f;
 }
 
+void slap_synth_timbre(SlapSynth *synth, uint32_t settings)
+{
+    synth->timbre = settings;
+    if (!settings || synth->engine != 2u) return;
+    synth->color = (settings & 127u) * (1.0f / 127.0f);
+    synth->motion = (settings >> 8 & 127u) * (1.0f / 127.0f);
+    synth->slow_inc = (0.19f + synth->motion * 2.2f) * (1.0f / 44100.0f);
+}
+
+static inline SLAP_SYNTH_INLINE float fm_operator_ratio(uint32_t config, unsigned index)
+{
+    unsigned ratio = (config >> (index * 3u)) & 7u;
+    return 0.5f + (float)ratio * 0.5f;
+}
+
+static inline SLAP_SYNTH_INLINE float fm_operator_level(uint32_t config, unsigned index)
+{
+    return (float)((config >> (18u + index * 2u)) & 3u) * (1.0f / 3.0f);
+}
+
 static const int8_t wavetable[3][4][32] = {
 #include "wavetable.inc"
 };
@@ -155,6 +176,17 @@ static inline SLAP_SYNTH_INLINE float table_frame(const int8_t *frame, unsigned 
 {
     float a = frame[index], b = frame[(index + 1u) & 31u];
     return (a + (b - a) * fraction) * 0.009f;
+}
+
+float slap_wave_preview(unsigned morph, unsigned point)
+{
+    unsigned scan = morph * 3u;
+    unsigned frame = scan / 128u, blend = scan % 128u;
+    unsigned index = (point >> 2) & 31u;
+    float fraction = (point & 3u) * 0.25f;
+    float first = table_frame(wavetable[0][frame], index, fraction);
+    float next = table_frame(wavetable[0][frame + 1u], index, fraction);
+    return first + (next - first) * (blend * (1.0f / 128.0f));
 }
 
 SLAP_SYNTH_SRAM float slap_synth_sample(SlapSynth *s)
@@ -174,17 +206,36 @@ SLAP_SYNTH_SRAM float slap_synth_sample(SlapSynth *s)
         if (s->modern >= 2u) {
             /* The first three phases use the common oscillator state. This
              * engine owns the remaining phase fields and feedback history. */
-            unsigned algorithm = m < 0.34f ? 0u : m < 0.68f ? 1u : 2u;
+            uint32_t config = s->timbre;
+            unsigned algorithm = config ? config >> 30 : m < 0.34f ? 0u : m < 0.68f ? 1u : 2u;
             float attack = s->strike;
             float six = sine(s->pole + s->feedback * (0.022f + 0.11f * c));
+            if (config) six *= fm_operator_level(config, 5);
             float five = sine(s->slow_inc + six * (0.10f + 0.23f * m) * attack);
+            if (config) five *= fm_operator_level(config, 4);
             float four = sine(t + five * (algorithm == 0u ? 0.35f : 0.11f));
+            if (config) four *= fm_operator_level(config, 3);
             float three = sine(y + (algorithm == 1u ? six : four) * c * attack * 0.24f);
+            if (config) three *= fm_operator_level(config, 2);
             float two = sine(x + three * (0.12f + 0.31f * c));
+            if (config) two *= fm_operator_level(config, 1);
             float one = sine(p + two * (0.035f + 0.25f * c) + (algorithm == 2u ? five * 0.09f : 0.0f));
+            if (config) one *= fm_operator_level(config, 0);
             out = algorithm == 0u ? one * 0.78f :
                 one * 0.65f + (algorithm == 1u ? four : three) * (0.08f + 0.14f * attack);
             s->feedback = six;
+            if (config) {
+                s->pole = wrap_advance(s->pole + d * fm_operator_ratio(config, 5));
+                s->slow_inc = wrap_advance(s->slow_inc + d * fm_operator_ratio(config, 4));
+                s->slow = wrap_advance(t + d * fm_operator_ratio(config, 3));
+                next_y = y + d * fm_operator_ratio(config, 2);
+                next_x = x + d * fm_operator_ratio(config, 1);
+                s->phase = wrap_advance(p + d * fm_operator_ratio(config, 0));
+                s->second = wrap_advance(next_x);
+                s->third = wrap_advance(next_y);
+                s->strike *= 0.99962f + 0.00032f * m;
+                return out;
+            }
             s->pole = wrap_advance(s->pole + d * (algorithm == 2u ? 5.01f : 3.002f));
             s->slow_inc = wrap_advance(s->slow_inc + d * (algorithm == 1u ? 2.004f : 1.503f));
             s->slow = wrap_advance(t + d * (algorithm == 0u ? 4.0f : 2.0f));

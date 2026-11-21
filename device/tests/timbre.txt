@@ -1,0 +1,19 @@
+wait 6100
+turn SELECT 1
+tap EDIT
+expect page 3
+expect timbre_dirty 0
+tap SEL
+turn K4 1
+expect timbre_dirty 1
+tap SAVE
+key w0 down
+wait 4200
+key w0 up
+expect store_writes 1
+reboot
+wait 6100
+expect timbre_dirty 0
+tap SAVE
+tap SEL
+expect timbre_dirty 1
