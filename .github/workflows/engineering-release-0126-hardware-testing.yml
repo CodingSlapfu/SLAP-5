@@ -1,0 +1,82 @@
+name: Publish SLAP-5 0.1.26 hardware test
+on:
+  push:
+    branches: [slap-5-red-alert-dsp]
+    paths: ['.github/workflows/engineering-release-0126-hardware-testing.yml']
+permissions:
+  actions: read
+  contents: write
+concurrency:
+  group: slap-5-0.1.26-hardware-testing
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify tested source, package and recovery
+        run: |
+          set -eu
+          source_sha=d20625dc89b60fb122d1a1cd893f8502cf49bc46
+          test "$(gh api repos/"$GITHUB_REPOSITORY"/actions/runs/44919313857 --jq '.head_sha + ":" + .conclusion')" = "$source_sha:success"
+          git fetch --no-tags --depth=1 origin "$source_sha"
+          git diff --exit-code "$source_sha" HEAD -- device vendor site tools ':!device/tests/sound-lab.txt'
+          candidate="$RUNNER_TEMP/candidate"
+          harness="$RUNNER_TEMP/harness"
+          mkdir -p "$candidate" "$harness/tests" "$harness/protocol"
+          archive=engineering/SLAP-5-0.1.26-candidate.tar.xz
+          echo "f4fcfe06deef4f74686ca75fec7592ebb0b2d48d6473b707fd335f1485d095e8  $archive" | sha256sum -c
+          tar -xJf "$archive" -C "$candidate"
+          (cd "$candidate" && sha256sum -c SHA256SUMS-0.1.26 && unzip -tq SLAP-5-0.1.26-Studio.zip)
+          cp site/flash-release.mjs site/flash-transport.mjs site/release.json "$candidate/release-testing.json" "$harness/"
+          python3 - "$harness/tests/flash.mjs" <<'PY'
+          import sys
+          from pathlib import Path
+          source = Path('site/tests/flash.mjs').read_text()
+          old = "['0.1.23', '0.1.24', '0.1.25']"
+          assert source.count(old) == 1
+          source = source.replace(old, "['0.1.23', '0.1.24', '0.1.25', '0.1.26']")
+          old = "assert.deepEqual(manifest.sources, version === '0.1.25' ?"
+          assert source.count(old) == 1
+          source = source.replace(old, "assert.deepEqual(manifest.sources, version === '0.1.26' ?\n      ['FM-1_75000118', 'FM-1_75000122', 'FM-1_75000124', 'FM-1_75000125'] : version === '0.1.25' ?")
+          Path(sys.argv[1]).write_text(source)
+          PY
+          cp vendor/fm1-base/web/fm1ota.js vendor/fm1-base/web/fm1ports.js vendor/fm1-base/web/fm1pkg.js "$harness/protocol/"
+          printf '{"type":"module"}\n' > "$harness/package.json"
+          node "$harness/tests/flash.mjs" "$candidate/SLAP-5-0.1.26.fwsc" 0.1.26
+          tools/verify-rollback.sh "$candidate/SLAP-5-0.1.26.fwsc"
+      - name: Publish and verify experimental assets
+        run: |
+          set -eu
+          tag=v0.1.26-hardware-testing
+          candidate="$RUNNER_TEMP/candidate"
+          verify="$RUNNER_TEMP/verify"
+          mkdir "$verify"
+          gh release create "$tag" --target "$GITHUB_SHA" --draft --prerelease --latest=false \
+            --title 'SLAP-5 0.1.26 Experimental Hardware Testing' \
+            --notes-file evidence/release-0.1.26-hardware-testing.md \
+            "$candidate/SLAP-5-0.1.26.fwsc" "$candidate/SLAP-5-0.1.26-Studio.zip" \
+            "$candidate/SHA256SUMS-0.1.26" "$candidate/release-testing.json" "$candidate/package-audit.json"
+          gh release download "$tag" --dir "$verify"
+          cmp "$candidate/SHA256SUMS-0.1.26" "$verify/SHA256SUMS-0.1.26"
+          (cd "$verify" && sha256sum -c SHA256SUMS-0.1.26)
+          gh release edit "$tag" --draft=false --prerelease --latest=false
+  desktop-timing:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install host build dependencies
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install Pillow==11.3.0 fonttools==4.59.2
+      - name: Compare dense patch changes in both rendering modes
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/venv/bin/python" device/tests/compare-dsp-timing.py 65ff460b26b0db02d9e9f9ca7f0fc78c79d801b4 d20625dc89b60fb122d1a1cd893f8502cf49bc46 --runs 5 --cpu-time --workload patch-switch | tee -a "$GITHUB_STEP_SUMMARY"
