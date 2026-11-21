@@ -192,3 +192,27 @@ The later [source checkpoint](https://github.com/CodingSlapfu/SLAP-5/commit/9988
 The native timbre editor saves custom operator ratios, levels and routing or wavetable morph and movement in an extended V10 bank. Older banks remain readable. Studio stores equivalent timbre values in its JSON and now exposes the five mixer channels. The package and corresponding Studio ZIP passed exact checksum, WASM, updater and rollback tests. Firmware SHA-256 `6105b3a5bd549ee86586e0ef82379d7d9e4cceee5fd14ad13eca5be73fd5edaf`. See the [release notes](release-0.1.24-hardware-testing.md) for device acceptance and installer constraints.
 
 Remaining beyond the experimental package are room for another 264 bytes of static savings, physical and musical acceptance, per-operator envelopes and feedback editing, a wider graphics audit and physical frame measurements, and full arrangement recording, automation and generation.
+
+### Published and verified
+
+[GitHub release](https://github.com/CodingSlapfu/SLAP-5/releases/tag/v0.1.24-hardware-testing) at `ef957af1ae86d086a4f014018f81845fa03e0426` and [release workflow 44884710047](https://github.com/CodingSlapfu/SLAP-5/actions/runs/44884710047). The remote source archive and Studio ZIP hashes matched local backups. Independently downloaded GitHub and live website assets matched the exact tested checksums, including the matching WASM. The production [experimental install route](https://slap-5.jminie66.chatgpt.site/flash-testing) loaded the 0.1.24 manifest with the install control gated until detection and confirmation. The live Studio initialized audio and rendered the five-track timeline. The primary 0.1.18 manifest remained byte-identical. Updated [Issue #3](https://github.com/CodingSlapfu/SLAP-5/issues/3#issuecomment-7059924535) with verification and open items. The site source notice identifies the V10 requirement for custom timbre banks.
+
+Reference host callback timings below use thread CPU time and two paired runs on the same full stress fixture. The baseline is 10b167b and the candidate is the published source tree. The sample is too small for stable conclusions about peaks. Worker P99 increased at 137 and 160 BPM. Physical DMA reserve, core-specific timing, LCD contention and stack watermarks still need measurement.
+
+```text
+Thread CPU time, full recording and playback
+extreme-112 worker baseline   mean/P95/P99/peak µs   75.84 / 153.18 / 197.13 / 3584.13
+extreme-112 worker redesign   mean/P95/P99/peak µs   76.01 / 159.12 / 192.88 / 3360.54
+extreme-112 single baseline   mean/P95/P99/peak µs   73.73 / 148.31 / 181.65 / 3520.59
+extreme-112 single redesign   mean/P95/P99/peak µs   79.66 / 168.76 / 231.92 / 2589.17
+extreme-137 worker baseline   mean/P95/P99/peak µs   78.78 / 153.51 / 192.09 / 5083.31
+extreme-137 worker redesign   mean/P95/P99/peak µs   84.22 / 175.65 / 241.61 / 3250.34
+extreme-137 single baseline   mean/P95/P99/peak µs   78.56 / 158.69 / 209.69 / 2900.34
+extreme-137 single redesign   mean/P95/P99/peak µs   81.13 / 167.08 / 219.45 / 4076.85
+extreme-160 worker baseline   mean/P95/P99/peak µs   80.39 / 166.84 / 224.70 / 2700.66
+extreme-160 worker redesign   mean/P95/P99/peak µs   82.63 / 179.89 / 243.55 / 1711.77
+extreme-160 single baseline   mean/P95/P99/peak µs   77.27 / 160.21 / 207.54 / 4151.74
+extreme-160 single redesign   mean/P95/P99/peak µs   78.53 / 169.75 / 210.24 / 5602.70
+```
+
+Separate dense FM6 and wavetable runs at 112, 137 and 160 BPM each reached 16 voices with five slicers, five inserts and all eleven Live FX. Host worker and serial output matched within one 16-bit PCM unit, with zero simulator worker fallbacks. This records signal integrity and execution coverage. Musical listening and physical timing remain open.
