@@ -4,6 +4,7 @@ export const within = (v, min, max) => Number.isInteger(v) && v >= min && v <= m
 export const maxSteps = 512;
 export const legacyDrumKits = 56;
 export const primaryDrumKits = 25;
+export const factoryPatches = 136;
 export const modernSynth = 1 << 27;
 export const advancedSynth = 1 << 28;
 export const patternLength = mix => (mix & 255) | (mix >>> 17 & 768);
@@ -45,8 +46,13 @@ export function validateProject(project) {
     const mixMask = (extended ? 0x7ffffff : 0x1ffffff) | (i === 4 ? 0 : modernSynth | advancedSynth);
     if (track?.timbre !== undefined && (i === 4 || !within(track.timbre, 0, 0xffffffff)))
       throw new Error('Invalid instrument settings.');
+    if (track?.fmEnvelopes !== undefined &&
+        (i === 4 || !Array.isArray(track.fmEnvelopes) || track.fmEnvelopes.length !== 7 ||
+          track.fmEnvelopes.some((value, op) => op === 6 ? !within(value, 0, 16) :
+            value !== 0 && !within(value, 65536, 131071))))
+      throw new Error('Invalid FM operator envelopes.');
     if (!track || !within(track.mix, 0, mixMask) || (track.mix & ~mixMask) || !within(patternLength(track.mix), 1, bankSize) ||
-        !within(track.patch, 0, i === 4 ? legacyDrumKits + primaryDrumKits - 1 : 127) || !Array.isArray(track.steps) || track.steps.length !== bankSize) {
+        !within(track.patch, 0, i === 4 ? legacyDrumKits + primaryDrumKits - 1 : factoryPatches - 1) || !Array.isArray(track.steps) || track.steps.length !== bankSize) {
       throw new Error('Invalid track data.');
     }
     if (track.fx !== undefined && (!Array.isArray(track.fx) || track.fx.length !== fxPanels.length ||

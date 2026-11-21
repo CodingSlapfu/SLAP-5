@@ -20,11 +20,11 @@ args = parser.parse_args()
 slap = normalized_names(Path(__file__).resolve().parents[1] / "dsp/patches.c")
 sloop = normalized_names(args.sloop / "app/preset_data.c")
 sloop.update(normalized_names(args.sloop / "engine/fm6_patches.c"))
-if slap.total() != 128 or len(slap) != 128 or "" in slap:
-    parser.exit(1, "Expected 128 distinct normalized SLAP-5 factory patch names.\n")
+if slap.total() != 136 or len(slap) != 136 or "" in slap:
+    parser.exit(1, "Expected 136 distinct normalized SLAP-5 factory patch names.\n")
 if not sloop:
     parser.exit(1, "SLOOP 3 factory name extraction returned no names.\n")
 overlap = sorted(slap.keys() & sloop.keys())
 if overlap:
     parser.exit(1, f"Normalized factory patch names overlap: {', '.join(overlap)}\n")
-print(f"128 SLAP-5 patch names are unique across {len(sloop)} SLOOP 3 names.")
+print(f"136 SLAP-5 patch names are unique across {len(sloop)} SLOOP 3 names.")

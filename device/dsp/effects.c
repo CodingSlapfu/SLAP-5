@@ -35,7 +35,8 @@ static volatile uint32_t trace_head;
 
 typedef struct {
     float lp, bp, fx_lp, reverb_lp, delay_lp, chorus_lp, drive_lp, crush, phase, gate;
-    float allpass[3];
+    float allpass[3], live_allpass[3];
+    float live_insert[5];
     float coef, damp, low, band, high, dp[4], ch[4], rv[4], dr[4];
     float depth, mix, amount, tone, speed, filter_scale, phase_step;
     uint32_t time, mode, insert, clock_step, gate_sample, block_index;
@@ -67,7 +68,7 @@ static PLAT_POOL int16_t echo_line[SLAP_FX_TRACKS][TRACK_DELAY];
 static PLAT_POOL int16_t chorus_line[SLAP_FX_TRACKS][CHORUS];
 static PLAT_POOL int16_t room_line[SLAP_FX_TRACKS][ROOM];
 /* Core 0 owns the post-mixer bus. Its short echo never touches track buffers. */
-static PLAT_POOL int16_t mix_echo[MIX_DELAY], mix_chorus[CHORUS], mix_room[ROOM];
+static PLAT_POOL int16_t mix_echo[MIX_DELAY], mix_side[MIX_DELAY], mix_chorus[CHORUS], mix_room[ROOM];
 static float mix_wet;
 static unsigned mix_engaged;
 static uint32_t previous_live_key;
@@ -88,7 +89,9 @@ static PLAT_POOL FxCheckpoint checkpoints[SLAP_FX_WORKER_TRACKS];
 unsigned slap_fx_work(unsigned track)
 {
     const Fx *f = &fx[track];
-    return (f->tape_mode != 0) * 6u + (f->filter_scale > 0.0f) * 2u + (f->dr[0] > 0.0f) * 3u +
+    return (f->live_insert[0] > 0.0f) * 2u + (f->live_insert[1] > 0.0f) * 2u +
+           (f->live_insert[2] > 0.0f) * 3u + (f->live_insert[3] > 0.0f) * 4u +
+           (f->live_insert[4] > 0.0f) * 5u + (f->tape_mode != 0) * 6u + (f->filter_scale > 0.0f) * 2u + (f->dr[0] > 0.0f) * 3u +
            (f->ch[0] > 0.0f) * 3u + (f->insert != 0) * 3u +
            (f->mode != 0) * 2u + (f->rv[0] > 0.0f) * 4u + (f->dp[0] > 0.0f) * 2u;
 }
@@ -125,7 +128,7 @@ void slap_fx_checkpoint(unsigned slot, unsigned track, unsigned frames)
     checkpoint->track = track;
     checkpoint->state = *f;
     checkpoint->delay_count = f->dp[0] > 0.0f || f->tape_mode ? (frames + 3u - ((4u - f->delay_div) & 3u)) / 4u : 0u;
-    checkpoint->chorus_count = f->ch[0] > 0.0f || f->insert == 7 ? frames : 0u;
+    checkpoint->chorus_count = f->ch[0] > 0.0f || f->insert == 7 || f->live_insert[3] > 0.0f ? frames : 0u;
     checkpoint->room_count = f->rv[0] > 0.0f ? frames : 0u;
     checkpoint->slice_count = f->mode == 2u ? (frames + f->capture_phase) / 4u : 0u;
     for (unsigned i = 0; i < SLAP_FX_PLOT; ++i)
@@ -183,7 +186,10 @@ unsigned slap_fx_value(unsigned track, unsigned page, unsigned knob)
 const char *slap_live_parameter_name(unsigned id)
 {
     static const char *const gesture[] = {"AMOUNT", "RATE", "TONE", "SPACE"};
+    static const char *const direct[] = {"CUTOFF", "RES", "SOFT", "HARD", "FOLD", "FLANG", "PHASER"};
     if (id < 4u) return gesture[id];
+    if (id >= SLAP_LIVE_DIRECT)
+        return id < SLAP_LIVE_PARAMETERS ? direct[id - SLAP_LIVE_DIRECT] : 0;
     unsigned slot = id - 4u;
     if (slot >= SLAP_FX_PAGES * 4u || slot / 4u == MAIN_FX) return 0;
     return slap_fx_labels[slot / 4u][slot % 4u];
@@ -192,6 +198,7 @@ const char *slap_live_parameter_name(unsigned id)
 const char *slap_live_parameter_effect(unsigned id)
 {
     if (id < 4u) return "LIVE KEY";
+    if (id >= SLAP_LIVE_DIRECT) return id < SLAP_LIVE_PARAMETERS ? "LIVE DSP" : 0;
     return slap_live_parameter_name(id) ? slap_fx_pages[(id - 4u) / 4u] : 0;
 }
 
@@ -303,7 +310,10 @@ void slap_fx_begin_assigned(unsigned bpm, uint32_t live, uint32_t assignments)
     for (unsigned t = 0; t <= SLAP_FX_TRACKS; ++t) {
         Fx *f = &fx[t];
         const int master = t == SLAP_FX_TRACKS;
-        if (master && !mix_engaged) continue; /* Keep the current effect during release. */
+        if (master && !mix_engaged) {
+            f->live = 0;
+            continue; /* The master crossfade keeps the current effect during release. */
+        }
         unsigned revision = master ? 0 : settings_revision[t];
         uint32_t action = (live & 7u) == t ? live >> 3 : 0;
         uint32_t assigned = action ? assignments : 0;
@@ -355,14 +365,23 @@ void slap_fx_begin_assigned(unsigned bpm, uint32_t live, uint32_t assignments)
                 break;
             }
         }
+        unsigned direct_cutoff = 0, direct_res = 0;
+        for (unsigned i = 0; i < 5u; ++i) f->live_insert[i] = 0.0f;
         if (mode) {
             uint32_t *words[SLAP_FX_PAGES] = {0, &filter, &slice, &insert, &mix, &room, &delay, &chorus, &drive};
             for (unsigned k = 0; k < 4u; ++k) {
                 unsigned id = assigned >> (8u * k) & 255u;
                 if (id < 4u || !slap_live_parameter_name(id)) continue;
+                unsigned value = slap_live_parameter_value(id, live >> (7u + 6u * k) & 63u);
+                if (id >= SLAP_LIVE_DIRECT) {
+                    unsigned control = id - SLAP_LIVE_DIRECT;
+                    if (control == 0u) direct_cutoff = 1u + value;
+                    else if (control == 1u) direct_res = 1u + value;
+                    else f->live_insert[control - 2u] = unit(value);
+                    continue;
+                }
                 unsigned slot = id - 4u;
                 unsigned shift = 8u * (slot % 4u);
-                unsigned value = slap_live_parameter_value(id, live >> (7u + 6u * k) & 63u);
                 uint32_t *word = words[slot / 4u];
                 *word = (*word & ~(255u << shift)) | value << shift;
             }
@@ -374,6 +393,13 @@ void slap_fx_begin_assigned(unsigned bpm, uint32_t live, uint32_t assignments)
         f->filter_scale = total > 0.0f ? 1.0f / total : 0.0f;
         f->damp = 1.55f - 1.34f * unit(filter >> 24);
         f->coef = 0.025f + 0.34f * (0.15f + f->low + f->band * .55f + f->high * .33f) / 2.1f;
+        if (direct_cutoff || direct_res) {
+            f->low = 1.0f;
+            f->band = f->high = 0.0f;
+            f->filter_scale = 1.0f;
+            if (direct_cutoff) f->coef = 0.018f * fm_exp2f(unit(direct_cutoff - 1u) * 4.9f);
+            if (direct_res) f->damp = 1.55f - 1.34f * unit(direct_res - 1u);
+        }
         unsigned slice_mode = slice & 255u;
         uint16_t pattern = slicer_patterns[(slice >> 8) & 255u];
         unsigned rate = (slice >> 16) & 255u;
@@ -475,6 +501,7 @@ unsigned slap_fx_active_mask(void)
     for (unsigned track = 0; track < SLAP_FX_TRACKS; ++track) {
         const Fx *f = &fx[track];
         if (f->transition_pending || f->transition != 0.0f ||
+            (f->live_insert[0] + f->live_insert[1] + f->live_insert[2] + f->live_insert[3] + f->live_insert[4]) > 0.0f ||
             f->tape_mode || f->filter_scale > 0.0f || f->dr[0] > 0.0f || f->ch[0] > 0.0f ||
             f->insert || f->mode || f->rv[0] > 0.0f || f->dp[0] > 0.0f)
             mask |= 1u << track;
@@ -490,7 +517,7 @@ static inline __attribute__((always_inline)) float tape_read(const int16_t *ring
     return a + (b - a) * (delay - index);
 }
 
-static inline __attribute__((always_inline)) float tape_sample(Fx *f, int16_t *echo, unsigned capacity, float dry)
+static inline __attribute__((always_inline)) float tape_sample(Fx *f, int16_t *echo, unsigned capacity, float dry, float *side)
 {
     unsigned mode = f->live & 15u;
     int held = mode == f->tape_mode;
@@ -500,19 +527,30 @@ static inline __attribute__((always_inline)) float tape_sample(Fx *f, int16_t *e
     float space = (f->tape_controls >> 22 & 63u) * (1.0f / 63.0f);
     f->tape_wet += ((held ? (mode == 10u ? 1.0f : amount) : 0.0f) - f->tape_wet) * 0.009f;
     unsigned pos = f->delay_pos;
-    if ((f->delay_div++ & 3u) == 0) {
+    unsigned write_phase = f->delay_div++ & 3u;
+    if (write_phase == 0u) {
         echo[pos] = pack(dry);
+        if (side && f->tape_mode == 10u) mix_side[pos] = pack(*side);
         if (++pos == capacity) pos = 0;
         f->delay_pos = pos;
     }
     float wet;
     if (f->tape_mode == 10u) {
-        if (held) {
-            f->tape_age = fm_minf(1.0f, f->tape_age + (0.00007f + 0.00031f * rate));
-            f->tape_phase = fm_minf(10000.0f, f->tape_phase + 0.25f * f->tape_age);
+        // The read head starts at normal speed and coasts to zero.
+        // Its maximum drift fits inside the shortest tape ring.
+        if (held && f->tape_age < 1.0f) {
+            f->tape_age = fm_minf(1.0f, f->tape_age + (0.000058f + 0.000067f * rate));
+            float progress = f->tape_age;
+            f->tape_phase += 0.25f * progress * (2.0f - progress);
         }
-        float delay = fm_minf(f->tape_phase + 2.0f, (float)(capacity - 2u));
-        wet = tape_read(echo, capacity, pos, delay) * (1.0f - f->tape_age);
+        float speed = 1.0f - f->tape_age;
+        float gain = fm_minf(1.0f, speed * (3.0f + 4.0f * amount));
+        float delay = f->tape_phase + 2.0f - 0.25f * write_phase;
+        wet = gain > 0.0f ? tape_read(echo, capacity, pos, delay) * gain : 0.0f;
+        if (side) {
+            float side_wet = gain > 0.0f ? tape_read(mix_side, capacity, pos, delay) * gain : 0.0f;
+            *side += (side_wet - *side) * f->tape_wet;
+        }
     } else {
         float length = 192.0f + 640.0f * space;
         if (f->tape_age < 2048.0f) f->tape_age += 0.25f;
@@ -535,7 +573,7 @@ static inline __attribute__((always_inline)) float tape_sample(Fx *f, int16_t *e
 }
 
 static inline __attribute__((always_inline)) float process_sample(
-    unsigned track, float dry, int16_t *echo, unsigned capacity, int16_t *chorus, int16_t *room)
+    unsigned track, float dry, int16_t *echo, unsigned capacity, int16_t *chorus, int16_t *room, float *side)
 {
     Fx *f = &fx[track];
     const FxCoefficients *c = &coefficients[track];
@@ -553,16 +591,25 @@ static inline __attribute__((always_inline)) float process_sample(
         f->drive_lp += (driven - f->drive_lp) * c->drive_damping;
         x += f->dr[0] * (f->drive_lp - x);
     }
-    if (f->ch[0] > 0.0f || f->insert) {
+    float soft_amount = f->live_insert[0], hard_amount = f->live_insert[1], fold_amount = f->live_insert[2];
+    if (soft_amount > 0.0f) x += soft_amount * (0.55f * soft(x * (1.0f + 12.0f * soft_amount)) - x);
+    if (hard_amount > 0.0f) x += hard_amount * (0.45f * fm_clampf(x * (1.0f + 15.0f * hard_amount), -1.0f, 1.0f) - x);
+    if (fold_amount > 0.0f) x += fold_amount * (0.48f * fold(x * (1.0f + 23.0f * fold_amount)) - x);
+    if (f->ch[0] > 0.0f || f->insert || f->live_insert[3] > 0.0f || f->live_insert[4] > 0.0f) {
         f->phase += f->phase_step;
         if (f->phase >= 1.0f) f->phase -= 1.0f;
         float lfo = 1.0f - 2.0f * fm_fabsf(f->phase - 0.5f);
-        if (f->ch[0] > 0.0f || f->insert == 7) {
+        if (f->ch[0] > 0.0f || f->insert == 7 || f->live_insert[3] > 0.0f) {
             unsigned pos = f->chorus_pos;
             unsigned tap = 12u + (unsigned)(lfo * (f->insert == 7 ? 105.0f : 500.0f) *
                             (0.1f + 0.9f*f->ch[1]));
             float ch = unpack(chorus[preceding(pos, tap, CHORUS)]);
-            chorus[pos] = pack(x);
+            if (f->live_insert[3] > 0.0f) {
+                unsigned flange_tap = 5u + (unsigned)(lfo * 95.0f);
+                float flange = unpack(chorus[preceding(pos, flange_tap, CHORUS)]);
+                chorus[pos] = pack(x + flange * 0.23f * f->live_insert[3]);
+                x += (0.55f * flange - 0.22f * x) * f->live_insert[3];
+            } else chorus[pos] = pack(x);
             f->chorus_pos = (pos + 1u) & (CHORUS - 1u);
             if (f->insert) x = insert_sample(f, x, lfo, ch);
             f->chorus_lp += (ch - f->chorus_lp) * c->chorus_damping;
@@ -570,6 +617,16 @@ static inline __attribute__((always_inline)) float process_sample(
         } else {
             x = insert_sample(f, x, lfo, 0.0f);
         }
+    }
+    if (f->live_insert[4] > 0.0f) {
+        float sweep = 0.12f + 0.72f * (1.0f - 2.0f * fm_fabsf(f->phase - 0.5f));
+        float signal = x + 0.38f * f->live_allpass[2];
+        for (unsigned stage = 0; stage < 3u; ++stage) {
+            float next = f->live_allpass[stage] - sweep * signal;
+            f->live_allpass[stage] = signal + sweep * next;
+            signal = next;
+        }
+        x += (signal - x) * (0.5f * f->live_insert[4]);
     }
     if (f->mode) {
         unsigned remaining = f->gate_boundary - f->gate_sample;
@@ -622,7 +679,7 @@ static inline __attribute__((always_inline)) float process_sample(
         f->room_pos = (idx + 1u) & (ROOM - 1u);
         x += f->rv[0] * f->reverb_lp;
     }
-    if (f->tape_mode) x = tape_sample(f, echo, capacity, x);
+    if (f->tape_mode) x = tape_sample(f, echo, capacity, x, side);
     else if (f->dp[0] > 0.0f) {
         if ((f->delay_div++ & 3u) == 0) {
             unsigned pos = f->delay_pos;
@@ -654,7 +711,7 @@ float slap_fx_sample(unsigned track, float dry)
 {
     Fx *f = &fx[track];
     float output = process_sample(track, dry, echo_line[track], TRACK_DELAY,
-                                  chorus_line[track], room_line[track]);
+                                  chorus_line[track], room_line[track], 0);
     if (f->transition_pending) {
         f->transition_pending = 0;
         f->transition = f->previous_sample - output;
@@ -666,6 +723,12 @@ float slap_fx_sample(unsigned track, float dry)
     }
     f->previous_sample = output;
     return output;
+}
+
+unsigned slap_fx_brake_speed(unsigned track)
+{
+    if (track > SLAP_FX_TRACKS || fx[track].tape_mode != 10u) return 100u;
+    return (unsigned)((1.0f - fx[track].tape_age) * 100.0f);
 }
 
 unsigned slap_fx_mix_active(void)
@@ -682,10 +745,12 @@ void slap_fx_mix_sample(float *left, float *right)
         return;
     }
     float middle = (*left + *right) * 0.5f;
-    float wet = process_sample(SLAP_FX_TRACKS, middle, mix_echo, MIX_DELAY, mix_chorus, mix_room);
-    // Use a centered wet signal and crossfade from the original stereo mix.
-    *left += (wet - *left) * mix_wet;
-    *right += (wet - *right) * mix_wet;
+    float side = (*left - *right) * 0.5f;
+    int stereo_stop = fx[SLAP_FX_TRACKS].tape_mode == 10u;
+    float wet = process_sample(SLAP_FX_TRACKS, middle, mix_echo, MIX_DELAY, mix_chorus, mix_room,
+        stereo_stop ? &side : 0);
+    *left += (wet + (stereo_stop ? side : 0.0f) - *left) * mix_wet;
+    *right += (wet - (stereo_stop ? side : 0.0f) - *right) * mix_wet;
 }
 
 unsigned slap_fx_slicer_cell(unsigned track, unsigned step)

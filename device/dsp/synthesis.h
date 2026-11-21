@@ -3,7 +3,7 @@
 #pragma once
 #include <stdint.h>
 
-enum { SLAP_ENGINES = 25, SLAP_PATCHES = 128, SLAP_STRING_CAPACITY = 1024 };
+enum { SLAP_ENGINES = 25, SLAP_PATCHES = 136, SLAP_STRING_CAPACITY = 1024 };
 
 typedef struct {
     const char *name;
@@ -13,7 +13,10 @@ typedef struct {
 typedef struct {
     float phase, second, third, slow, pole, feedback, strike;
     float inc, color, motion, slow_inc;
+    struct { float gain, attack, decay, sustain, release; } operators[6];
+    float operator_feedback;
     uint32_t rng, timbre;
+    uint8_t operator_mask, operator_tick, operator_decay, operator_release;
     uint16_t length, index, pickup;
     uint8_t engine, modern;
     int16_t *string;
@@ -29,4 +32,5 @@ float slap_synth_sample(SlapSynth *synth);
 
 /* An unset timbre uses the factory program. */
 void slap_synth_timbre(SlapSynth *synth, uint32_t settings);
+void slap_synth_fm_envelopes(SlapSynth *synth, const uint32_t *operators, unsigned feedback);
 float slap_wave_preview(unsigned morph, unsigned point);

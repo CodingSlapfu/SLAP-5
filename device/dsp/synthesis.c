@@ -99,6 +99,8 @@ void slap_synth_start(SlapSynth *s, int16_t *string, unsigned engine, unsigned p
     s->motion = motion * (1.0f / 127.0f);
     s->rng = seed | 1u;
     s->timbre = 0;
+    s->operator_mask = s->operator_tick = s->operator_decay = s->operator_release = 0;
+    s->operator_feedback = 0.022f + 0.11f * s->color;
     s->engine = (uint8_t)engine;
     s->modern = (uint8_t)modern;
     s->string = string;
@@ -157,6 +159,29 @@ void slap_synth_timbre(SlapSynth *synth, uint32_t settings)
     synth->slow_inc = (0.19f + synth->motion * 2.2f) * (1.0f / 44100.0f);
 }
 
+void slap_synth_fm_envelopes(SlapSynth *s, const uint32_t *operators, unsigned feedback)
+{
+    if (s->engine != 0u || s->modern < 2u) return;
+    for (unsigned op = 0; op < 6u; ++op) {
+        unsigned value = operators[op];
+        if (!value) continue;
+        float a = value & 15u, d = (value >> 4) & 15u, r = (value >> 12) & 15u;
+        s->operator_mask |= 1u << op;
+        s->operators[op].gain = 0.0f;
+        s->operators[op].attack = 1.0f / (1.0f + 8.0f * a * a);
+        s->operators[op].decay = 1.0f / (3.0f + 15.0f * d * d);
+        s->operators[op].sustain = ((value >> 8) & 15u) * (1.0f / 15.0f);
+        s->operators[op].release = 1.0f / (2.0f + 11.0f * r * r);
+    }
+    if (feedback) s->operator_feedback = 0.47f * (feedback - 1u) * (1.0f / 15.0f);
+    else s->operator_feedback = 0.022f + 0.11f * s->color;
+}
+
+static inline SLAP_SYNTH_INLINE float fm_envelope(const SlapSynth *s, unsigned op)
+{
+    return s->operator_mask & (1u << op) ? s->operators[op].gain : 1.0f;
+}
+
 static inline SLAP_SYNTH_INLINE float fm_operator_ratio(uint32_t config, unsigned index)
 {
     unsigned ratio = (config >> (index * 3u)) & 7u;
@@ -208,19 +233,40 @@ SLAP_SYNTH_SRAM float slap_synth_sample(SlapSynth *s)
              * engine owns the remaining phase fields and feedback history. */
             uint32_t config = s->timbre;
             unsigned algorithm = config ? config >> 30 : m < 0.34f ? 0u : m < 0.68f ? 1u : 2u;
+            if (s->operator_mask && !(s->operator_tick++ & 7u)) {
+                for (unsigned op = 0; op < 6u; ++op) {
+                    unsigned bit = 1u << op;
+                    if (!(s->operator_mask & bit)) continue;
+                    float gain = s->operators[op].gain;
+                    if (s->operator_release) gain -= gain * s->operators[op].release;
+                    else if (s->operator_decay & bit)
+                        gain += (s->operators[op].sustain - gain) * s->operators[op].decay;
+                    else {
+                        gain += (1.0f - gain) * s->operators[op].attack;
+                        if (gain >= 0.98f) s->operator_decay |= bit;
+                    }
+                    s->operators[op].gain = gain;
+                }
+            }
             float attack = s->strike;
-            float six = sine(s->pole + s->feedback * (0.022f + 0.11f * c));
+            float six = sine(s->pole + s->feedback * s->operator_feedback);
             if (config) six *= fm_operator_level(config, 5);
+            if (s->operator_mask) six *= fm_envelope(s, 5);
             float five = sine(s->slow_inc + six * (0.10f + 0.23f * m) * attack);
             if (config) five *= fm_operator_level(config, 4);
+            if (s->operator_mask) five *= fm_envelope(s, 4);
             float four = sine(t + five * (algorithm == 0u ? 0.35f : 0.11f));
             if (config) four *= fm_operator_level(config, 3);
+            if (s->operator_mask) four *= fm_envelope(s, 3);
             float three = sine(y + (algorithm == 1u ? six : four) * c * attack * 0.24f);
             if (config) three *= fm_operator_level(config, 2);
+            if (s->operator_mask) three *= fm_envelope(s, 2);
             float two = sine(x + three * (0.12f + 0.31f * c));
             if (config) two *= fm_operator_level(config, 1);
+            if (s->operator_mask) two *= fm_envelope(s, 1);
             float one = sine(p + two * (0.035f + 0.25f * c) + (algorithm == 2u ? five * 0.09f : 0.0f));
             if (config) one *= fm_operator_level(config, 0);
+            if (s->operator_mask) one *= fm_envelope(s, 0);
             out = algorithm == 0u ? one * 0.78f :
                 one * 0.65f + (algorithm == 1u ? four : three) * (0.08f + 0.14f * attack);
             s->feedback = six;

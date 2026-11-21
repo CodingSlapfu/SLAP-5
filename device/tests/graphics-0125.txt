@@ -1,0 +1,32 @@
+wait 6100
+tap EDIT
+turn K1 -25
+tap SEL
+wait 100
+shot fm6.png
+tap ENV
+turn K1 3
+wait 100
+shot operator-envelope.png
+tap HOME
+wait 100
+shot home-five-tracks.png
+tap SEQ
+key w4 down
+wait 80
+key w4 up
+turn K4 8
+wait 80
+shot sequence.png
+tap ENV
+wait 80
+shot envelope.png
+tap LFO
+turn K1 1
+wait 80
+shot lfo.png
+tap FX
+turn ALGO 1
+turn K1 70
+wait 80
+shot filter.png

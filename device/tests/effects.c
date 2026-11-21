@@ -61,6 +61,51 @@ static void test_full_mix(void)
             assert(saved[track][page] == slap_fx_config(track, page));
 }
 
+static void test_stereo_brake_pitch(void)
+{
+    unsigned crossings[3] = {0}, stereo_frames = 0;
+    float previous = 0.0f;
+    slap_fx_begin_live(112, SLAP_FX_TRACKS | 10u << 3 | 63u << 7 | 63u << 19);
+    for (unsigned i = 0; i < 19000u; ++i) {
+        float left = 0.18f * sinf(i * 0.09f), right = -left;
+        slap_fx_mix_sample(&left, &right);
+        if (i > 300u && i < 10000u) {
+            assert(fabsf(left + right) < 0.001f);
+            stereo_frames += fabsf(left - right) > 0.02f;
+        }
+        if (i >= 2000u && i < 11000u && previous < 0.0f && left >= 0.0f)
+            ++crossings[(i - 2000u) / 3000u];
+        if (i > 17700u) assert(fabsf(left) < 0.001f && fabsf(right) < 0.001f);
+        previous = left;
+    }
+    assert(stereo_frames > 4000u);
+    assert(crossings[0] > crossings[1] && crossings[1] > crossings[2] && crossings[2] > 0u);
+    printf("Stereo brake pitch descent: %u, %u, %u positive crossings.\n",
+           crossings[0], crossings[1], crossings[2]);
+    slap_fx_begin_live(112, 0);
+    for (unsigned i = 0; i < 4000u; ++i) {
+        float left = 0.0f, right = 0.0f;
+        if (slap_fx_mix_active()) slap_fx_mix_sample(&left, &right);
+    }
+}
+
+static void test_assignable_dsp(void)
+{
+    for (unsigned effect = SLAP_LIVE_DIRECT; effect < SLAP_LIVE_PARAMETERS; ++effect) {
+        uint32_t assignments = 0x03020000u | effect;
+        slap_fx_begin_assigned(112, 2u | 5u << 3 | 32u << 7, assignments);
+        float error = 0.0f;
+        for (unsigned i = 0; i < 700u; ++i) {
+            float dry = 0.22f * sinf(i * 0.19f);
+            float wet = slap_fx_sample(2, dry);
+            assert(isfinite(wet) && fabsf(wet) < 1.0f);
+            error += fabsf(wet - dry);
+        }
+        assert(error > 1.0f);
+        slap_fx_begin_live(112, 0);
+    }
+}
+
 static void test_slicer_boundaries(void)
 {
     const unsigned rate = 44100u * 15u / 137u;
@@ -92,6 +137,8 @@ int main(void)
     test_live_tape(10);
     test_live_tape(11);
     test_full_mix();
+    test_stereo_brake_pitch();
+    test_assignable_dsp();
     test_slicer_boundaries();
     for (unsigned t = 0; t < 5; ++t) {
         for (unsigned k = 0; k < 4; ++k)

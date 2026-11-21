@@ -41,7 +41,7 @@ assert.equal(peak, 0, "blank project should play silently");
 console.log(`WebAssembly boot, PLAY input and unclipped stereo audio passed (peak ${peak.toFixed(4)}).`);
 
 await app.onMessage({ type: 'app', command: 'read' });
-assert.equal(frames[0].names.length, 128);
+assert.equal(frames[0].names.length, 136);
 assert.ok(frames[0].project.tracks.every(t => [...t.steps, ...t.extra.flat()].every(n => n === 0)));
 const next = structuredClone(validateProject(frames[0].project));
 next.bpm = 135;
@@ -72,7 +72,7 @@ console.log('SLAP STUDIO project round-trip, validation and patch audition passe
 
 const blank = structuredClone(validateProject(frames[0].project));
 const peaks = [];
-for (let patch = 0; patch < 128; patch++) {
+for (let patch = 0; patch < frames[0].names.length; patch++) {
   blank.tracks[0].patch = patch;
   await app.onMessage({ type: 'app', command: 'project', project: blank });
   await app.onMessage({ type: 'app', command: 'audition', track: 0, pitch: 60 });
@@ -81,7 +81,7 @@ for (let patch = 0; patch < 128; patch++) {
   peaks.push(peak);
   render(220);
 }
-console.log(`128 patch auditions: peak range ${Math.min(...peaks).toFixed(4)}–${Math.max(...peaks).toFixed(4)}.`);
+console.log(`${peaks.length} patch auditions: peak range ${Math.min(...peaks).toFixed(4)}–${Math.max(...peaks).toFixed(4)}.`);
 
 blank.bpm = 200;
 for (let track = 0; track < 4; track++) {

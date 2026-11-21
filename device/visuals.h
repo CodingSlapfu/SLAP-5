@@ -68,34 +68,42 @@ static void dancer_draw(unsigned time)
     for (unsigned track = 0; track < TRACKS; ++track)
         energy += track_energy[track] + note_activity[track] * 2u;
     unsigned active = dancer_reactivity && energy > 12u;
-    unsigned cycle = active ? ((positions & 31u) * 15u + step_progress) / 16u : (time / 85u) % 4u;
+    unsigned cycle = active ? ((positions & 31u) * 15u + step_progress) / 16u : (time / 190u) % 4u;
     if (active && !playing) cycle = time / 19u;
     unsigned pose = active ? (cycle + dancer_pattern * 10u) % 30u : (cycle + 6u * dancer_pattern) % 30u;
     unsigned light_track = ((positions >> 2) + dancer_pattern) % TRACKS;
+    int sway = active ? 0 : visual_wave(time * 2u, 2);
     const uint8_t *span = dancer_frames[pose];
     for (int sy = 0; sy < 240; sy += 40) {
-        cv_begin(240, 40, RGB(8, 7, 24));
-        if (dancer_lighting) {
+        cv_begin(240, 40, C_BLACK);
+        if (active && dancer_lighting) {
             int spread = 16 + (int)(active ? note_activity[DRUMS] / 2u : 3u);
             cv_line(38, 9 - sy, 120 - spread, 218 - sy, track_rule[light_track]);
             cv_line(201, 9 - sy, 120 + spread, 218 - sy, track_rule[(light_track + 2u) % TRACKS]);
         }
-        cv_rect(15, 218 - sy, 210, 2, track_rule[light_track]);
+        if (active) cv_rect(15, 218 - sy, 210, 2, track_rule[light_track]);
         for (int y = 0; y < 40; y += 2) {
             const uint8_t *row = span;
             if (dancer_outline) {
                 while (*row != 255u) {
-                    cv_rect(row[0] * 2 - 1, y, (row[1] >> 3) * 2 + 4, 2, track_rule[light_track]);
+                    cv_rect(row[0] * 2 + sway - 1, y, (row[1] >> 3) * 2 + 4, 2,
+                        active ? track_rule[light_track] : RGB(23, 14, 35));
                     row += 2;
                 }
             }
             while (*span != 255u) {
-                cv_rect(span[0] * 2, y, ((span[1] >> 3) + 1) * 2, 2, dancer_palette[span[1] & 7u]);
+                int x = span[0] * 2 + sway;
+                int width = ((span[1] >> 3) + 1) * 2;
+                uint16_t color = dancer_palette[span[1] & 7u];
+                cv_rect(x, y, width, 2, color);
+                /* Keep sub-pixel contour transitions one LCD dot wide. */
+                if (span[0] * 2 > 0 && width >= 4 && (span[1] & 7u) == 0u)
+                    cv_rect(x - 1, y + 1, 1, 1, RGB(26, 15, 40));
                 span += 2;
             }
             ++span;
         }
-        if (sy == 0) cv_text(8, 5, &FONT_B, "PARALLAX-8 DANCER", C_WHITE);
+        if (sy == 0) cv_text(8, 5, &FONT_B, "DANCER", C_WHITE);
         if (sy == 200) {
             cv_text(8, 23, &FONT_T, "K1 PATTERN  K2 OUTLINE  K3 LIGHTS  K4 REACT", C_WHITE);
         }
@@ -132,7 +140,7 @@ static void visualizer_draw(unsigned kind, unsigned time, unsigned intro)
         for (unsigned i = 0; i < 8; ++i) {
             unsigned response = i < TRACKS ? note_activity[i] * 3u + (unsigned)energy[i] * 2u :
                 (unsigned)(levels[bands[i]] * 150.0f);
-            unsigned target = rates[i] * (16u + response);
+            unsigned target = 3u * rates[i] * (16u + response);
             orbit_speed[i] = (5u * orbit_speed[i] + target) / 6u;
             orbit_phase[i] += elapsed * orbit_speed[i];
         }
@@ -156,7 +164,7 @@ static void visualizer_draw(unsigned kind, unsigned time, unsigned intro)
         case 0:
             for (int y = 38; y < 230; y += 7) {
                 unsigned t = (unsigned)y / 7u % TRACKS;
-                int x = visual_wave(time * 3u + (unsigned)y * 13u, 46 + energy[t]);
+                int x = visual_wave(time * 3u + (unsigned)y * 13u, 46 + energy[t] + (int)(levels[t] * 19));
                 if (y + 7 < sy || y - 5 >= sy + 40) continue;
                 int span = x < 0 ? -x : x;
                 int depth = visual_wave(time * 3u + (unsigned)y * 13u + 256u, 3);
@@ -173,7 +181,7 @@ static void visualizer_draw(unsigned kind, unsigned time, unsigned intro)
             for (int x = 0; x < 240; x += 4) {
                 unsigned t = (unsigned)x / 48u;
                 int field = visual_wave((unsigned)x * 13u + time * 6u, 14 + energy[t] / 2);
-                int peak = 143 + visual_wave(x * 25u - time * 3u, 12 + energy[t]) + field;
+                int peak = 143 + visual_wave(x * 25u - time * 3u, 12 + energy[t] + (int)(levels[t] * 21)) + field;
                 int mirror = 173 - field / 2;
                 cv_rect(x, peak - sy, 4, mirror - peak > 0 ? mirror - peak : 1, track_surface[t]);
                 cv_rect(x, peak - sy, 4, 2, track_color[t]);
@@ -263,7 +271,8 @@ static void visualizer_draw(unsigned kind, unsigned time, unsigned intro)
                 for (unsigned cell = 0; cell < 23; ++cell) {
                     uint16_t color = cell >= active ? track_surface[track] : track_color[track];
                     if (track_peak[track] && cell == peak) color = C_WHITE;
-                    cv_rect(31 + (int)cell * 9, y - sy, 7, 12, color);
+                    int height = 4 + (int)(cell / 3u);
+                    cv_rect(31 + (int)cell * 9, y + 12 - height - sy, 7, height, color);
                 }
             }
             break;

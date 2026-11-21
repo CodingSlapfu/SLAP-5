@@ -15,7 +15,7 @@ async function test() {
     await page.goto((process.env.STUDIO_URL || 'http://127.0.0.1:8764') + '/studio.html');
     await page.locator('#start').click();
     await page.waitForFunction(() => !document.getElementById('play').disabled);
-    assert.equal(await page.locator('#patch option').count(), 128);
+    assert.equal(await page.locator('#patch option').count(), 136);
     await page.locator('#metro').selectOption('2');
     await page.locator('#fx-page').selectOption('5');
     const wet = page.getByLabel('Wet', { exact: true });

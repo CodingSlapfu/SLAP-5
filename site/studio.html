@@ -47,7 +47,15 @@
         <label>Repeats<input id="scene-repeats" type="number" min="1" max="16"></label>
         <button id="clip-copy" disabled>Copy clip</button>
         <button id="clip-paste" disabled>Paste clip</button>
+        <button type="button" id="clip-undo">Undo clip take</button>
         <output id="song-position" aria-live="polite"></output>
+      </div>
+      <div class="settings">
+        <label>Automation bar<input id="automation-bar" type="number" min="1" max="16" value="1"></label>
+        <label>Track level %<input id="automation-level" type="number" min="0" max="100" placeholder="Keep"></label>
+        <label>Track pan %<input id="automation-pan" type="number" min="-100" max="100" placeholder="Keep"></label>
+        <button id="automation-set" type="button">Set selected track</button>
+        <button id="automation-clear" type="button">Clear point</button>
       </div>
     </section>
     <details id="studio-mixer" class="editor song">

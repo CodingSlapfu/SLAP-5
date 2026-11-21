@@ -10,14 +10,14 @@ device = Path(__file__).resolve().parents[1]
 header = (device / "build/gen/felucca_font.h").read_text()
 advances = tuple(map(int, re.search(r"FONT_T_ADV\[\d+\] = \{([^}]+)\}", header)[1].split(",")))
 
-for source, count in [("patches.c", 128), ("drum_kits.h", 56)]:
+for source, count in [("patches.c", 136), ("drum_kits.h", 56)]:
     names = re.findall(r'^\s*\{\s*"([^"]+)"\s*,', (device / "dsp" / source).read_text(), re.M)
     assert len(names) == count
     groups = [names] if source == "patches.c" else [names[:32], names[32:]]
     assert all(len(group) == len(set(group)) for group in groups)
     for name in names:
         remaining = name
-        for limit in (34, 41):
+        for row, limit in enumerate((33, 40)):
             width = end = space = 0
             for char in remaining:
                 width += advances[ord(char) - 32]
@@ -26,9 +26,9 @@ for source, count in [("patches.c", 128), ("drum_kits.h", 56)]:
                 if char == " ":
                     space = end
                 end += 1
-            if limit == 34 and end < len(remaining) and remaining[end] != " " and space:
+            if row == 0 and end < len(remaining) and remaining[end] != " " and space:
                 end = space
             remaining = remaining[end:].lstrip()
         assert not remaining, f"HOME label truncates {name!r}"
 
-print("All 128 patch and 56 kit names fit the two-line HOME tiles.")
+print("All 136 patch and 56 kit names fit the two-line HOME tiles.")

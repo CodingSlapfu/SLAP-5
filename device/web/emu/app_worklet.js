@@ -15,9 +15,37 @@ globalThis.fm1App = {
     if (this.meter && (++this.meterFrame % 25 === 0))
       port.postMessage({ type: 'mixer-meters', levels: Array.from({ length: 5 }, (_, track) => ex.studio_track_energy(track)) });
     if (!this.generation || ex.studio_drum_generation_pending()) return;
-    const { id, before } = this.generation;
+    this.finishDrums(ex, port);
+  },
+  finishDrums(ex, port, flush = false) {
+    if (!this.generation) return;
+    const { id, before, scene } = this.generation;
+    if (flush) ex.studio_apply_queued_drums();
+    if (ex.studio_drum_generation_pending()) return;
     this.generation = undefined;
-    this.sendDrums(ex, port, id, ex.studio_drum_generation() !== before);
+    this.sendDrums(ex, { postMessage: message => {
+      if (scene !== undefined && message.drums && this.song) {
+        const { length, ...drums } = message.drums;
+        const part = this.song.scenes[scene].project.tracks[4];
+        part.mix = ((part.mix & ~0x060000ff) | length) >>> 0;
+        Object.assign(part, drums);
+        part.modes = part.modes.map(lane => lane.map((mode, step) => step < length ? 0 : mode));
+      }
+      port.postMessage({ ...message, scene });
+    } }, id, ex.studio_drum_generation() !== before);
+  },
+  finishSceneTake(ex, mem, port) {
+    if (!this.sceneTake) return;
+    const { scene, track } = this.sceneTake;
+    this.sceneTake = undefined;
+    ex.studio_end_take();
+    this.message({ ex, mem, port: { postMessage: message => {
+      const part = message.project.tracks[track];
+      const previous = this.song.scenes[scene].project.tracks[track];
+      part.mix = ((part.mix & ~0x00ffff00) | (previous.mix & 0x00ffff00)) >>> 0;
+      this.song.scenes[scene].project.tracks[track] = part;
+      port.postMessage({ type: 'scene-take', scene, track, part });
+    } } }, { command: 'read-take' });
   },
   loadProject(ex, project) {
       const { bpm, swing, tracks, drumFilters, metronome, mixer } = project;
@@ -26,9 +54,11 @@ globalThis.fm1App = {
       ex.studio_set_metronome(metronome ?? 0);
       ex.studio_set_drum_filters(drumFilters ?? 0);
       ex.studio_set_clock(bpm, swing);
-      tracks.forEach(({ mix, patch, steps, extra, fx, offsets, durations, modes, timbre }, t) => {
+      tracks.forEach(({ mix, patch, steps, extra, fx, offsets, durations, modes, timbre, fmEnvelopes }, t) => {
         ex.studio_set_track(t, mix, patch);
         ex.studio_set_timbre(t, timbre ?? 0);
+        if (t < 4) for (let slot = 0; slot < 7; slot++)
+          ex.studio_set_fm_envelope(t, slot, fmEnvelopes?.[slot] ?? 0);
         fx?.forEach((word, page) => ex.studio_set_fx(t, page, word));
         for (let lane = 0; lane <= (t === 4 ? 16 : 3); lane++) {
           const events = lane ? extra?.[lane - 1] : steps;
@@ -49,6 +79,8 @@ globalThis.fm1App = {
       const song = this.song;
       if (song && !song.remaining) {
         if (song.samples) {
+          this.finishSceneTake(ex, mem, port);
+          this.finishDrums(ex, port, true);
           const scene = song.scenes[song.index];
           if (song.queued !== undefined) {
             song.index = song.queued;
@@ -75,11 +107,16 @@ globalThis.fm1App = {
         }
       }
       const active = this.song;
-      const count = Math.min(frames - written, active ? active.remaining : frames);
+      const count = Math.min(frames - written, active ?
+        Math.min(active.remaining, active.barSamples - active.samples % active.barSamples) : frames);
       if (active) {
         const bar = Math.floor(active.samples / active.barSamples);
         if (bar !== active.lastBar) {
           active.lastBar = bar;
+          for (const point of active.scenes[active.index].automation ?? []) {
+            if (point.bar !== bar) continue;
+            ex.studio_automate_mix(point.track, point.level ?? 256, point.pan ?? 256);
+          }
           port.postMessage({ type: 'song-position', scene: active.index, repeat: active.repeat, bar });
         }
         active.samples += count;
@@ -104,8 +141,8 @@ globalThis.fm1App = {
       });
       port.postMessage({
         type: m.command === 'read-take' ? 'studio-take-project' : 'studio-project',
-        names: namesFor(128, ex.studio_patch_name),
-        engines: Array.from({ length: 128 }, (_, patch) => ex.studio_patch_engine(patch)),
+        names: namesFor(ex.studio_patch_count(), ex.studio_patch_name),
+        engines: Array.from({ length: ex.studio_patch_count() }, (_, patch) => ex.studio_patch_engine(patch)),
         kitNames: namesFor(ex.studio_kit_count(), ex.studio_kit_name),
         project: {
           version: 6,
@@ -117,6 +154,7 @@ globalThis.fm1App = {
             mix: ex.studio_mix(t) >>> 0,
             patch: ex.studio_patch(t),
             ...(ex.studio_timbre(t) ? { timbre: ex.studio_timbre(t) >>> 0 } : {}),
+            ...(t < 4 ? { fmEnvelopes: Array.from({ length: 7 }, (_, slot) => ex.studio_fm_envelope(t, slot)) } : {}),
             fx: Array.from({ length: 9 }, (_, page) => ex.studio_fx(t, page) >>> 0),
             steps: Array.from({ length: 512 }, (_, s) => (ex.studio_event(t, s, 0) & 0x7fff7fff) >>> 0),
             offsets: Array.from({ length: t === 4 ? 17 : 4 }, (_, lane) =>
@@ -137,20 +175,27 @@ globalThis.fm1App = {
     } else if (m.command === 'song-queue') {
       if (this.song) this.song.queued = m.scene;
     } else if (m.command === 'song-stop') {
+      this.finishSceneTake(ex, mem, port);
+      this.finishDrums(ex, port, true);
       this.song = undefined;
       ex.studio_transport(0);
       port.postMessage({ type: 'song-stopped' });
     } else if (m.command === 'gen-drums') {
       const before = ex.studio_drum_generation();
       const result = ex.studio_generate_drums(m.style, m.hit, m.groove, m.variation, m.bars ?? 0);
-      if (result === 2) this.generation = { id: m.id, before };
+      if (result === 2) this.generation = { id: m.id, before, scene: this.song?.index };
       else this.sendDrums(ex, port, m.id, result);
     } else if (m.command === 'record-start') {
       const ok = m.quick ? ex.studio_quick_take(m.track, m.unquantized) :
         ex.studio_begin_take(m.track, m.bars, m.countIn, m.unquantized, m.replace);
+      if (ok && this.song) this.sceneTake = { scene: this.song.index, track: m.track };
       if (ok && Number.isInteger(m.quantization)) ex.studio_take_quantization(m.quantization);
       port.postMessage({ type: 'studio-take', state: ok ? ex.studio_record_state() : 0 });
     } else if (m.command === 'record-stop' || m.command === 'record-status') {
+      if (m.command === 'record-stop' && this.sceneTake) {
+        this.finishSceneTake(ex, mem, port);
+        return;
+      }
       if (m.command === 'record-stop') ex.studio_end_take();
       port.postMessage({ type: 'studio-take', state: ex.studio_record_state(), playing: !!ex.studio_is_playing() });
     } else if (m.command === 'record-note') {

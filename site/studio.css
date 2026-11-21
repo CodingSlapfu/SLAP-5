@@ -83,3 +83,8 @@ header nav { margin: 0; }
 .mixer-channel { padding: .5rem 0 .5rem .65rem; border-left: .25rem solid var(--clip-color); margin-bottom: .4rem; }
 .mixer-channel > strong { min-width: 4rem; color: var(--clip-color); }
 .mixer-channel meter { inline-size: 6rem; }
+
+.screen-gallery { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px; }
+.screen-gallery figure { margin: 0; }
+.screen-gallery img { display: block; width: 100%; height: auto; border: 1px solid var(--line); border-radius: 10px; image-rendering: pixelated; }
+.screen-gallery figcaption { margin-top: 8px; color: #c4c9d6; font-weight: 700; }

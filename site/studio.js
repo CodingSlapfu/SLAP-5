@@ -16,7 +16,7 @@ const drumRow = pitch => {
   const row = drumNotes.indexOf(pitch);
   return row < 0 ? (pitch + 2) % 6 : row;
 };
-const left = 69, width = 40, top = 27, height = 23;
+const left = 93, width = 40, top = 27, height = 23;
 let context, worklet, project, stateBefore = [], stateAfter = [];
 let track = 0, step = 0, lane = 0, playing = false, drag, patches = [], engines = [], drumKits = [];
 let displayedKit = false, displayedLegacy = -1;
@@ -24,7 +24,7 @@ let displayedKit = false, displayedLegacy = -1;
 const songKey = 'slap-5-arrangement-v1';
 let arrangement, songPlaying = false, sceneIndex = 0, clipClipboard, activeScene = -1;
 const songControls = ['song-play', 'scene-add', 'scene-copy', 'scene-delete', 'scene-earlier',
-  'scene-later', 'song-export', 'song-import', 'scene-name', 'scene-bars', 'scene-repeats', 'clip-copy', 'clip-paste'];
+  'scene-later', 'automation-set', 'automation-clear', 'song-export', 'song-import', 'scene-name', 'scene-bars', 'scene-repeats', 'clip-copy', 'clip-paste'];
 
 function validateSong(value) {
   if (value?.format !== 'slap-5-song' || value.version !== 1 || typeof value.name !== 'string' ||
@@ -33,7 +33,13 @@ function validateSong(value) {
   return { ...value, scenes: value.scenes.map(scene => {
     if (typeof scene.name !== 'string' || scene.name.length > 80 ||
         !within(scene.bars, 1, 16) || !within(scene.repeats, 1, 16)) throw new Error('Invalid scene.');
-    return { ...scene, project: validateProject(scene.project) };
+    const automation = scene.automation ?? [];
+    if (!Array.isArray(automation) || automation.length > 80 ||
+        automation.some(point => !point || !within(point.bar, 0, scene.bars - 1) || !within(point.track, 0, 4) ||
+          (point.level === undefined && point.pan === undefined) ||
+          (point.level !== undefined && !within(point.level, 0, 255)) ||
+          (point.pan !== undefined && !within(point.pan, 0, 255)))) throw new Error('Invalid mix automation.');
+    return { ...scene, automation, project: validateProject(scene.project) };
   }) };
 }
 
@@ -48,6 +54,7 @@ function drawSong() {
   $('song-name').value = arrangement.name;
   $('scene-name').value = scene.name;
   $('scene-bars').value = scene.bars;
+  $('automation-bar').max = scene.bars;
   $('scene-repeats').value = scene.repeats;
   for (const id of songControls) $(id).disabled = songPlaying && id !== 'song-play';
   $('scene-delete').disabled ||= arrangement.scenes.length === 1;
@@ -55,6 +62,7 @@ function drawSong() {
   $('scene-copy').disabled ||= arrangement.scenes.length >= 16;
   $('scene-earlier').disabled ||= sceneIndex === 0;
   $('scene-later').disabled ||= sceneIndex === arrangement.scenes.length - 1;
+  $('clip-undo').disabled = songPlaying || !sceneClipHistory.get(scene)?.length;
   $('clip-paste').disabled ||= !clipClipboard || clipClipboard.drum !== (track === 4);
   $('song-play').textContent = songPlaying ? 'Stop song' : 'Play song';
   const grid = $('song-grid');
@@ -86,7 +94,12 @@ function drawSong() {
         bar += item.bars * item.repeats;
       }
       button.addEventListener('click', () => {
-        if (songPlaying) { send('song-queue', { scene: i }); return; }
+        if (songPlaying) {
+          if (row) track = row - 1;
+          if (activeScene !== i) send('song-queue', { scene: i });
+          draw();
+          return;
+        }
         if (take || generation) return;
         sceneIndex = i;
         if (row) track = row - 1;
@@ -107,6 +120,44 @@ function activateScene() {
   sync();
 }
 
+function setMixAutomation(clear) {
+  if (!arrangement || songPlaying) return;
+  const scene = arrangement.scenes[sceneIndex];
+  const bar = $('automation-bar').valueAsNumber - 1;
+  const level = $('automation-level').valueAsNumber;
+  const pan = $('automation-pan').valueAsNumber;
+  if (!within(bar, 0, scene.bars - 1) || (!clear && !within(level, 0, 100) && !within(pan, -100, 100))) return;
+  scene.automation = (scene.automation ?? []).filter(point => point.bar !== bar || point.track !== track);
+  if (!clear) {
+    const point = { bar, track };
+    if (within(level, 0, 100)) point.level = Math.round(level * 255 / 100);
+    if (within(pan, -100, 100)) point.pan = 128 + Math.round(pan * (pan < 0 ? 128 : 127) / 100);
+    scene.automation.push(point);
+  }
+  saveSong();
+  $('status').textContent = `${clear ? 'Cleared' : 'Saved'} automation · Track ${track + 1}, bar ${bar + 1}`;
+}
+$('automation-set').onclick = () => setMixAutomation(false);
+$('automation-clear').onclick = () => setMixAutomation(true);
+
+const sceneClipHistory = new WeakMap();
+function rememberSceneClip(scene, track, part) {
+  const key = arrangement.scenes[scene];
+  const changes = sceneClipHistory.get(key) ?? [];
+  changes.push({ track, part: structuredClone(part) });
+  if (changes.length > 24) changes.shift();
+  sceneClipHistory.set(key, changes);
+}
+$('clip-undo').onclick = () => {
+  if (songPlaying || take || generation) return;
+  const scene = arrangement.scenes[sceneIndex];
+  const prior = sceneClipHistory.get(scene)?.pop();
+  if (!prior) return;
+  scene.project.tracks[prior.track] = prior.part;
+  track = prior.track;
+  activateScene();
+};
+
 function changeScenes(action) {
   if (!arrangement || songPlaying || take || generation) return;
   action();
@@ -122,7 +173,11 @@ for (const [id, field] of [['scene-name', 'name'], ['scene-bars', 'bars'], ['sce
   $(id).addEventListener('change', () => {
     if (!arrangement || songPlaying) return;
     const value = field === 'name' ? $(id).value : $(id).valueAsNumber;
-    if (field === 'name' || within(value, 1, 16)) arrangement.scenes[sceneIndex][field] = value;
+    const scene = arrangement.scenes[sceneIndex];
+    if (field === 'name' || within(value, 1, 16)) {
+      scene[field] = value;
+      if (field === 'bars') scene.automation = (scene.automation ?? []).filter(point => point.bar < value);
+    }
     saveSong();
     drawSong();
   });
@@ -217,8 +272,24 @@ const pageStart = () => Math.floor(step / 64) * 64;
 const noteAt = (part, lane, step) => ({ ...decodeNote(eventLanes(part)[lane][step]), timing: part.offsets[lane][step], duration: part.durations[lane][step], mode: part.modes[lane][step] });
 const durationMs = units => Math.round(units * 128000 / 44100);
 const durationUnits = ms => Math.min(65535, Math.round(ms * 44100 / 128000));
-const noteWidth = note => Math.max(10, width * (note.duration ?
-  note.duration * 128 * project.bpm / (44100 * 15) : note.gate / 192));
+const noteStart = (cell, note) => left + (cell - pageStart() + note.timing / 16) * width;
+function noteWidth(cell, note) {
+  const base = 44100 * 15 / project.bpm;
+  const swing = base * project.swing / 200;
+  let span = cell % 2 ? base - swing : base + swing;
+  const available = span * (1 - note.timing / 16);
+  let samples = note.duration ? note.duration * 128 : span * note.gate / 192;
+  let steps = Math.min(available, samples) / span;
+  samples -= available;
+  if (samples > 0) {
+    const pairs = Math.floor(samples / (2 * base));
+    steps += pairs * 2;
+    samples -= pairs * 2 * base;
+    span = 2 * base - span;
+    steps += Math.min(span, samples) / span + Math.max(0, samples - span) / (2 * base - span);
+  }
+  return Math.max(2, width * steps);
+}
 function setNote(part, lane, step, note) {
   eventLanes(part)[lane][step] = note ? encodeNote(note.pitch, note.velocity, note.gate, note.probability) : 0;
   part.offsets[lane][step] = note?.timing ?? 0;
@@ -310,12 +381,30 @@ function drawInstrument(part) {
   if (engine === 0) {
     const config = part.timbre || 0x3ffda249;
     field('Routing', ['Serial', 'Branch', 'Layer'], config >>> 30, value => update((config & 0x3fffffff) | value << 30));
+    const envelopes = part.fmEnvelopes ?? Array(7).fill(0);
+    const editEnvelope = (slot, value) => {
+      edit(next => {
+        const voice = next.tracks[track];
+        voice.fmEnvelopes = [...envelopes];
+        voice.fmEnvelopes[slot] = value;
+        voice.mix |= advancedSynth | modernSynth;
+      });
+      send('audition', { track, pitch: 60 });
+    };
+    const values = Array.from({ length: 16 }, (_, i) => String(i));
+    field('Feedback', ['Factory', ...values], envelopes[6], value => editEnvelope(6, value));
     for (let op = 0; op < 6; op++) {
       const ratioShift = op * 3, levelShift = 18 + op * 2;
       field(`Op ${op + 1} ratio`, Array.from({ length: 8 }, (_, i) => ((i + 1) / 2).toFixed(1)),
         config >>> ratioShift & 7, value => update(config & ~(7 << ratioShift) | value << ratioShift));
       field(`Op ${op + 1} level`, ['Off', 'Low', 'Mid', 'Full'],
         config >>> levelShift & 3, value => update(config & ~(3 << levelShift) | value << levelShift));
+      const envelope = envelopes[op] || 0x14561;
+      ['Attack', 'Decay', 'Sustain', 'Release'].forEach((name, index) => {
+        const shift = 4 * index;
+        field(`Op ${op + 1} ${name}`, values, envelope >>> shift & 15,
+          value => editEnvelope(op, envelope & ~(15 << shift) | value << shift));
+      });
     }
   } else {
     const config = part.timbre || 0x80002040;
@@ -388,7 +477,7 @@ function draw() {
   $('tracks').querySelectorAll('button').forEach((b, i) => b.setAttribute('aria-selected', String(i === track)));
   $('drum-controls').hidden = track !== 4;
   $('generator').hidden = track !== 4;
-  $('gen-apply').disabled = songPlaying || !!generation || !!take;
+  $('gen-apply').disabled = songPlaying && activeScene < 0 || !!generation || !!take;
   $('take').disabled = (playing && !take) || !!generation;
   $('quick-take').disabled = !!generation;
   const activeLane = lane ? lane - 1 : 0;
@@ -418,12 +507,14 @@ function draw() {
     g.fillStyle = '#c4c9d6';
     g.fillText(noteLabel(pitch), 12, y + height / 2);
   }
+  g.fillStyle = '#c4c9d6';
+  g.fillText('1/16', 12, top / 2);
   for (let s = first; s < last; s++) {
     const x = left + (s - first) * width;
-    g.fillStyle = s === step ? colors[track] : s % 4 === 0 ? '#424b64' : '#293247';
+    g.fillStyle = s === step ? colors[track] : s % 16 === 0 ? '#7791b8' : s % 4 === 0 ? '#424b64' : '#293247';
     g.fillRect(x, top, s === step ? 2 : 1, rows * height);
     g.fillStyle = '#c4c9d6';
-    g.fillText(s + 1, x + 5, top / 2);
+    g.fillText(s % 16 === 0 ? `B${s / 16 + 1}` : s % 16 + 1, x + 5, top / 2);
     eventLanes(current).forEach((events, j) => {
       const cell = events[s];
       if (cell && !(s === drag?.from && j === drag.lane)) paintNote(s, noteAt(current, j, s));
@@ -435,8 +526,8 @@ function draw() {
 function paintNote(s, note) {
   const row = track === 4 ? drumRow(note.pitch) : 84 - note.pitch;
   if (row < 0 || row >= (track === 4 ? drums.length : 49)) return;
-  const x = left + (s - pageStart()) * width + 2, y = top + row * height + 2;
-  const size = noteWidth(note);
+  const x = noteStart(s, note), y = top + row * height + 2;
+  const size = noteWidth(s, note);
   ctx2d.globalAlpha = 0.34 + note.velocity / 190;
   ctx2d.fillStyle = colors[track];
   ctx2d.fillRect(x, y, size, height - 5);
@@ -447,7 +538,7 @@ function paintNote(s, note) {
 
 function hit(e) {
   const rect = $('roll').getBoundingClientRect(), x = e.clientX - rect.left - left, y = e.clientY - rect.top - top;
-  const maxRow = track === 4 ? 5 : 48;
+  const maxRow = track === 4 ? drums.length - 1 : 48;
   if (x < 0 || y < 0 || y >= (maxRow + 1) * height) return;
   const cell = pageStart() + Math.floor(x / width);
   if (cell >= patternLength(selected().mix)) return;
@@ -465,8 +556,11 @@ $('roll').addEventListener('pointerdown', e => {
   if (hitLane < 0 && track !== 4) {
     const first = pageStart();
     for (let start = step - 1; start >= first && hitLane < 0; --start) {
-      hitLane = event.findIndex((row, index) => matches(row[start], point.pitch) &&
-        point.x <= (start - first) * width + 2 + noteWidth(noteAt(selected(), index, start)));
+      hitLane = event.findIndex((row, index) => {
+        if (!matches(row[start], point.pitch)) return false;
+        const previous = noteAt(selected(), index, start);
+        return point.x + left <= noteStart(start, previous) + noteWidth(start, previous);
+      });
       if (hitLane >= 0) step = start;
     }
   }
@@ -474,7 +568,7 @@ $('roll').addEventListener('pointerdown', e => {
   if (lane < 0) { lane = 0; $('status').textContent = 'All four note slots are occupied at this step.'; draw(); return; }
   const word = event[lane][step], note = noteAt(selected(), lane, step);
   if (word && (track === 4 ? drumRow(note.pitch) === drumRow(point.pitch) : note.pitch === point.pitch)) {
-    const end = (step - pageStart()) * width + 2 + noteWidth(note);
+    const end = noteStart(step, note) + noteWidth(step, note) - left;
     const resize = point.x > end - 7 && point.x < end + 2;
     drag = { from: step, to: step, lane, note, initial: note.gate, initialDuration: note.duration, resize, start: point.x };
     $('roll').setPointerCapture(e.pointerId);
@@ -595,11 +689,11 @@ function startTake(quick) {
     send('record-stop');
     return;
   }
-  if (!project || (playing && !quick) || generation || songPlaying) return;
+  if (!project || (playing && !quick) || generation || (songPlaying && (!quick || activeScene < 0))) return;
   const replace = quick ? 0 : Number($('take-mode').value);
   if (replace && eventLanes(selected()).some(events => events.some(Boolean)) &&
       !window.confirm('Replace events in the selected recording range? You can undo the take.')) return;
-  take = { before: project, quick, timer: setInterval(() => send('record-status'), 150) };
+  take = { before: project, quick, scene: songPlaying ? activeScene : undefined, timer: setInterval(() => send('record-status'), 150) };
   $('take').textContent = 'End take';
   $('quick-take').textContent = 'End take';
   $('take-state').textContent = 'Arming';
@@ -610,8 +704,8 @@ $('take').addEventListener('click', () => startTake(false));
 $('quick-take').addEventListener('click', () => startTake(true));
 
 $('gen-apply').addEventListener('click', () => {
-  if (!project || track !== 4 || generation || take || songPlaying) return;
-  if (eventLanes(project.tracks[4]).some(events => events.some(Boolean)) &&
+  if (!project || track !== 4 || generation || take || (songPlaying && activeScene < 0)) return;
+  if (eventLanes((songPlaying ? arrangement.scenes[activeScene].project : project).tracks[4]).some(events => events.some(Boolean)) &&
       !window.confirm('Replace the current drum pattern? You can undo this.')) return;
   const hit = $('gen-hit').valueAsNumber;
   const groove = $('gen-groove').valueAsNumber;
@@ -672,6 +766,7 @@ $('patch').addEventListener('change', () => {
     p.tracks[track].patch = Number($('patch').value);
     if (track !== 4) {
       delete p.tracks[track].timbre;
+      delete p.tracks[track].fmEnvelopes;
       p.tracks[track].mix |= modernSynth;
       if (engines[p.tracks[track].patch] === 0 || engines[p.tracks[track].patch] === 2)
         p.tracks[track].mix |= advancedSynth;
@@ -707,7 +802,7 @@ $('play').addEventListener('click', () => {
   playing = !playing;
   send('transport', { playing });
   $('play').textContent = playing ? 'Stop' : 'Play';
-  $('gen-apply').disabled = songPlaying || !!generation || !!take;
+  $('gen-apply').disabled = songPlaying && activeScene < 0 || !!generation || !!take;
   $('take').disabled = (playing && !take) || !!generation;
   $('quick-take').disabled = !!generation;
 });
@@ -752,7 +847,7 @@ $('start').addEventListener('click', async () => {
       if (data.type === 'song-position') {
         activeScene = data.scene;
         $('song-position').textContent = `${arrangement.scenes[data.scene].name} · Bar ${data.bar + 1} · Repeat ${data.repeat + 1}`;
-        drawSong();
+        draw();
         return;
       }
       if (data.type === 'song-stopped') {
@@ -762,7 +857,29 @@ $('start').addEventListener('click', async () => {
         sync();
         return;
       }
+      if (data.type === 'scene-take' && take) {
+        clearInterval(take.timer);
+        take = undefined;
+        const scene = arrangement.scenes[data.scene];
+        rememberSceneClip(data.scene, data.track, scene.project.tracks[data.track]);
+        scene.project.tracks[data.track] = data.part;
+        if (data.scene === sceneIndex) project = structuredClone(scene.project);
+        saveSong();
+        $('take').textContent = 'Record track';
+        $('quick-take').textContent = 'Quick REC';
+        $('take-state').textContent = `Take captured · ${scene.name}`;
+        draw();
+        return;
+      }
       if (data.type === 'studio-take' && take) {
+        if (!data.state && take.scene !== undefined) {
+          clearInterval(take.timer);
+          take = undefined;
+          $('take').textContent = 'Record track';
+          $('quick-take').textContent = 'Quick REC';
+          $('take-state').textContent = 'Recording unavailable';
+          return;
+        }
         if (!data.state && !take.finishing) {
           take.finishing = true;
           clearInterval(take.timer);
@@ -789,6 +906,21 @@ $('start').addEventListener('click', async () => {
       }
       if (data.type === 'studio-generated') {
         if (!generation || data.id !== generation.id) return;
+        if (data.scene !== undefined && data.drums) {
+          const scene = arrangement.scenes[data.scene];
+          const { length, ...drums } = data.drums;
+          const part = scene.project.tracks[4];
+          rememberSceneClip(data.scene, 4, part);
+          part.mix = withPatternLength(part.mix, length);
+          Object.assign(part, drums);
+          part.modes = part.modes.map(lane => lane.map((mode, step) => step < length ? 0 : mode));
+          if (data.scene === sceneIndex) project = structuredClone(scene.project);
+          generation = undefined;
+          saveSong();
+          $('status').textContent = `Drum pattern applied · ${scene.name}`;
+          draw();
+          return;
+        }
         const valid = generation.project === project && data.drums;
         generation = undefined;
         if (valid) edit(next => {
