@@ -251,15 +251,11 @@ static void visualizer_draw(unsigned kind, unsigned time, unsigned intro)
             break;
         }
         case 5: {
-            uint32_t step = positions % pattern_length(tracks[slap_ui.track].mix);
             if (sy == 40) {
-                char beat[8], bar[12];
-                decimal(beat, (step % 16u) / 4u + 1u);
-                decimal(bar, step / 16u + 1u);
-                cv_text(13, 2, &FONT_XS, "BEAT", track_color[0]);
-                cv_text(52, 0, &FONT_M, beat, C_WHITE);
-                cv_text(127, 2, &FONT_XS, "BAR", track_color[4]);
-                cv_text(159, 0, &FONT_M, bar, C_WHITE);
+                unsigned step = (positions & 15u) + 1u;
+                char value[] = {(char)('0' + step / 10u), (char)('0' + step % 10u), 0};
+                cv_text(42, 1, &FONT_M, "STEP", track_color[0]);
+                cv_text(134, 0, &FONT_L, value, C_WHITE);
             }
             for (unsigned track = 0; track < TRACKS; ++track) {
                 int y = 77 + (int)track * 29;

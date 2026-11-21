@@ -87,8 +87,3 @@ tap GLO
 turn SELECT 7
 expect settings_section 7
 turn K1 1
-expect live_assignment 1
-wait 700
-reboot
-wait 1500
-expect live_assignment 1

@@ -3,7 +3,6 @@ turn SELECT 1
 tap EDIT
 expect page 3
 expect timbre_dirty 0
-tap SEL
 turn K4 1
 expect timbre_dirty 1
 tap SAVE

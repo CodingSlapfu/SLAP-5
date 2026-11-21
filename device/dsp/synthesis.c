@@ -193,6 +193,10 @@ static inline SLAP_SYNTH_INLINE float fm_operator_level(uint32_t config, unsigne
     return (float)((config >> (18u + index * 2u)) & 3u) * (1.0f / 3.0f);
 }
 
+/* Both rendering cores interpolate these tables in the audio callback. */
+#ifndef PLAT_HOST
+__attribute__((section(".data"), aligned(16)))
+#endif
 static const int8_t wavetable[3][4][32] = {
 #include "wavetable.inc"
 };
