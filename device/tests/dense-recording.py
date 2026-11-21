@@ -81,6 +81,23 @@ def extreme_scenario(seed, bpm, soak_ms=60000):
     return commands
 
 
+def patch_switch_scenario(seed, bpm):
+    commands = extreme_scenario(seed, bpm)
+    end = commands.index("tap FX", commands.index("expect recorded >35"))
+    commands = commands[:end]
+    commands += ["turn SELECT -4", "expect track 1", "tap REC",
+                 "wait 200", "expect rec_running 1", "wav dense.wav"]
+    current = 67
+    for patch in (128, 131, 132, 133, 135, 12, 14, 16, 67):
+        commands += [f"turn PRESET {patch - current} 4", f"expect patch {patch}",
+                     "key w2 down", "key w4 down", "key w6 down",
+                     "wait 400", "key w6 up", "key w4 up", "key w2 up",
+                     "wait 600", "expect rec_running 1"]
+        current = patch
+    commands += ["wavstop", "tap REC", "expect rec_running 0", "expect playing 1"]
+    return commands
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--seed", type=int, default=519331)

@@ -74,7 +74,7 @@ def main():
     parser.add_argument("--cpu-time", action="store_true", help="Measure synchronous host thread CPU time")
     parser.add_argument("--full", action="store_true", help="Include recording and playback in the timing window")
     parser.add_argument("--chords", action="store_true")
-    parser.add_argument("--workload", choices=("dry", "wet", "arrangement", "extreme"))
+    parser.add_argument("--workload", choices=("dry", "wet", "arrangement", "extreme", "patch-switch"))
     parser.add_argument("--modulated", action="store_true", help="Enable sine LFOs in the wet fixture")
     args = parser.parse_args()
     if args.runs < 1:
@@ -92,12 +92,16 @@ def main():
                      ("arrangement", 519331, 160, False)]
         if args.workload == "extreme":
             workloads = [("extreme", 519331, bpm, True) for bpm in (112, 137, 160)]
+        if args.workload == "patch-switch":
+            workloads = [("patch-switch", 519331, bpm, True) for bpm in (112, 137, 160)]
         for name, seed, bpm, fx in workloads:
             if args.workload and name != args.workload:
                 continue
             case = f"{name}-{bpm}"
             script = scratch / f"{case}.txt"
-            if name == "extreme":
+            if name == "patch-switch":
+                commands = fixtures["patch_switch_scenario"](seed, bpm)
+            elif name == "extreme":
                 commands = fixtures["extreme_scenario"](seed, bpm)
             else:
                 arrangement = name == "arrangement"

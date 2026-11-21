@@ -2,7 +2,7 @@ wait 6100
 expect patch 67
 tap EDIT
 expect page 3
-turn K1 -1
+turn PRESET -1
 expect patch <67
 tap ENV
 expect page 4

@@ -25,7 +25,7 @@ typedef struct {
 
 typedef struct {
     float phase, inc, env, velocity, fall, bend;
-    float attack, decay, sustain, release, drum_tune, drum_decay;
+    float attack, decay, sustain, release, drum_tune, drum_decay, glide_inc;
     float lfo_phase, lfo_inc, lfo_fade, lfo_gain, lfo_hold;
     float last_sample, steal_tail;
     float drum_noise, drum_color, drum_body, drum_snap;
@@ -563,6 +563,20 @@ static void trigger_voice(unsigned track, unsigned pitch, unsigned velocity, uin
 {
     uint32_t started = spike_enabled ? plat_ticks24() : 0u;
     Voice *voice = &voices[0];
+    float glide_start = 0.0f;
+    if (manual && track < DRUMS && !delay && !(tracks[track].harmony >> 16 & 255u)) {
+        unsigned patch = tracks[track].patch;
+        if ((patch >= 73u && patch <= 77u) || patch == 131u) {
+            unsigned held = 0;
+            for (unsigned i = 0; i < VOICES; ++i) {
+                const Voice *prior = &voices[i];
+                if (!prior->age || prior->track != track || !prior->manual ||
+                    prior->releasing || prior->delay || prior->pitch == pitch) continue;
+                if (++held > 1u) { glide_start = 0.0f; break; }
+                glide_start = prior->glide_inc > 0.0f ? prior->glide_inc : prior->inc;
+            }
+        }
+    }
     float quietest_release = 0.0f;
     for (unsigned i = 0; i < VOICES; ++i) {
         Voice *candidate = &voices[i];
@@ -636,6 +650,7 @@ static void trigger_voice(unsigned track, unsigned pitch, unsigned velocity, uin
                 slap_synth_fm_envelopes(&synths[slot], track_fm_envelopes[track], track_fm_envelopes[track][6]);
         }
         voice->inc = synths[slot].inc;
+        voice->glide_inc = glide_start;
     } else if (tracks[DRUMS].patch >= DRUM_LEGACY_KITS) {
         voice->kit = (uint8_t)tracks[DRUMS].patch;
         unsigned hit = drum_sample_hit(pitch);
@@ -1445,6 +1460,15 @@ static inline __attribute__((always_inline)) float render_voice_signal(Voice *v,
     if (v->releasing && v->env < 0.0001f) { v->age = 0; return 0.0f; }
 
     if (v->track < DRUMS) {
+        float pitch_inc = v->inc;
+        if (v->glide_inc > 0.0f) {
+            pitch_inc = v->glide_inc + (v->inc - v->glide_inc) * 0.00135f;
+            if (fm_fabsf(v->inc - pitch_inc) < v->inc * 0.0002f) {
+                v->glide_inc = 0.0f;
+                pitch_inc = v->inc;
+            } else v->glide_inc = pitch_inc;
+            s->inc = pitch_inc;
+        }
         if (v->lfo_wave) {
             v->lfo_gain = fm_minf(1.0f, v->lfo_gain + v->lfo_fade);
             v->lfo_phase += v->lfo_inc;
@@ -1454,7 +1478,7 @@ static inline __attribute__((always_inline)) float render_voice_signal(Voice *v,
                     v->lfo_hold = (int16_t)(random_word() & 65535u) * (1.0f / 32768.0f);
             }
             float value = lfo_shape(v->lfo_wave, v->lfo_phase, v->lfo_hold);
-            s->inc = v->inc * (1.0f + 0.027f * v->lfo_gain * value);
+            s->inc = pitch_inc * (1.0f + 0.027f * v->lfo_gain * value);
         }
         s->operator_release = v->releasing;
         return slap_synth_sample(s) * v->env * v->velocity * 0.18f;
@@ -1592,7 +1616,7 @@ static void render_voice_into_bus(Voice *voice, SlapSynth *synth, unsigned muted
     // Unmodulated tonal attacks and sustains have no per-sample work
     // outside the oscillator and envelope. Stop before the gate-off sample.
     if (i < frames && track < DRUMS && voice->age && !voice->releasing &&
-        !voice->delay && !voice->lfo_wave && voice->steal_tail == 0.0f) {
+        !voice->delay && !voice->lfo_wave && !voice->glide_inc && voice->steal_tail == 0.0f) {
         const unsigned first = i;
         unsigned end = frames;
         if (!voice->manual && voice->remaining && frames - i >= voice->remaining)
@@ -1624,7 +1648,7 @@ static void render_voice_into_bus(Voice *voice, SlapSynth *synth, unsigned muted
     // A released tonal voice has a fixed envelope target until a new event.
     // Leave modulated voices, steal tails and pending starts on the general path.
     if (i < frames && track < DRUMS && voice->age && voice->releasing &&
-        !voice->delay && !voice->lfo_wave && voice->steal_tail == 0.0f) {
+        !voice->delay && !voice->lfo_wave && !voice->glide_inc && voice->steal_tail == 0.0f) {
         float env = voice->env;
         const float rate = voice->release, velocity = voice->velocity;
         float sample = voice->last_sample;
@@ -3419,20 +3443,11 @@ void app_input_only(void)
                     (unsigned)clamp(motion + knob[1], 0, 127) << 8;
             }
             tracks[t].mix |= ADVANCED_SYNTH;
-        } else if (timbre_open) {
-            /* Editing mode keeps the patch browser controls inactive. */
-        } else if (t == DRUMS) tracks[t].patch = select_drum_kit(tracks[t].patch, knob[1]);
-        else if (knob[0] || knob[1]) {
-            int patch = (int)tracks[t].patch, engine = slap_patches[patch].engine;
-            engine = clamp(engine + knob[0], 0, SLAP_ENGINES-1);
-            uint8_t matching[SLAP_PATCHES];
-            int count = 0, index = 0;
-            for (int id = 0; id < SLAP_PATCHES; ++id) {
-                if (slap_patches[id].engine != engine) continue;
-                if (id == patch) index = count;
-                matching[count++] = id;
-            }
-            if (count) load_patch(t, (unsigned)matching[clamp(index + knob[1], 0, count - 1)]);
+        } else if (t == DRUMS) {
+            if (knob[1]) tracks[t].patch = select_drum_kit(tracks[t].patch, knob[1]);
+        } else if (program) {
+            if (knob[0]) slap_fx_change(t, 1, 0, knob[0]);
+            if (knob[1]) slap_fx_change(t, 8, 0, knob[1]);
         }
     } else if (slap_ui.page == GLOBAL && global_details == 8) {
         if (knob[0]) dma_view = (unsigned)clamp((int)dma_view + knob[0], 0, 3);
@@ -3687,7 +3702,7 @@ static int note_sounding(unsigned row, unsigned step)
     return 0;
 }
 
-static unsigned header_valid, graph_valid;
+static unsigned header_valid, graph_valid, home_idle_valid;
 
 typedef struct {
     unsigned page, track, step, bank, mix, tempo, positions, revision, envelope, modulation, split, tuning;
@@ -3762,6 +3777,24 @@ static void draw_home_sequences(void)
 {
     unsigned position = positions, run = playing, fraction = step_progress;
     unsigned selection = slap_ui.track, bpm = tempo, solo = mixer_solo;
+    static unsigned idle_meter[TRACKS], idle_revision[TRACKS], idle_patch[TRACKS], idle_mix[TRACKS];
+    static unsigned idle_bpm, idle_position, idle_selection, idle_solo, idle_swing;
+    static int idle_battery;
+    unsigned changed = !home_idle_valid || idle_bpm != bpm || idle_position != position ||
+        idle_selection != selection || idle_solo != solo || idle_swing != swing ||
+        idle_battery != (low_battery ? -2 : battery_status);
+    idle_bpm = bpm; idle_position = position; idle_selection = selection;
+    idle_solo = solo; idle_swing = swing; idle_battery = low_battery ? -2 : battery_status;
+    for (unsigned t = 0; t < TRACKS; ++t) {
+        unsigned level = track_energy[t], revision = pattern_revision[t];
+        unsigned patch = tracks[t].patch, mix = tracks[t].mix;
+        if (idle_meter[t] != level || idle_revision[t] != revision ||
+            idle_patch[t] != patch || idle_mix[t] != mix) changed = 1;
+        idle_meter[t] = level; idle_revision[t] = revision;
+        idle_patch[t] = patch; idle_mix[t] = mix;
+    }
+    if (!run && !recording && !changed) return;
+    home_idle_valid = !run && !recording;
     unsigned active[VOICES], count = 0;
     for (unsigned v = 0; v < VOICES; ++v)
         if (voices[v].age && !voices[v].delay && !voices[v].releasing && voices[v].sequence_note)
@@ -4442,6 +4475,20 @@ static void draw_panel(void)
             cv_blit(0, 200);
             return;
         }
+        if (selected < DRUMS) {
+            cv_text(8, 2, &FONT_B, slap_engine_names[patch->engine], c);
+            cv_text(8, 22, &FONT_XS, "K1 FILTER  K2 DRIVE  ENV  LFO", C_WHITE);
+            cv_blit(0, 80);
+            for (int band = 0; band < 3; ++band) {
+                cv_begin(240, 40, background);
+                cv_rect(8, 60 - band * 40, 224, 1, track_rule[selected]);
+                for (unsigned i = 1; i < SLAP_FX_PLOT; ++i)
+                    cv_line(5 + (int)i * 3, 60 - slap_fx_trace(selected, i - 1u) - band * 40,
+                        8 + (int)i * 3, 60 - slap_fx_trace(selected, i) - band * 40, c);
+                cv_blit(0, 120 + band * 40);
+            }
+            return;
+        }
         cv_text(8, 2, &FONT_B, selected == DRUMS ? "DRUM KITS" : slap_engine_names[patch->engine], c);
         cv_text(8, 21, &FONT_XS, selected == DRUMS ? "SELECT TRACK  /  K2 KIT" :
                 patch->engine == 0u || patch->engine == 2u ? "K1 GROUP / K2 PATCH / SEL TIMBRE" :
@@ -4888,13 +4935,14 @@ void app_frame(void)
                 header_valid = graph_valid = 0;
                 draw_home_sequences();
             } else draw_panel();
+            if (slap_ui.page != HOME) home_idle_valid = 0;
         }
     }
 }
 
 void app_ui_init(void)
 {
-    header_valid = graph_valid = 0;
+    header_valid = graph_valid = home_idle_valid = 0;
     slap_ui.octave = 2;
     input_octave = 2;
     slap_ui.boot_at = plat_ms();
