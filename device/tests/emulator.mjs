@@ -194,7 +194,7 @@ assert.equal(take.tracks[0].mix, withPatternLength(frames[0].project.tracks[0].m
 assert.equal(take.tracks[0].steps[0] & 127, 60);
 assert.deepEqual(take.tracks[0].extra.map(lane => lane[0] & 127), [64, 67, 71]);
 const previousFormat = {
-  ...take, version: 3, tracks: take.tracks.map((part, track) =>
+  ...take, version: 3, tracks: take.tracks.map(({ modes, ...part }, track) =>
     track === 4 ? { ...part, extra: part.extra.slice(0, 6), offsets: part.offsets.slice(0, 7) } : { ...part, extra: part.extra.slice(0, 1), offsets: part.offsets.slice(0, 2) })
 };
 const migrated = validateProject(previousFormat);
@@ -202,6 +202,14 @@ assert.equal(migrated.tracks[0].extra[0][0] & 127, 64);
 assert.ok(migrated.tracks[0].extra[1].every(word => word === 0));
 assert.ok(migrated.tracks[0].extra[2].every(word => word === 0));
 assert.ok((take.tracks[0].steps[0] >>> 16 & 255) > 1);
+const modeProject = structuredClone(take);
+modeProject.tracks[0].modes[0][0] = 1;
+modeProject.tracks[0].modes[1][0] = 2;
+await app.onMessage({ type: 'app', command: 'project', project: validateProject(modeProject) });
+await app.onMessage({ type: 'app', command: 'read' });
+const restoredModes = validateProject(frames.at(-1).project);
+assert.equal(restoredModes.tracks[0].modes[0][0], 1);
+assert.equal(restoredModes.tracks[0].modes[1][0], 2);
 console.log('Studio recorded four simultaneous notes in a 32-bar take and migrated a two-lane project.');
 
 await app.onMessage({ type: 'app', command: 'transport', playing: true });

@@ -4,13 +4,15 @@ tap PLAY
 expect boot 0
 expect playing 0
 expect page 0
-tap GLO
+press GLO
+wait 5100
+release GLO
 expect page 2
 turn K1 3
 expect tempo 115
-press GLO
-tap SEL
-release GLO
+press EDIT
+wait 2050
+release EDIT
 expect page 11
 turn SELECT 1
 expect track 2

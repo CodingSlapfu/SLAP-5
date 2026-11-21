@@ -6,7 +6,7 @@ shot home.png
 turn SELECT 4
 expect track 5
 turn K2 2
-expect length 18
+expect length 64
 turn ALGO 8
 expect tempo 120
 tap SEQ

@@ -24,7 +24,7 @@ export const fxPanels = [
 export const fxLimit = (page, knob) => page === 2 && knob < 3 ? [2, 19, 3][knob] :
   page === 3 && knob === 0 ? 7 : page === 6 && knob === 1 ? 5 : 127;
 const fxWord = (a, b, c, d) => a | b << 8 | c << 16 | d << 24;
-const defaultFx = [0, fxWord(0,0,0,22), fxWord(0,0,1,102), fxWord(0,48,68,52), 100,
+const defaultFx = [0, fxWord(0,0,0,22), fxWord(0,0,1,127), fxWord(0,48,68,52), 100,
   fxWord(0,48,56,65), fxWord(0,2,52,87), fxWord(0,60,52,94), fxWord(0,54,108,39)];
 
 export function validateProject(project) {
@@ -59,11 +59,16 @@ export function validateProject(project) {
         track.durations.some(lane => !Array.isArray(lane) || lane.length !== bankSize ||
           lane.some(units => !within(units, 0, i === 4 ? 0 : 65535)))))
       throw new Error('Invalid note duration.');
+    if (track.modes !== undefined &&
+        (!expanded || !Array.isArray(track.modes) || track.modes.length !== track.extra.length + 1 ||
+         track.modes.some(lane => !Array.isArray(lane) || lane.length !== bankSize ||
+           lane.some(mode => !within(mode, 0, 2)))))
+      throw new Error('Invalid step mode.');
     for (const [lane, events] of [track.steps, ...(legacy ? [] : track.extra)].entries()) {
       if (!Array.isArray(events) || events.length !== bankSize) throw new Error('Invalid sequencer lane.');
       for (const [index, word] of events.entries()) {
         if (word === 0) {
-          if ((extended && track.offsets[lane][index]) || (hasDurations && track.durations[lane][index]))
+          if ((extended && track.offsets[lane][index]) || (hasDurations && track.durations[lane][index]) || track.modes?.[lane]?.[index])
             throw new Error('Timing or duration without a note.');
           continue;
         }
@@ -100,6 +105,6 @@ export function validateProject(project) {
       return { ...track, fx: track.fx ?? [...defaultFx],
         steps: lanes[0].map(word => word & 0x7fff7fff),
         extra: lanes.slice(1).map(lane => lane.map(word => word & 0x7fff7fff)), offsets,
-        durations };
+        durations, modes: track.modes?.map(lane => [...lane]) ?? lanes.map(() => Array(maxSteps).fill(0)) };
     }) };
 }

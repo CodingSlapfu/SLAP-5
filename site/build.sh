@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MPL-2.0
 set -eu
 cd "$(dirname "$0")/.."
-python3 vendor/fm1-base/tools/build.py device --web --release 0.1.18
+python3 vendor/fm1-base/tools/build.py device --web --release "${SLAP_WEB_RELEASE:-0.1.18}"
 out="${1:-device/build/studio}"
 mkdir -p "$out/emulator" "$out/protocol" "$out/screens"
 mkdir -p "$out/fonts"

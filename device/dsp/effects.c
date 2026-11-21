@@ -4,7 +4,7 @@
 #include "fastmath.h"
 #include "plat.h"
 
-enum { TRACK_DELAY = 12288, CHORUS = 1024, ROOM = 2048 };
+enum { TRACK_DELAY = 12288, MIX_DELAY = 3072, CHORUS = 1024, ROOM = 2048 };
 enum { MAIN_FX, FILTER, SLICER, INSERT, DISPLAY, REVERB, DELAY, CHORUS_FX, DRIVE };
 
 const char *const slap_fx_pages[SLAP_FX_PAGES] = {
@@ -42,14 +42,16 @@ typedef struct {
     uint32_t gate_boundary;
     unsigned gate_step;
     uint32_t delay_pos, chorus_pos, room_pos, delay_div, crush_count;
-    uint32_t revision, bpm, room_short, room_long, live;
+    uint32_t revision, bpm, room_short, room_long, live, assigned;
     unsigned tape_mode;
     uint32_t tape_controls;
     float tape_age, tape_phase, tape_wet, tape_tone;
+    float previous_sample, transition;
+    unsigned transition_pending;
     uint16_t pattern;
     int16_t slice[256];
 } Fx;
-static Fx fx[SLAP_FX_TRACKS];
+static Fx fx[SLAP_FX_TRACKS + 1];
 
 // These coefficients stay fixed throughout a callback, including while the
 // worker renders or Core 0 rolls back an FX job.
@@ -57,11 +59,18 @@ typedef struct {
     float room_damping, room_feedback, echo_damping, echo_feedback;
     float drive_gain, drive_damping, chorus_damping;
 } FxCoefficients;
-static FxCoefficients coefficients[SLAP_FX_TRACKS];
+static FxCoefficients coefficients[SLAP_FX_TRACKS + 1];
 static volatile uint32_t settings_revision[SLAP_FX_TRACKS];
 static PLAT_POOL int16_t echo_line[SLAP_FX_TRACKS][TRACK_DELAY];
 static PLAT_POOL int16_t chorus_line[SLAP_FX_TRACKS][CHORUS];
 static PLAT_POOL int16_t room_line[SLAP_FX_TRACKS][ROOM];
+/* Core 0 owns the post-mixer bus. Its short echo never touches track buffers. */
+static PLAT_POOL int16_t mix_echo[MIX_DELAY], mix_chorus[CHORUS], mix_room[ROOM];
+static float mix_wet;
+static unsigned mix_engaged;
+static uint32_t previous_live_key;
+static uint8_t smooth_controls[4];
+
 
 #if !defined(PLAT_WEB)
 typedef struct {
@@ -140,9 +149,13 @@ static inline __attribute__((always_inline)) float soft(float x) { return x / (1
 
 void slap_fx_init(void)
 {
+    mix_wet = 0.0f;
+    mix_engaged = 0;
+    previous_live_key = 0;
+    fx[SLAP_FX_TRACKS] = (Fx){.gate = 1.0f};
     for (unsigned t = 0; t < SLAP_FX_TRACKS; ++t) {
         settings[t][FILTER] = bytes(0, 0, 0, 22);
-        settings[t][SLICER] = bytes(0, 0, 1, 102);
+        settings[t][SLICER] = bytes(0, 0, 1, 127);
         settings[t][INSERT] = bytes(0, 48, 68, 52);
         settings[t][DISPLAY] = 100;
         settings[t][REVERB] = bytes(0, 48, 56, 65);
@@ -159,6 +172,40 @@ unsigned slap_fx_value(unsigned track, unsigned page, unsigned knob)
     if (track >= SLAP_FX_TRACKS || page >= SLAP_FX_PAGES || knob >= 4) return 0;
     if (page == MAIN_FX) return settings[track][REVERB + knob] & 255u;
     return (settings[track][page] >> (8 * knob)) & 255u;
+}
+
+const char *slap_live_parameter_name(unsigned id)
+{
+    static const char *const gesture[] = {"AMOUNT", "RATE", "TONE", "SPACE"};
+    if (id < 4u) return gesture[id];
+    unsigned slot = id - 4u;
+    if (slot >= SLAP_FX_PAGES * 4u || slot / 4u == MAIN_FX) return 0;
+    return slap_fx_labels[slot / 4u][slot % 4u];
+}
+
+const char *slap_live_parameter_effect(unsigned id)
+{
+    if (id < 4u) return "LIVE KEY";
+    return slap_live_parameter_name(id) ? slap_fx_pages[(id - 4u) / 4u] : 0;
+}
+
+unsigned slap_live_parameter_limit(unsigned id)
+{
+    unsigned slot = id - 4u;
+    unsigned page = slot / 4u, knob = slot % 4u;
+    if (id < 4u) return 63u;
+    if (page == SLICER && knob < 3u) {
+        static const unsigned limits[] = {2, 19, 3};
+        return limits[knob];
+    }
+    if (page == INSERT && knob == 0) return 7;
+    if (page == DELAY && knob == 1) return 5;
+    return 127;
+}
+
+unsigned slap_live_parameter_value(unsigned id, unsigned raw)
+{
+    return (raw * slap_live_parameter_limit(id) + 31u) / 63u;
 }
 
 void slap_fx_change(unsigned track, unsigned page, unsigned knob, int delta)
@@ -196,34 +243,70 @@ static uint32_t fx_word(unsigned a, unsigned b, unsigned c, unsigned d)
 
 void slap_fx_begin_live(unsigned bpm, uint32_t live)
 {
+    slap_fx_begin_assigned(bpm, live, 0x03020100u);
+}
+
+void slap_fx_begin_assigned(unsigned bpm, uint32_t live, uint32_t assignments)
+{
     static const unsigned slice_lengths[4] = {8, 4, 2, 1};
     static const unsigned echo_eighths[6] = {1, 2, 3, 4, 6, 8};
-    for (unsigned t = 0; t < SLAP_FX_TRACKS; ++t) {
+    uint32_t controls = 0x21332134u;
+    unsigned key = live & 127u;
+    for (unsigned k = 0; k < 4u; ++k) {
+        unsigned id = (assignments >> (8u * k)) & 255u;
+        unsigned shift = 7u + k * 6u;
+        int raw = (int)(live >> shift & 63u);
+        if (key == previous_live_key && key && slap_live_parameter_limit(id) >= 63u)
+            raw = clamp(raw, (int)smooth_controls[k] - 8, (int)smooth_controls[k] + 8);
+        smooth_controls[k] = (uint8_t)raw;
+        live = (live & ~(63u << shift)) | (uint32_t)raw << shift;
+    }
+    previous_live_key = key;
+    for (unsigned k = 0; k < 4u; ++k) {
+        unsigned id = (assignments >> (8u * k)) & 255u;
+        if (id < 4u) {
+            unsigned shift = 8u * id;
+            unsigned raw = (live >> (7u + 6u * k)) & 63u;
+            controls = (controls & ~(255u << shift)) | raw << shift;
+        }
+    }
+    mix_engaged = (live & 7u) == SLAP_FX_TRACKS && (live >> 3 & 15u);
+    for (unsigned t = 0; t <= SLAP_FX_TRACKS; ++t) {
         Fx *f = &fx[t];
-        uint32_t revision = settings_revision[t];
+        const int master = t == SLAP_FX_TRACKS;
+        if (master && !mix_engaged) continue; /* Keep the current effect during release. */
+        unsigned revision = master ? 0 : settings_revision[t];
         uint32_t action = (live & 7u) == t ? live >> 3 : 0;
-        if (f->revision == revision && f->bpm == bpm && f->live == action) continue;
+        uint32_t assigned = action ? assignments : 0;
+        if (f->revision == revision && f->bpm == bpm && f->live == action &&
+            f->assigned == assigned) continue;
+        f->assigned = assigned;
         uint32_t previous_action = f->live;
+        if (!master && previous_action && (previous_action & 15u) != (action & 15u))
+            f->transition_pending = 1;
         f->live = action;
         f->revision = revision;
         f->bpm = bpm;
-        uint32_t filter = settings[t][FILTER], slice = settings[t][SLICER];
-        uint32_t insert = settings[t][INSERT], delay = settings[t][DELAY];
-        uint32_t room = settings[t][REVERB], chorus = settings[t][CHORUS_FX];
-        uint32_t mix = settings[t][DISPLAY];
+        uint32_t filter = master ? 0 : settings[t][FILTER], slice = master ? 0 : settings[t][SLICER];
+        uint32_t insert = master ? 0 : settings[t][INSERT], delay = master ? 0 : settings[t][DELAY];
+        uint32_t room = master ? 0 : settings[t][REVERB], chorus = master ? 0 : settings[t][CHORUS_FX];
+        uint32_t mix = master ? 127 : settings[t][DISPLAY];
+        uint32_t drive = master ? 0 : settings[t][DRIVE];
         unsigned mode = action & 15u;
         if (mode == 10u || mode == 11u) {
             if (f->tape_mode != mode || (previous_action & 15u) != mode) {
                 f->tape_mode = mode;
                 f->tape_age = f->tape_phase = 0.0f;
             }
-            f->tape_controls = action;
+            f->tape_controls = (action & 15u) | (controls & 63u) << 4 |
+                (controls >> 8 & 63u) << 10 | (controls >> 16 & 63u) << 16 |
+                (controls >> 24 & 63u) << 22;
         }
         if (mode) {
-            unsigned amount = (action >> 4 & 63u) * 2u;
-            unsigned speed = (action >> 10 & 63u) * 2u;
-            unsigned tone = (action >> 16 & 63u) * 2u;
-            unsigned space = (action >> 22 & 63u) * 2u;
+            unsigned amount = (controls & 63u) * 2u;
+            unsigned speed = (controls >> 8 & 63u) * 2u;
+            unsigned tone = (controls >> 16 & 63u) * 2u;
+            unsigned space = (controls >> 24 & 63u) * 2u;
             switch (mode) {
             case 1: slice = fx_word(1, 1, speed >> 5, amount); break;
             case 2: slice = fx_word(2, 1, speed >> 5, amount); break;
@@ -238,6 +321,18 @@ void slap_fx_begin_live(unsigned bpm, uint32_t live)
                 slice = fx_word(2, 12, speed >> 5, amount);
                 mix = 127;
                 break;
+            }
+        }
+        if (mode) {
+            uint32_t *words[SLAP_FX_PAGES] = {0, &filter, &slice, &insert, &mix, &room, &delay, &chorus, &drive};
+            for (unsigned k = 0; k < 4u; ++k) {
+                unsigned id = assigned >> (8u * k) & 255u;
+                if (id < 4u || !slap_live_parameter_name(id)) continue;
+                unsigned slot = id - 4u;
+                unsigned shift = 8u * (slot % 4u);
+                unsigned value = slap_live_parameter_value(id, live >> (7u + 6u * k) & 63u);
+                uint32_t *word = words[slot / 4u];
+                *word = (*word & ~(255u << shift)) | value << shift;
             }
         }
         f->low = unit(filter & 255u);
@@ -262,8 +357,8 @@ void slap_fx_begin_live(unsigned bpm, uint32_t live)
         f->speed = unit(insert >> 24);
         f->mix = unit(mix & 255u);
         f->time = 11025u * 60u / bpm * echo_eighths[(delay >> 8) & 255u] / 8u;
-        if (f->time >= TRACK_DELAY) f->time = TRACK_DELAY - 1;
-        uint32_t drive = settings[t][DRIVE];
+        unsigned delay_capacity = master ? MIX_DELAY : TRACK_DELAY;
+        if (f->time >= delay_capacity) f->time = delay_capacity - 1;
         for (unsigned k = 0; k < 4; ++k) {
             unsigned shift = k * 8u;
             f->dp[k] = unit((delay >> shift) & 255u);
@@ -339,22 +434,23 @@ unsigned slap_fx_active_mask(void)
     unsigned mask = 0;
     for (unsigned track = 0; track < SLAP_FX_TRACKS; ++track) {
         const Fx *f = &fx[track];
-        if (f->tape_mode || f->filter_scale > 0.0f || f->dr[0] > 0.0f || f->ch[0] > 0.0f ||
+        if (f->transition_pending || f->transition != 0.0f ||
+            f->tape_mode || f->filter_scale > 0.0f || f->dr[0] > 0.0f || f->ch[0] > 0.0f ||
             f->insert || f->mode || f->rv[0] > 0.0f || f->dp[0] > 0.0f)
             mask |= 1u << track;
     }
     return mask;
 }
 
-static inline __attribute__((always_inline)) float tape_read(unsigned track, unsigned pos, float delay)
+static inline __attribute__((always_inline)) float tape_read(const int16_t *ring, unsigned capacity, unsigned pos, float delay)
 {
     unsigned index = (unsigned)delay;
-    float a = unpack(echo_line[track][preceding(pos, index, TRACK_DELAY)]);
-    float b = unpack(echo_line[track][preceding(pos, index + 1u, TRACK_DELAY)]);
+    float a = unpack(ring[preceding(pos, index, capacity)]);
+    float b = unpack(ring[preceding(pos, index + 1u, capacity)]);
     return a + (b - a) * (delay - index);
 }
 
-static inline __attribute__((always_inline)) float tape_sample(Fx *f, unsigned track, float dry)
+static inline __attribute__((always_inline)) float tape_sample(Fx *f, int16_t *echo, unsigned capacity, float dry)
 {
     unsigned mode = f->live & 15u;
     int held = mode == f->tape_mode;
@@ -365,8 +461,8 @@ static inline __attribute__((always_inline)) float tape_sample(Fx *f, unsigned t
     f->tape_wet += ((held ? (mode == 10u ? 1.0f : amount) : 0.0f) - f->tape_wet) * 0.009f;
     unsigned pos = f->delay_pos;
     if ((f->delay_div++ & 3u) == 0) {
-        echo_line[track][pos] = pack(dry);
-        if (++pos == TRACK_DELAY) pos = 0;
+        echo[pos] = pack(dry);
+        if (++pos == capacity) pos = 0;
         f->delay_pos = pos;
     }
     float wet;
@@ -375,8 +471,8 @@ static inline __attribute__((always_inline)) float tape_sample(Fx *f, unsigned t
             f->tape_age = fm_minf(1.0f, f->tape_age + (0.00007f + 0.00031f * rate));
             f->tape_phase = fm_minf(10000.0f, f->tape_phase + 0.25f * f->tape_age);
         }
-        float delay = f->tape_phase + 2.0f;
-        wet = tape_read(track, pos, delay) * (1.0f - f->tape_age);
+        float delay = fm_minf(f->tape_phase + 2.0f, (float)(capacity - 2u));
+        wet = tape_read(echo, capacity, pos, delay) * (1.0f - f->tape_age);
     } else {
         float length = 256.0f + 512.0f * space;
         if (held) {
@@ -386,18 +482,16 @@ static inline __attribute__((always_inline)) float tape_sample(Fx *f, unsigned t
         float phase = f->tape_phase;
         float second = phase < 0.5f ? phase + 0.5f : phase - 0.5f;
         float weight = 1.0f - fm_fabsf(2.0f * phase - 1.0f);
-        wet = weight * tape_read(track, pos, 2.0f + length * phase) +
-              (1.0f - weight) * tape_read(track, pos, 2.0f + length * second);
+        wet = weight * tape_read(echo, capacity, pos, 2.0f + length * phase) +
+              (1.0f - weight) * tape_read(echo, capacity, pos, 2.0f + length * second);
     }
     f->tape_tone += (wet - f->tape_tone) * (0.05f + 0.80f * tone);
     if (!held && f->tape_wet < 0.00005f) f->tape_mode = 0;
     return dry + (f->tape_tone - dry) * f->tape_wet;
 }
 
-#ifndef PLAT_HOST
-__attribute__((section(".c1_text.slap_fx"), noinline))
-#endif
-float slap_fx_sample(unsigned track, float dry)
+static inline __attribute__((always_inline)) float process_sample(
+    unsigned track, float dry, int16_t *echo, unsigned capacity, int16_t *chorus, int16_t *room)
 {
     Fx *f = &fx[track];
     const FxCoefficients *c = &coefficients[track];
@@ -423,8 +517,8 @@ float slap_fx_sample(unsigned track, float dry)
             unsigned pos = f->chorus_pos;
             unsigned tap = 12u + (unsigned)(lfo * (f->insert == 7 ? 105.0f : 500.0f) *
                             (0.1f + 0.9f*f->ch[1]));
-            float ch = unpack(chorus_line[track][preceding(pos, tap, CHORUS)]);
-            chorus_line[track][pos] = pack(x);
+            float ch = unpack(chorus[preceding(pos, tap, CHORUS)]);
+            chorus[pos] = pack(x);
             f->chorus_pos = (pos + 1u) & (CHORUS - 1u);
             if (f->insert) x = insert_sample(f, x, lfo, ch);
             f->chorus_lp += (ch - f->chorus_lp) * c->chorus_damping;
@@ -453,26 +547,26 @@ float slap_fx_sample(unsigned track, float dry)
     }
     if (f->rv[0] > 0.0f) {
         unsigned idx = f->room_pos;
-        float a = unpack(room_line[track][preceding(idx, f->room_long, ROOM)]);
-        float b = unpack(room_line[track][preceding(idx, f->room_short, ROOM)]);
+        float a = unpack(room[preceding(idx, f->room_long, ROOM)]);
+        float b = unpack(room[preceding(idx, f->room_short, ROOM)]);
         f->reverb_lp += ((a * 0.61f + b * 0.39f) - f->reverb_lp) * c->room_damping;
-        room_line[track][idx] = pack(x * 0.58f + f->reverb_lp * c->room_feedback);
+        room[idx] = pack(x * 0.58f + f->reverb_lp * c->room_feedback);
         f->room_pos = (idx + 1u) & (ROOM - 1u);
         x += f->rv[0] * f->reverb_lp;
     }
-    if (f->tape_mode) x = tape_sample(f, track, x);
+    if (f->tape_mode) x = tape_sample(f, echo, capacity, x);
     else if (f->dp[0] > 0.0f) {
         if ((f->delay_div++ & 3u) == 0) {
             unsigned pos = f->delay_pos;
-            float wet = unpack(echo_line[track][preceding(pos, f->time, TRACK_DELAY)]);
+            float wet = unpack(echo[preceding(pos, f->time, capacity)]);
             f->delay_lp += (wet - f->delay_lp) * c->echo_damping;
-            echo_line[track][pos] = pack(x + f->delay_lp * c->echo_feedback);
-            if (++pos == TRACK_DELAY) pos = 0;
+            echo[pos] = pack(x + f->delay_lp * c->echo_feedback);
+            if (++pos == capacity) pos = 0;
             f->delay_pos = pos;
         }
         x += f->dp[0] * f->delay_lp;
     }
-    if ((f->block_index++ & 63u) == 0) {
+    if (track < SLAP_FX_TRACKS && (f->block_index++ & 63u) == 0) {
         unsigned point = (f->block_index >> 6) % SLAP_FX_PLOT;
         traces[track][point] = (int8_t)(clamp_signal(x * 2.0f) * 55.0f);
         if (!track) trace_head = point;
@@ -483,6 +577,47 @@ float slap_fx_sample(unsigned track, float dry)
 int slap_fx_trace(unsigned track, unsigned point)
 {
     return traces[track][(trace_head + point + 1u) % SLAP_FX_PLOT];
+}
+
+#ifndef PLAT_HOST
+__attribute__((section(".c1_text.slap_fx"), noinline))
+#endif
+float slap_fx_sample(unsigned track, float dry)
+{
+    Fx *f = &fx[track];
+    float output = process_sample(track, dry, echo_line[track], TRACK_DELAY,
+                                  chorus_line[track], room_line[track]);
+    if (f->transition_pending) {
+        f->transition_pending = 0;
+        f->transition = f->previous_sample - output;
+    }
+    if (f->transition != 0.0f) {
+        output += f->transition;
+        f->transition *= 0.996f;
+        if (fm_fabsf(f->transition) < 0.00002f) f->transition = 0.0f;
+    }
+    f->previous_sample = output;
+    return output;
+}
+
+unsigned slap_fx_mix_active(void)
+{
+    return mix_engaged || mix_wet > 0.0f;
+}
+
+void slap_fx_mix_sample(float *left, float *right)
+{
+    float target = mix_engaged ? 1.0f : 0.0f;
+    mix_wet += (target - mix_wet) * 0.004f;
+    if (!mix_engaged && mix_wet < 0.00005f) {
+        mix_wet = 0.0f;
+        return;
+    }
+    float middle = (*left + *right) * 0.5f;
+    float wet = process_sample(SLAP_FX_TRACKS, middle, mix_echo, MIX_DELAY, mix_chorus, mix_room);
+    // Use a centered wet signal and crossfade from the original stereo mix.
+    *left += (wet - *left) * mix_wet;
+    *right += (wet - *right) * mix_wet;
 }
 
 unsigned slap_fx_slicer_cell(unsigned track, unsigned step)

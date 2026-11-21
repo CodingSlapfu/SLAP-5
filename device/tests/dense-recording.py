@@ -17,7 +17,7 @@ from pcm_parity import compare_pcm
 
 def scenario(seed, bpm, bars, fx, visual, chords=False, arrangement=False, modulated=False, live_fx=False):
     rng = random.Random(seed)
-    commands = ["wait 6100", f"turn ALGO {bpm - 112}", f"expect tempo {bpm}"]
+    commands = ["wait 6100", f"turn ALGO {bpm - 112}", f"expect tempo {bpm}", "tap GLO", "turn SELECT 1", "turn K3 1", "tap HOME"]
     if bars > 1:
         steps = bars * 16
     else:
@@ -27,7 +27,7 @@ def scenario(seed, bpm, bars, fx, visual, chords=False, arrangement=False, modul
             commands.append(f"turn SELECT {3 if arrangement and track == 4 else 1}")
         commands.append(f"expect track {track + 1}")
         if steps > 16:
-            commands += [f"turn K2 {steps - 16}", f"expect length {steps}"]
+            commands += [f"turn K2 {bars.bit_length() - 1}", f"expect length {steps}"]
         if chords and track < 4:
             commands += ["tap SEL", "turn K3 1", "expect chord_mode 1", "tap HOME"]
         if modulated and track < 4:
@@ -72,7 +72,7 @@ def extreme_scenario(seed, bpm, soak_ms=60000):
     dense = scenario(seed, bpm, 1, False, False, chords=True,
                      modulated=True, live_fx=True)
     commands += dense[1:-3]
-    commands += ["tap FX", "tap FX", "expect page 14", "wav dense.wav"]
+    commands += ["tap FX", "tap FX", "expect page 14", "tap SEL", "wav dense.wav"]
     for key in range(11):
         commands += [f"key b{key} down", f"expect live_fx {key + 1}",
                      "wait 860", f"key b{key} up", "expect live_fx 0", "wait 100"]
@@ -85,7 +85,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--seed", type=int, default=519331)
     parser.add_argument("--bpm", type=int, choices=range(40, 241), metavar="40..240", default=112)
-    parser.add_argument("--bars", type=int, choices=(1, 16, 32), default=1)
+    parser.add_argument("--bars", type=int, choices=(1, 2, 4), default=1)
     parser.add_argument("--fx", action="store_true")
     parser.add_argument("--visual", action="store_true")
     parser.add_argument("--live-fx", action="store_true", help="Exercise all black-key effects during replay")

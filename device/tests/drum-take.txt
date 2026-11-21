@@ -1,4 +1,8 @@
 wait 6100
+tap GLO
+turn SELECT 1
+turn K3 1
+tap HOME
 turn SELECT 4
 expect track 5
 tap REC

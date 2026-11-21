@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MPL-2.0
 # Copyright (C) 2026 Ziao
 
-"""Check all eight visualizer frames at identical musical times and four gains."""
+"""Check all six visualizer frames at identical musical times and four gains."""
 
 from pathlib import Path
 import subprocess
@@ -22,7 +22,7 @@ with tempfile.TemporaryDirectory() as directory:
             "tap HOME", "tap PLAY", "key 10 down", "wait 400",
             "wav music.wav",
         ]
-        for visual in range(8):
+        for visual in range(6):
             if visual:
                 commands.append("turn SELECT 1")
             commands.extend(("wait 160", f"shot visual-{visual}.png"))
@@ -30,7 +30,7 @@ with tempfile.TemporaryDirectory() as directory:
         script = target / "input.txt"
         script.write_text("\n".join(commands) + "\n")
         subprocess.run([host, script, target], check=True)
-        frames = [(target / f"visual-{visual}.png").read_bytes() for visual in range(8)]
+        frames = [(target / f"visual-{visual}.png").read_bytes() for visual in range(6)]
         if reference is None:
             reference = frames
         for visual, (actual, expected) in enumerate(zip(frames, reference)):
@@ -38,4 +38,4 @@ with tempfile.TemporaryDirectory() as directory:
         with wave.open(str(target / "music.wav")) as wav:
             has_signal = any(wav.readframes(wav.getnframes()))
         assert has_signal == bool(gain), f"Unexpected audio signal at master {gain}"
-print("All eight visualizers match at 100%, 50%, 10%, and 0%; zero master is silent.")
+print("All six visualizers match at 100%, 50%, 10%, and 0%; zero master is silent.")

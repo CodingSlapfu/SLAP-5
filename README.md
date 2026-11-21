@@ -2,26 +2,34 @@
 
 SLAP-5 is an original five-track groovebox for the M-VAVE FM-1. Copyright (C) 2026 Ziao.
 
-**Development source.** Keep the current package off physical hardware. SDK and package integrity checks pass. Physical timing, flash compatibility and update recovery remain unverified, and the full TESTING release has additional feature work.
+**Development branch.** The public installer and recovery links are listed on [SLAP FLASH](https://slap-5.jminie66.chatgpt.site/flash). The [v0.1.21 hardware-testing release](https://github.com/CodingSlapfu/SLAP-5/releases/tag/v0.1.21-hardware-testing) is the owner-tested audio baseline for this branch. Check the engineering record before flashing a newer package.
 
-## Controls
+## Performance controls
 
 | Control | Function |
 | --- | --- |
-| HOME | Return to the track sequencer. Press again to open the eight visualizers. |
-| SELECT | Choose a track on HOME, a step in SEQ, a patch in EDIT, a page in FX or a slot in SAVE. |
-| ALGO | Set BPM. |
-| PRESET | Select one of 128 factory patches for melodic tracks, or one of 32 drum kits on track 5. |
-| HOME knobs | Pan, steps (1–64), level, swing. |
-| SEQ knobs | Pitch, velocity, note gate, hit probability. Press a key to insert or toggle the current note. |
-| FX | Main, filter, slicer, insert, processor, reverb, tempo delay, chorus and drive. |
-| SEL | Open harmony on HOME for a melodic track. Set key, scale, chords and strum. |
-| ENV / LFO | Edit ADSR or pitch LFO on a melodic track. |
-| ARP | Choose the keyboard arpeggiation mode, tempo division, octave range and gate. |
-| SAVE | While stopped, hold the selected white key for four seconds to save. Press SEL to load. |
-| PLAY / OCT± | Transport and keyboard octave. |
+| HOME | Return to the looper. Press again to open the six visualizers. |
+| SELECT | Choose a track on HOME. During a take, the old track keeps looping and the next selected track starts recording at the current transport position. |
+| REC tap | Start or finish a HOME take. Choose count-in versus first note and replace versus overdub in SETTINGS. |
+| REC + OCT− | Undo the selected track's last short-loop take or clear. |
+| REC + OCT+ twice | Clear the current loop. |
+| REC + SEL twice | Clear the complete selected track, including hidden legacy steps. |
+| REC + ARP | Cancel the current take and restore its snapshot. |
+| Hold REC for 2 seconds | Open advanced RECORD. |
+| Tap EDIT | Open PATCH. |
+| Hold EDIT for 2 seconds | Open MIXER. Press HOME to exit. The first five white keys mute tracks 1–5 and show their enabled state. ARP toggles the selected track's solo. |
+| Tap GLO | Open SETTINGS from a performance page. |
+| Hold GLO for 5 seconds | Open DIAGNOSTICS. Short GLO presses inside diagnostics cycle its pages. |
+| Double-press FX | Open LIVE FX. Black keys apply momentary effects and white keys play notes. SEL switches between the selected track and the full mix. |
+| SEL on HOME | Open KEY & CHORDS for the selected melodic track. OCT− toggles Perfect Note, OCT+ cycles the chord type, K2 sets Split Keys, and SEL+K2 sets the scale. |
 
-USB MIDI channels 1–5 address the five tracks. Each melodic step supports two independently editable notes. The drum sequencer has six fixed lanes and preserves legacy drum notes. In SEQ, hold SEL and turn SELECT to choose a lane or turn knob 4 for delay in eighths of a step. For the selected fixed drum lane, SEL+ARP toggles mute and SEL+REC toggles solo. The harmony engine can spread a chord across voices. The display uses SLAP BLOCK lettering on the logo. The opening animation plays two brief startup tones. During playback HOME scrolls note blocks past a fixed playhead.
+HOME offers 16, 32 and 64 steps. Legacy lengths and stored notes remain intact on load. An explicit length change changes the loop boundary while retaining events beyond it. Undo keeps one snapshot per track for short loops. Long legacy edits reuse the bounded whole-track snapshot.
+
+SEQ edits four melodic note lanes or sixteen fixed drum lanes plus the legacy drum row. Turn SELECT to move the cursor and hold SEL to choose a lane. K1–K4 set pitch, velocity, gate and probability. SEL+K3 sets melodic hold duration, and SEL+K4 sets timing within the step. Holding SEL activates Fill in SEQ. SEL+OCT+ cycles Normal, Ratchet and Fill Only for the current note. SEL+EDIT copies a step, SEL+LFO cuts it, SEL+ENV pastes it within the same lane, and SEL+OCT− clears it. Sample-backed drums play one-shots; melodic holds can span step boundaries.
+
+SETTINGS offers Audio, Metronome, Recording, Transport, Keyboard, Display, Diagnostics, Live FX Knobs and Lights. Auto Level is enabled by default and works alongside manual mixer levels. Metronome modes are Off, On and Rec Only. Live FX assignments temporarily control the labeled effect parameters and persist across reboot. The full-mix path uses a centered wet signal and a bounded short echo with a stereo dry return.
+
+USB MIDI channels 1–5 address the five tracks. Use ALGO for tempo and PRESET for one of 128 melodic patches or the 25 sample-backed factory kits. All 56 legacy drum kits remain readable. Press SAVE while stopped, hold the target white key for four seconds to save, or press SEL to load the selected slot.
 
 To generate a drum pattern on the FM-1, select track 5 from HOME and press SEQ.
 The drum sequencer shows **SEQ: GEN DRUMS**. Press SEQ again to open the
@@ -50,12 +58,6 @@ An optional Chromium test is available at `site/tests/studio.cjs`. Run it with P
 
 For the native development build, set `JIELI_TOOLCHAIN` to the JieLi Linux toolchain (tested with the 20260730.1 bundle) and `AC79_SDK` to the SDK checkout at d179b4484759423312073f5fbb232501aa491047. Run `device/build-native.sh`. This checks the three pinned SDK hashes before invoking the native build. Provenance and both sets of SHA-256 values are in [SDK pinning](evidence/sdk-pinning.md). See `evidence/` for the image sizes, package checks, software tests and SHA-256 hashes.
 
-## Remaining TESTING release work
+## Release qualification
 
-- Extend the sequencer beyond two melodic events per step, add tied notes, accents, earlier microtiming, recording, arrangement and more pattern variation.
-- Add LIVE FX performance controls, arpeggiator project persistence and MIDI input, Nature beds, comprehensive GLO diagnostics, Bluetooth and clock sync. Complete patch favorites, categories, parameter editing and the remaining studio device transfer and editing workflows.
-- Extend the scrolling sequencer and display typography across the remaining pages. Listen through the synth and patch library, tune the drum kits and effects, and profile the heaviest DSP and visuals on an FM-1. Implement or demonstrate the dual-core strategy and safe fallback.
-- Verify the storage sectors, update compatibility, bootloader retention and recovery on supported devices. Qualify the gated SLAP FLASH transfer and rollback paths on supported devices and complete browser integration testing.
-- Publish the TESTING release and complete HTTPS site together once the build passes the release gates. Publish version, identity, checksums, release and source links, and tested installation and recovery instructions.
-
-The SDK check verifies the reference file set only. Native static checks and host timing cannot establish physical-device acceptance.
+See [the engineering record](evidence/groovebox-overhaul.md) and [owner acceptance checklist](https://github.com/CodingSlapfu/SLAP-5/issues/2) for the current tests and remaining physical gates. Version 9 song slots are used only for ratchet or Fill Only metadata. Earlier song versions remain readable. Keep independent project backups before moving between firmware versions.

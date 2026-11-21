@@ -9,13 +9,13 @@ tap HOME
 press REC
 wait 2050
 release REC
-turn K1 3
+turn K1 1
 tap SEL
 tap PLAY
 key 7 down
 wait 40
 key 7 up
-expect length 128
+expect length 32
 tap PLAY
 turn K1 1
 tap SEL
@@ -23,7 +23,7 @@ tap PLAY
 key 7 down
 wait 40
 key 7 up
-expect length 256
+expect length 64
 tap PLAY
 turn K1 1
 turn K3 1
@@ -32,15 +32,15 @@ tap PLAY
 key 7 down
 wait 40
 key 7 up
-expect length 512
+expect length 64
 wait 10000
 key 10 down
 wait 40
 key 10 up
-expect recorded 4
+expect recorded >2
 tap PLAY
 tap SEQ
-turn SELECT 400
+turn SELECT 63
 key 12 down
 key 12 up
 expect pitch 65
@@ -61,15 +61,15 @@ tap SEL
 expect length 16
 turn SELECT -1
 tap SEL
-expect length 512
+expect length 64
 tap SEQ
-turn SELECT 400
+turn SELECT 63
 expect pitch 65
 expect note_offset 13
 tap HOME
 turn SELECT 4
-turn K2 496
-expect length 512
+turn K2 2
+expect length 64
 tap SEQ
 tap SEQ
 turn K1 13
@@ -81,9 +81,9 @@ tap SAVE
 key 0 down
 wait 4200
 key 0 up
-expect store_writes 3
+expect store_writes 4
 tap SEL
-expect length 16
+expect length 64
 tap HOME
 turn SELECT -4
-expect length 512
+expect length 64

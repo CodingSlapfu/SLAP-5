@@ -1,6 +1,5 @@
 wait 6100
 tap GLO
-tap SEL
 expect page 15
 expect settings_section 0
 turn K1 -1
@@ -28,12 +27,22 @@ tap PLAY
 expect step >3
 tap PLAY
 tap GLO
-tap SEL
 turn SELECT 6
 expect settings_section 6
 tap SEL
 expect page 2
-press GLO
-tap SEL
-release GLO
+press EDIT
+wait 1800
+expect page 2
+wait 250
 expect page 11
+release EDIT
+expect page 11
+tap HOME
+press GLO
+wait 4700
+expect page 0
+wait 400
+expect page 2
+release GLO
+expect page 2

@@ -77,7 +77,7 @@ async function test() {
     assert.ok(generated.tracks[4].extra.flat().some(Boolean));
     await page.locator('#undo').click();
     await page.getByRole('button', { name: 'Track 1', exact: true }).click();
-    await page.locator('#take-bars').selectOption({ label: '32' });
+    await page.locator('#take-bars').selectOption({ label: '4' });
     await page.locator('#take').click();
     await page.waitForFunction(() => document.getElementById('take-state').textContent === 'Play a note');
     const key = page.locator('#take-keys button').first();
@@ -87,7 +87,7 @@ async function test() {
     await page.keyboard.up('Space');
     await page.locator('#take').click();
     await page.waitForFunction(() => document.getElementById('take-state').textContent === 'Take captured');
-    assert.equal(await page.locator('#length').inputValue(), '512');
+    assert.equal(await page.locator('#length').inputValue(), '64');
     await page.locator('#next-steps').click();
     assert.match(await page.locator('#position').textContent(), /Step 65/);
     await page.reload();

@@ -1,0 +1,52 @@
+wait 1500
+tap SEQ
+key w4 down
+key w4 up
+expect pitch 60
+press SEL
+turn K3 4
+expect note_ms >100
+turn K4 5
+expect note_offset 5
+tap OCT+
+expect step_mode 1
+tap EDIT
+release SEL
+turn SELECT 1
+press SEL
+tap ENV
+release SEL
+expect pitch 60
+expect note_ms >100
+expect note_offset 5
+expect step_mode 1
+tap SAVE
+key w0 down
+wait 4200
+key w0 up
+expect store_writes 1
+reboot
+wait 1500
+tap SAVE
+tap SEL
+tap SEQ
+turn SELECT 1
+expect step_mode 1
+expect note_offset 5
+expect note_ms >100
+press SEL
+tap OCT+
+expect step_mode 2
+tap LFO
+release SEL
+expect pitch -1
+turn SELECT 1
+press SEL
+tap ENV
+release SEL
+expect pitch 60
+expect step_mode 2
+press SEL
+tap OCT-
+release SEL
+expect pitch -1

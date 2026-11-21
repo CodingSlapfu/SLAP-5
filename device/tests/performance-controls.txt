@@ -1,0 +1,94 @@
+wait 1500
+tap EDIT
+expect page 3
+tap HOME
+tap REC
+expect recording 1
+expect rec_running 0
+key w3 down
+wait 220
+expect rec_running 1
+turn SELECT 1
+expect record_track 2
+expect playing 1
+expect recording 1
+key w3 up
+key w4 down
+wait 125
+turn SELECT 1
+expect record_track 3
+expect recording 1
+key w4 up
+key w5 down
+wait 150
+key w5 up
+turn SELECT 1
+expect record_track 4
+key w1 down
+wait 150
+key w1 up
+turn SELECT 1
+expect record_track 5
+key w0 down
+wait 80
+key w0 up
+expect playing 1
+expect step >3
+press EDIT
+wait 1900
+expect page 0
+expect recording 1
+wait 150
+expect page 11
+expect playing 1
+expect recording 1
+release EDIT
+key w4 down
+key w4 up
+expect mute 1
+key w4 down
+key w4 up
+expect mute 0
+tap HOME
+press REC
+tap ARP
+release REC
+wait 150
+expect recording 0
+expect playing 1
+press REC
+tap OCT+
+release REC
+press REC
+tap OCT+
+release REC
+wait 150
+expect playing 1
+press REC
+tap OCT-
+release REC
+wait 150
+expect playing 1
+tap FX
+tap FX
+expect page 14
+tap SEL
+expect live_mix 1
+key b4 down
+expect live_fx 5
+wait 80
+tap SEL
+expect live_mix 0
+key b4 up
+expect live_fx 0
+tap HOME
+tap PLAY
+tap GLO
+turn SELECT 7
+expect settings_section 7
+turn K1 1
+expect live_assignment 1
+wait 700
+reboot
+wait 1500
+expect live_assignment 1

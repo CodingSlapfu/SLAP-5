@@ -20,6 +20,9 @@ tap OCT+
 expect pitch -1
 tap ARP
 expect pitch 60
+tap GLO
+turn SELECT 1
+turn K3 1
 tap HOME
 tap REC
 wait 2300
@@ -46,9 +49,9 @@ expect pitch 60
 expect playing 1
 tap HOME
 turn K2 1
-expect length 17
+expect length 32
 tap SEQ
-turn SELECT 16
+turn SELECT 31
 key 7 down
 key 7 up
 press SEL

@@ -25,6 +25,8 @@ globalThis.fm1App = {
             steps: Array.from({ length: 512 }, (_, s) => (ex.studio_event(t, s, 0) & 0x7fff7fff) >>> 0),
             offsets: Array.from({ length: t === 4 ? 17 : 4 }, (_, lane) =>
               Array.from({ length: 512 }, (_, s) => ex.studio_note_offset(t, s, lane))),
+            modes: Array.from({ length: t === 4 ? 17 : 4 }, (_, lane) =>
+              Array.from({ length: 512 }, (_, s) => ex.studio_step_mode(t, s, lane))),
             durations: Array.from({ length: t === 4 ? 17 : 4 }, (_, lane) =>
               Array.from({ length: 512 }, (_, s) => ex.studio_note_duration(t, lane, s))),
             extra: Array.from({ length: t === 4 ? 16 : 3 }, (_, lane) =>
@@ -37,7 +39,7 @@ globalThis.fm1App = {
       ex.studio_set_metronome(metronome ?? 0);
       ex.studio_set_drum_filters(drumFilters ?? 0);
       ex.studio_set_clock(bpm, swing);
-      tracks.forEach(({ mix, patch, steps, extra, fx, offsets, durations }, t) => {
+      tracks.forEach(({ mix, patch, steps, extra, fx, offsets, durations, modes }, t) => {
         ex.studio_set_track(t, mix, patch);
         fx?.forEach((word, page) => ex.studio_set_fx(t, page, word));
         for (let lane = 0; lane <= (t === 4 ? 16 : 3); lane++) {
@@ -46,6 +48,7 @@ globalThis.fm1App = {
             const word = events?.[s] ?? 0;
             ex.studio_set_event(t, s, lane, word);
             if (word && offsets) ex.studio_set_note_offset(t, s, lane, offsets[lane][s]);
+            if (word && modes?.[lane]?.[s]) ex.studio_set_step_mode(t, s, lane, modes[lane][s]);
             if (word && durations?.[lane]?.[s]) ex.studio_set_note_duration(t, lane, s, durations[lane][s]);
           }
         }
@@ -69,6 +72,8 @@ globalThis.fm1App = {
       port.postMessage({ type: 'studio-take', state: ex.studio_record_state(), playing: !!ex.studio_is_playing() });
     } else if (m.command === 'record-note') {
       ex.studio_take_note(m.pitch, m.velocity);
+    } else if (m.command === 'fill') {
+      ex.studio_set_fill(m.enabled ? 1 : 0);
     } else if (m.command === 'transport') {
       ex.studio_transport(m.playing ? 1 : 0);
     } else if (m.command === 'audition') {

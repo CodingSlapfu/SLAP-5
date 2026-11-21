@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MPL-2.0 */
 /* Copyright (C) 2026 Ziao */
-import { decodeNote, drumNotes, encodeNote, eventLanes, fxLimit, fxPanels, legacyDrumKits, maxSteps, modernSynth, patternLength, validateProject, withPatternLength, within } from './project.mjs';
+import { decodeNote, drumNotes, encodeNote, eventLanes, fxLimit, fxPanels, legacyDrumKits, modernSynth, patternLength, validateProject, withPatternLength, within } from './project.mjs';
 
 const $ = id => document.getElementById(id);
 const colors = ['#1ce2ff', '#ab70ff', '#ff59b0', '#ffb43a', '#3ef289'];
@@ -50,7 +50,7 @@ function edit(change) {
 
 const selected = () => project.tracks[track];
 const pageStart = () => Math.floor(step / 64) * 64;
-const noteAt = (part, lane, step) => ({ ...decodeNote(eventLanes(part)[lane][step]), timing: part.offsets[lane][step], duration: part.durations[lane][step] });
+const noteAt = (part, lane, step) => ({ ...decodeNote(eventLanes(part)[lane][step]), timing: part.offsets[lane][step], duration: part.durations[lane][step], mode: part.modes[lane][step] });
 const durationMs = units => Math.round(units * 128000 / 44100);
 const durationUnits = ms => Math.min(65535, Math.round(ms * 44100 / 128000));
 const noteWidth = note => Math.max(10, width * (note.duration ?
@@ -59,6 +59,7 @@ function setNote(part, lane, step, note) {
   eventLanes(part)[lane][step] = note ? encodeNote(note.pitch, note.velocity, note.gate, note.probability) : 0;
   part.offsets[lane][step] = note?.timing ?? 0;
   part.durations[lane][step] = note?.duration ?? 0;
+  part.modes[lane][step] = note?.mode ?? 0;
 }
 const pitchAt = row => track === 4 ? drumNotes[row] : 84 - row;
 const noteLabel = (pitch) => track === 4 ? drums[drumRow(pitch)] :
@@ -87,7 +88,11 @@ function draw() {
     patchSelect.replaceChildren(...options);
   }
   patchSelect.value = current.patch;
-  $('length').value = steps;
+  const normalSteps = [16, 32, 64];
+  const lengths = $('length');
+  lengths.replaceChildren(...normalSteps.map(length => new Option(length, length)));
+  if (!normalSteps.includes(steps)) lengths.append(new Option(`${steps} (legacy)`, steps));
+  lengths.value = steps;
   $('prev-steps').disabled = first === 0;
   $('next-steps').disabled = last === steps;
   $('pan').value = current.mix >>> 8 & 255;
@@ -134,6 +139,8 @@ function draw() {
     $(id).value = word ? value : '';
     $(id).disabled = !word;
   }
+  $('step-mode').value = note.mode;
+  $('step-mode').disabled = !word;
   $('hold-ms').value = word && track !== 4 ? durationMs(note.duration) : '';
   $('hold-ms').disabled = !word || track === 4;
   $('gate').disabled = !word || !!note.duration;
@@ -360,9 +367,12 @@ $('metro').addEventListener('change', () => {
 $('fx-page').addEventListener('change', draw);
 $('prev-steps').addEventListener('click', () => { step = Math.max(0, pageStart() - 64); draw(); });
 $('next-steps').addEventListener('click', () => { step = pageStart() + 64; draw(); });
-numberInput('length', 1, maxSteps, (p, value) => {
+$('length').addEventListener('change', () => {
+  if (!project || take) return;
+  const value = Number($('length').value);
+  if (![16, 32, 64].includes(value)) return;
   step = Math.min(step, value - 1);
-  p.tracks[track].mix = withPatternLength(p.tracks[track].mix, value);
+  edit(p => { p.tracks[track].mix = withPatternLength(p.tracks[track].mix, value); });
 });
 for (const [id, shift, min, max] of [['pan', 8, 0, 255], ['level', 16, 0, 255]]) {
   numberInput(id, min, max, (p, v) => {
@@ -376,6 +386,17 @@ for (const [id, key, max] of [['velocity', 'velocity', 127], ['gate', 'gate', 25
     setNote(p.tracks[track], lane, step, note);
   });
 }
+$('step-mode').addEventListener('change', () => edit(p => {
+  const note = noteAt(p.tracks[track], lane, step);
+  note.mode = Number($('step-mode').value);
+  setNote(p.tracks[track], lane, step, note);
+}));
+$('fill').addEventListener('click', () => {
+  if (!worklet) return;
+  const enabled = $('fill').getAttribute('aria-pressed') !== 'true';
+  $('fill').setAttribute('aria-pressed', String(enabled));
+  send('fill', { enabled });
+});
 numberInput('hold-ms', 0, 190214, (p, value) => {
   const note = noteAt(p.tracks[track], lane, step);
   note.duration = durationUnits(value);
@@ -479,7 +500,10 @@ $('start').addEventListener('click', async () => {
         if (!generation || data.id !== generation.id) return;
         const valid = generation.project === project && !playing && data.drums;
         generation = undefined;
-        if (valid) edit(next => { Object.assign(next.tracks[4], data.drums); });
+        if (valid) edit(next => {
+          Object.assign(next.tracks[4], data.drums);
+          next.tracks[4].modes = next.tracks[4].offsets.map(lane => lane.map(() => 0));
+        });
         else sync();
         return;
       }

@@ -32,11 +32,42 @@ static void test_live_tape(unsigned mode)
     assert(slap_fx_config(target, 6) == saved);
 }
 
+static void test_full_mix(void)
+{
+    uint32_t saved[SLAP_FX_TRACKS][SLAP_FX_PAGES];
+    for (unsigned track = 0; track < SLAP_FX_TRACKS; ++track)
+        for (unsigned page = 0; page < SLAP_FX_PAGES; ++page)
+            saved[track][page] = slap_fx_config(track, page);
+    for (unsigned mode = 1; mode <= 11; ++mode) {
+        slap_fx_begin_live(112, SLAP_FX_TRACKS | mode << 3 | 48u << 7 | 25u << 13 | 37u << 19);
+        float difference = 0.0f;
+        for (unsigned i = 0; i < 12000; ++i) {
+            float dry_left = 0.09f * sinf(i * 0.09f);
+            float dry_right = 0.12f * sinf(i * 0.15f);
+            float left = dry_left, right = dry_right;
+            if (slap_fx_mix_active()) slap_fx_mix_sample(&left, &right);
+            assert(isfinite(left) && isfinite(right) && fabsf(left) < 2.0f && fabsf(right) < 2.0f);
+            difference += fabsf(left - dry_left) + fabsf(right - dry_right);
+        }
+        assert(difference > 1.0f);
+        slap_fx_begin_live(112, 0);
+        for (unsigned i = 0; i < 4000; ++i) {
+            float left = 0.09f, right = -0.12f;
+            if (slap_fx_mix_active()) slap_fx_mix_sample(&left, &right);
+            if (i == 3999) assert(left == 0.09f && right == -0.12f);
+        }
+    }
+    for (unsigned track = 0; track < SLAP_FX_TRACKS; ++track)
+        for (unsigned page = 0; page < SLAP_FX_PAGES; ++page)
+            assert(saved[track][page] == slap_fx_config(track, page));
+}
+
 int main(void)
 {
     slap_fx_init();
     test_live_tape(10);
     test_live_tape(11);
+    test_full_mix();
     for (unsigned t = 0; t < 5; ++t) {
         for (unsigned k = 0; k < 4; ++k)
             slap_fx_change(t, 0, k, 31);

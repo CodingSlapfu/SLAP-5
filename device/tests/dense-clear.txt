@@ -4,8 +4,8 @@ key 7 down
 key 7 up
 tap HOME
 turn SELECT 4
-turn K2 496
-expect length 512
+turn K2 2
+expect length 64
 tap SEQ
 tap SEQ
 turn K1 13
@@ -17,12 +17,12 @@ tap SEQ
 press SEL
 turn SELECT 1
 release SEL
-turn SELECT -511
+turn SELECT -63
 expect pitch 36
 press SEL
 turn SELECT 15
 release SEL
-turn SELECT 511
+turn SELECT 63
 expect pitch -1
 key 0 down
 key 0 up
@@ -40,12 +40,12 @@ tap SEQ
 press SEL
 turn SELECT 1
 release SEL
-turn SELECT -511
+turn SELECT -63
 expect pitch -1
 press SEL
 turn SELECT 15
 release SEL
-turn SELECT 511
+turn SELECT 63
 expect pitch -1
 press REC
 wait 2050
@@ -57,11 +57,11 @@ tap SEQ
 press SEL
 turn SELECT 1
 release SEL
-turn SELECT -511
+turn SELECT -63
 expect pitch 36
 press SEL
 turn SELECT 15
 release SEL
-turn SELECT 511
+turn SELECT 63
 expect pitch 81
-expect length 512
+expect length 64
