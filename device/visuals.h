@@ -44,7 +44,7 @@ static const uint16_t track_rule[] = {
 
 static int visual_wave(unsigned phase, int amplitude)
 {
-    return (int)(slap_sine((float)(phase & 1023u) * (1.0f / 1024.0f)) * (float)amplitude);
+    return (int)(slap_oscillator((float)(phase & 1023u) * (1.0f / 1024.0f)) * (float)amplitude);
 }
 
 static void visual_disc(int x, int y, int radius, int sy, uint16_t color)
@@ -98,17 +98,28 @@ static void visualizer_draw(unsigned kind, unsigned time)
             for (int y = 38; y < 230; y += 7) {
                 unsigned t = (unsigned)y / 7u % TRACKS;
                 int x = visual_wave(time * 3u + (unsigned)y * 13u, 46 + energy[t]);
-                if (!(y % 2)) cv_rect(120 - (x < 0 ? -x : x), y - sy, 2 * (x < 0 ? -x : x), 1, RGB(34,54,80));
-                cv_rect(116 + x, y - sy, 9, 5, track_color[t]);
-                cv_rect(116 - x, y - sy, 9, 5, track_color[(t + 2u) % TRACKS]);
+                if (y + 7 < sy || y - 5 >= sy + 40) continue;
+                int span = x < 0 ? -x : x;
+                int depth = visual_wave(time * 3u + (unsigned)y * 13u + 256u, 3);
+                cv_rect(120 - span, y - sy, span * 2 + 1, 1, track_surface[t]);
+                visual_disc(120 + x, y, 5 + depth / 2, sy, track_rule[t]);
+                visual_disc(120 - x, y, 5 - depth / 2, sy, track_rule[(t + 2u) % TRACKS]);
+                visual_disc(120 + x, y, 2 + (depth > 0), sy, track_color[t]);
+                visual_disc(120 - x, y, 2 + (depth < 0), sy, track_color[(t + 2u) % TRACKS]);
+                if (energy[t] > 7 && !(y % 3))
+                    cv_rect(120 + x / 2, y - sy - 3, 2, 2, C_WHITE);
             }
             break;
         case 1:
             for (int x = 0; x < 240; x += 4) {
-                for (unsigned t = 0; t < TRACKS; ++t) {
-                    int y = 98 + (int)t * 13 + visual_wave((unsigned)x*11u + t*77u + time*5u, 11 + energy[t]);
-                    cv_rect(x, y-sy, 3, 5, track_color[t]);
-                }
+                unsigned t = (unsigned)x / 48u;
+                int field = visual_wave((unsigned)x * 13u + time * 6u, 14 + energy[t] / 2);
+                int peak = 143 + visual_wave(x * 25u - time * 3u, 12 + energy[t]) + field;
+                int mirror = 173 - field / 2;
+                cv_rect(x, peak - sy, 4, mirror - peak > 0 ? mirror - peak : 1, track_surface[t]);
+                cv_rect(x, peak - sy, 4, 2, track_color[t]);
+                cv_rect(x, mirror - sy + 3, 3, 2, track_rule[t]);
+                if (field < -8) cv_rect(x + 1, peak - sy - 2, 1, 1, C_WHITE);
             }
             break;
         case 2:
@@ -118,7 +129,10 @@ static void visualizer_draw(unsigned kind, unsigned time)
                     unsigned phase = k + time*(3u+t);
                     int x = 120 + visual_wave(phase+256, radius);
                     int y = 130 + visual_wave(phase, radius/2) + visual_wave(2*phase+t*80u,20);
-                    visual_disc(x,y,2+(int)(t==4),sy,track_color[t]);
+                    if (y + 4 < sy || y - 4 >= sy + 40) continue;
+                    visual_disc(x, y, 4, sy, track_surface[t]);
+                    visual_disc(x, y, 2 + (int)(t == 4), sy, track_color[t]);
+                    if (k % 3u == 0) cv_rect(x - 4, y + 2 - sy, 2, 1, track_rule[t]);
                 }
             }
             break;
@@ -139,6 +153,7 @@ static void visualizer_draw(unsigned kind, unsigned time)
                 for (unsigned k = 0; k < 1024; k += 59)
                     cv_rect(120+visual_wave(k+256,22+energy[4]/2),
                         128+visual_wave(k,22+energy[4]/2)-sy, 2, 2, RGB(255,128,20));
+            visual_disc(120,128,19+bass,sy,RGB(71,27,13));
             visual_disc(120,128,14+bass,sy,RGB(255,143+bass*3,22));
             visual_disc(120,128,11+bass/2,sy,RGB(255,228,102));
             for (unsigned i = 0; i < 8; ++i) {
@@ -149,6 +164,10 @@ static void visualizer_draw(unsigned kind, unsigned time)
                 int x = 120+visual_wave(phase+256,r), y = 128+visual_wave(phase,r*3/4);
                 if (i == 5) cv_line(x-13,y+4-sy,x+13,y-4-sy,RGB(237,202,142));
                 visual_disc(x,y,sizes[i],sy,planet[i]);
+                if (sizes[i] > 3) {
+                    visual_disc(x - 1, y - 1, (int)sizes[i] / 3, sy, RGB(250,218,165));
+                    cv_rect(x + sizes[i] / 2, y - sy + 2, 2, 1, RGB(65,40,52));
+                }
                 if (i == 2 || i == 4) cv_rect(x-2,y-sy,5,1,i == 2 ? RGB(103,212,105) : RGB(165,93,65));
             }
             break;
@@ -164,8 +183,9 @@ static void visualizer_draw(unsigned kind, unsigned time)
                                            31 + energy[t] + bass);
                     int chroma = visual_wave((unsigned)(x*3 - y*9) - time*6u, 30 + highs);
                     int glow = 52 + wave + sweep;
-                    cv_rect(x, y-sy, 5, 3, RGB(clamp(glow + chroma, 0, 255),
+                    cv_rect(x, y-sy, 6, 4, RGB(clamp(glow + chroma, 0, 255),
                             clamp(glow + highs - chroma, 0, 220), clamp(glow*2, 0, 255)));
+                    if (glow > 58) cv_rect(x, y + 4 - sy, 6, 1, RGB(glow / 3, glow / 4, glow / 2));
                 }
             }
             break;
@@ -174,7 +194,10 @@ static void visualizer_draw(unsigned kind, unsigned time)
             for (unsigned channel = 0; channel < 2; ++channel) {
                 int y = 43 + (int)channel * 93;
                 cv_rect(9, y-sy, 222, 84, RGB(95,60,31));
-                cv_rect(12, y+3-sy, 216, 78, RGB(255,195,100));
+                cv_rect(12, y+3-sy, 216, 78, RGB(229,153,74));
+                cv_rect(16, y+7-sy, 208, 54, RGB(255,207,119));
+                cv_rect(16, y+10-sy, 208, 2, RGB(255,231,172));
+                visual_disc(120, y + 74, 5, sy, RGB(167,104,52));
                 for (unsigned tick = 0; tick <= 10; ++tick) {
                     unsigned angle = 64u + 38u * tick;
                     int xx = 120 + visual_wave(angle+256, 75);
@@ -195,19 +218,28 @@ static void visualizer_draw(unsigned kind, unsigned time)
                 uint16_t color = track_color[band % TRACKS];
                 cv_rect(x, 42-sy, 28, 167, RGB(14,27,48));
                 int height = (int)(156.0f * levels[band]);
-                for (int row = 0; row < height; row += 7)
-                    cv_rect(x + 2, 203-row-sy, 24, 5, color);
+                for (int row = 0; row < height; row += 7) {
+                    if (203 - row + 5 < sy || 203 - row >= sy + 40) continue;
+                    cv_rect(x + 2, 203-row-sy, 24, 5, track_rule[band % TRACKS]);
+                    cv_rect(x + 3, 203-row-sy, 22, 2, color);
+                }
                 cv_rect(x + 2, 203-(int)(156.0f * holds[band])-sy, 24, 2, C_WHITE);
             }
             break;
         default:
+            visual_disc(120, 126, 24 + energy[4] / 2, sy, RGB(30,24,66));
+            visual_disc(120, 126, 17 + energy[4] / 3, sy, RGB(63,34,107));
             for (unsigned t=0;t<TRACKS;++t) {
                 int radius=28+(int)t*14;
                 for (unsigned k=0;k<1024;k+=53) {
                     unsigned a=k+time*(t+1u);
                     int x=120+visual_wave(a+256,radius+energy[t]/3);
                     int y=127+visual_wave(a,radius+energy[t]/3);
-                    visual_disc(x,y,2+energy[t]/10,sy,track_color[t]);
+                    if (y + 6 < sy || y - 6 >= sy + 40) continue;
+                    visual_disc(x, y, 3 + energy[t] / 10, sy, track_surface[t]);
+                    visual_disc(x, y, 1 + energy[t] / 12, sy, track_color[t]);
+                    if (energy[t] > 8 && k % 3u == 0)
+                        cv_rect(x + 4, y - sy, 2, 2, C_WHITE);
                 }
             }
             slap_wordmark(120, 110-sy);

@@ -14,7 +14,7 @@ static float (*volatile dsp_fx_sample)(unsigned, float) = slap_fx_sample;
 #endif
 
 enum { TRACKS = 5, LEGACY_STEPS = 64, STEPS = 512, VOICES = 16, RATE = 44100 };
-enum { HOME, SEQ, GLOBAL, PATCH, ENV, FX, VISUAL, SAVE, HARMONY, LFO, ARP, MIXER, RECORD, GEN_DRUMS, LIVE_FX };
+enum { HOME, SEQ, GLOBAL, PATCH, ENV, FX, VISUAL, SAVE, HARMONY, LFO, ARP, MIXER, RECORD, GEN_DRUMS, LIVE_FX, SETTINGS };
 enum { NOTES = 0x7f, ACTIVE = 0x80, DRUMS = 4, OLD_DRUM_LANES = 6, DRUM_LANES = 16, MODERN_SYNTH = 1u << 27 };
 
 typedef struct {
@@ -293,12 +293,17 @@ static void load_patch(unsigned track, unsigned number)
     tracks[track].mix |= MODERN_SYNTH;
 }
 
+enum { PREF_AUDIO, PREF_METRO, PREF_RECORD, PREF_TRANSPORT, PREF_KEYS, PREF_DISPLAY, PREF_DIAG, PREF_SECTIONS };
+static unsigned settings_section;
+static volatile uint32_t output_trim, speaker_mode, click_trim, resume_playback;
+static unsigned visual_quality;
+
 void app_init(void)
 {
     uint32_t settings[2];
     saved_preferences = 0;
     if (plat_store_load(OBJ_SETTINGS, settings, sizeof settings) == (int)sizeof settings &&
-        settings[0] == SETTINGS_TAG && settings[1] < (1u << 15) &&
+        settings[0] == SETTINGS_TAG && settings[1] < (1u << 25) &&
         (settings[1] & 3u) <= 2u && (settings[1] >> 6 & 7u) <= 5u &&
         (settings[1] >> 11 & 15u) <= REC_QUANT_MAX)
         saved_preferences = settings[1];
@@ -309,6 +314,12 @@ void app_init(void)
     rec_count_in = saved_preferences >> 9 & 1u;
     rec_replace = saved_preferences >> 10 & 1u;
     rec_quantize = saved_preferences >> 11 & 15u;
+    output_trim = saved_preferences >> 15 & 3u;
+    speaker_mode = saved_preferences >> 17 & 1u;
+    click_trim = saved_preferences >> 18 & 3u;
+    resume_playback = saved_preferences >> 20 & 1u;
+    visual_quality = saved_preferences >> 21 & 1u;
+    slap_ui.visual = (int)(saved_preferences >> 22 & 7u);
     startup_sample = 0;
     startup_phase = 0.0f;
     slap_fx_init();
@@ -1778,6 +1789,11 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
         for (unsigned i = 0; i < VOICES; ++i)
             if (!voices[i].manual) voices[i].releasing = 1;
     }
+    static unsigned was_playing;
+    if (was_playing && !playing)
+        for (unsigned i = 0; i < VOICES; ++i)
+            if (!voices[i].manual) voices[i].releasing = 1;
+    was_playing = playing;
     if (!recording && rec_running) end_recording(record_clock);
     if (!recording) rec_countdown = 0;
     if (recording && playing && rec_loop && !rec_start_mode && !rec_running) begin_recording();
@@ -1800,7 +1816,10 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
     const unsigned active_effects = slap_fx_active_mask();
     const unsigned effect_mask = inspect_fx ? (1u << TRACKS) - 1u : active_effects;
     float meter_sum[2] = {0}, meter_peak[2] = {0};
-    float target = master_q12 * (1.0f / 4096.0f);
+    float target = master_q12 * (1.0f / 4096.0f) * (1.0f - 0.2f * output_trim);
+    float click_gain = 1.0f - 0.25f * click_trim;
+    const unsigned speaker = speaker_mode;
+    static float speaker_dc_l, speaker_dc_r;
     unsigned batch_start = 0, batch_end = 0;
     uint32_t callback_budget = (24000000u / RATE) * frames;
 #if FM1B_CPU2 && !defined(PLAT_WEB)
@@ -1835,7 +1854,7 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
             }
             if (!recording || rec_running) next_step(mix);
         }
-        if (until_step) --until_step;
+        if (playing && until_step) --until_step;
         if (arp_active) arp_render_clock(arp_track, arp_config);
         if (profile) serial[PROFILE_EVENTS] += plat_ticks24() - section;
         if (i == batch_end) {
@@ -1921,8 +1940,14 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
             if (++click_phase >= 2u * half_cycle) click_phase = 0;
             float click = (click_accent ? 0.13f : 0.085f) * (click_remaining-- / (float)CLICK_SAMPLES);
             if (click_phase >= half_cycle) click = -click;
-            l += click;
-            r += click;
+            l += click * click_gain;
+            r += click * click_gain;
+        }
+        if (speaker) {
+            speaker_dc_l += 0.010f * (l - speaker_dc_l);
+            speaker_dc_r += 0.010f * (r - speaker_dc_r);
+            l -= speaker_dc_l;
+            r -= speaker_dc_r;
         }
         master_gain += (target - master_gain) * 0.003f;
         l /= 1.0f + fm_fabsf(l);
@@ -2464,8 +2489,10 @@ void app_input_only(void)
     if (slap_ui.page != RECORD || playing || recording) clear_mode = 0;
     if (pressed & (1u << B_PLAY)) {
         playing ^= 1u;
-        if (!playing) recording = 0;
-        ++sequence_epoch;
+        if (!playing) {
+            recording = 0;
+        }
+        if (!resume_playback || rec_countdown) ++sequence_epoch;
     }
     const unsigned rec_button = 1u << B_REC;
     if (pressed & rec_button) {
@@ -2537,6 +2564,14 @@ void app_input_only(void)
     } else if (pressed & (1u << B_GLO)) {
         global_details = slap_ui.page == GLOBAL ? (global_details + 1u) % 10u : 0u;
         slap_ui.page = GLOBAL;
+    } else if ((pressed & (1u << B_SEL)) && slap_ui.page == GLOBAL) {
+        slap_ui.page = SETTINGS;
+        settings_section = 0;
+        pressed &= ~(1u << B_SEL);
+    } else if ((pressed & (1u << B_SEL)) && slap_ui.page == SETTINGS && settings_section == PREF_DIAG) {
+        slap_ui.page = GLOBAL;
+        global_details = 0;
+        pressed &= ~(1u << B_SEL);
     }
     if (pressed & (1u << B_SAVE)) {
         slap_ui.page = SAVE;
@@ -2602,7 +2637,9 @@ void app_input_only(void)
         slap_ui.buttons = buttons;
         return;
     }
-    if (slap_ui.page == SEQ && (buttons & (1u << B_SEL)))
+    if (slap_ui.page == SETTINGS)
+        settings_section = (unsigned)clamp((int)settings_section + delta, 0, PREF_SECTIONS - 1);
+    else if (slap_ui.page == SEQ && (buttons & (1u << B_SEL)))
         slap_ui.lane = clamp(slap_ui.lane + delta, 0, (int)lane_count(slap_ui.track)-1);
     else if (slap_ui.page == SEQ)
         slap_ui.step = clamp(slap_ui.step + delta, 0, (int)(pattern_length(tracks[slap_ui.track].mix)) - 1);
@@ -2628,7 +2665,35 @@ void app_input_only(void)
     int knob[4];
     for (unsigned k = 0; k < 4; ++k) knob[k] = plat_enc(EN_K1 + k);
     uint32_t mix = tracks[slap_ui.track].mix;
-    if (slap_ui.page == GEN_DRUMS) {
+    if (slap_ui.page == SETTINGS) {
+        switch (settings_section) {
+        case PREF_AUDIO:
+            output_trim = (unsigned)clamp((int)output_trim - knob[0], 0, 3);
+            speaker_mode = (unsigned)clamp((int)speaker_mode + knob[1], 0, 1);
+            break;
+        case PREF_METRO:
+            metronome = (unsigned)clamp((int)metronome + knob[0], 0, 2);
+            click_trim = (unsigned)clamp((int)click_trim - knob[1], 0, 3);
+            rec_count_in = (unsigned)clamp((int)rec_count_in + knob[2], 0, 1);
+            break;
+        case PREF_RECORD:
+            rec_quantize = (unsigned)clamp((int)rec_quantize + knob[0], 0, REC_QUANT_MAX);
+            rec_bars = (unsigned)clamp((int)rec_bars + knob[1], 0, 5);
+            rec_replace = (unsigned)clamp((int)rec_replace + knob[2], 0, 1);
+            rec_count_in = (unsigned)clamp((int)rec_count_in + knob[3], 0, 1);
+            break;
+        case PREF_TRANSPORT:
+            resume_playback = (unsigned)clamp((int)resume_playback + knob[0], 0, 1);
+            break;
+        case PREF_KEYS:
+            if (knob[0]) perfect_note_off = knob[0] > 0 ? 0u : 15u;
+            break;
+        case PREF_DISPLAY:
+            slap_ui.visual = clamp(slap_ui.visual + knob[0], 0, VISUAL_COUNT - 1);
+            visual_quality = (unsigned)clamp((int)visual_quality + knob[1], 0, 1);
+            break;
+        }
+    } else if (slap_ui.page == GEN_DRUMS) {
         if (knob[0] || knob[1] || knob[2] || knob[3] || (pressed & (1u << B_ARP))) gen_confirm = 0;
         gen_style = (unsigned)clamp((int)gen_style + knob[0], 0, sizeof(drum_style) / sizeof(drum_style[0]) - 1);
         gen_hit = (unsigned)clamp((int)gen_hit + knob[1], 0, 100);
@@ -2767,7 +2832,9 @@ void app_input_only(void)
     slap_ui.buttons = buttons;
     plat_leds(buttons | (playing << B_PLAY) | (recording << B_REC), keys);
     uint32_t preferences = metronome | (perfect_note_off & 15u) << 2 |
-        rec_bars << 6 | rec_count_in << 9 | rec_replace << 10 | rec_quantize << 11;
+        rec_bars << 6 | rec_count_in << 9 | rec_replace << 10 | rec_quantize << 11 |
+        output_trim << 15 | speaker_mode << 17 | click_trim << 18 |
+        resume_playback << 20 | visual_quality << 21 | (unsigned)slap_ui.visual << 22;
     uint32_t now = plat_ms();
     if (preferences != pending_preferences) {
         pending_preferences = preferences;
@@ -2810,9 +2877,22 @@ static unsigned callback_percentile(unsigned percentile)
     return dsp_peak_ticks / 24u;
 }
 
+static int note_sounding(unsigned row, unsigned step)
+{
+    unsigned id = 1u + row * STEPS + step;
+    // Read-only foreground snapshot. Play state may advance one audio frame
+    // during drawing, so the next strip refresh corrects stale highlights.
+    for (unsigned i = 0; i < VOICES; ++i) {
+        const volatile Voice *voice = &voices[i];
+        if (voice->age && voice->sequence_note == id && !voice->delay && !voice->releasing)
+            return 1;
+    }
+    return 0;
+}
+
 static void draw_panel(void)
 {
-    static const char *const page_names[] = {"SLAP-5", "SEQUENCE", "GLOBAL", "PATCH", "ENV", "FX", "VISUAL", "SAVE", "KEY & CHORDS", "LFO", "ARP", "MIXER", "RECORD", "GEN DRUMS", "LIVE FX"};
+    static const char *const page_names[] = {"SLAP-5", "SEQUENCE", "GLOBAL", "PATCH", "ENV", "FX", "VISUAL", "SAVE", "KEY & CHORDS", "LFO", "ARP", "MIXER", "RECORD", "GEN DRUMS", "LIVE FX", "SETTINGS"};
     static const char *const arp_labels[] = {"MODE", "RATE", "OCT", "GATE"};
     static const char *const arp_modes[] = {"OFF","UP","DOWN","UP/DN","RANDOM","CHORD","PLAYED"};
     static const char *const arp_rates[] = {"1/4","1/8","1/16","1/32","1/8T","1/16T"};
@@ -2871,6 +2951,55 @@ static void draw_panel(void)
         }
     }
     cv_blit(0, 0);
+    if (slap_ui.page == SETTINGS) {
+        static const char *const names[] = {"AUDIO", "METRONOME", "RECORDING", "TRANSPORT", "KEYBOARD", "DISPLAY", "DIAGNOSTICS"};
+        const char *items[4] = {0};
+        char level[8], other[8];
+        switch (settings_section) {
+        case PREF_AUDIO:
+            decimal(level, 100 - output_trim * 20);
+            items[0] = level; items[1] = speaker_mode ? "K2 SPEAKER OPTIMIZED" : "K2 SPEAKER FLAT";
+            items[2] = "K1 OUTPUT PERCENT"; items[3] = "LIMITER ALWAYS ON"; break;
+        case PREF_METRO:
+            decimal(level, 100 - click_trim * 25);
+            items[0] = metronome == 2 ? "K1 ALWAYS" : metronome == 1 ? "K1 REC ONLY" : "K1 OFF";
+            items[1] = "K2 CLICK LEVEL PERCENT"; items[2] = level;
+            items[3] = rec_count_in ? "K3 COUNT-IN" : "K3 FIRST NOTE"; break;
+        case PREF_RECORD:
+            decimal(level, rec_quantize); decimal(other, 1u << rec_bars);
+            items[0] = level; items[1] = other;
+            items[2] = rec_replace ? "K3 REPLACE" : "K3 OVERDUB";
+            items[3] = rec_count_in ? "K4 COUNT-IN" : "K4 FIRST NOTE"; break;
+        case PREF_TRANSPORT:
+            items[0] = resume_playback ? "K1 RESUME" : "K1 RESTART";
+            items[1] = "TRACKS LOOP INDEPENDENTLY"; break;
+        case PREF_KEYS:
+            items[0] = perfect_note_off == 0 ? "K1 PERFECT NOTE ON" :
+                perfect_note_off == 15 ? "K1 PERFECT NOTE OFF" : "K1 PERFECT NOTE MIXED";
+            items[1] = "KEY & CHORDS SETS TRACK SCALE"; break;
+        case PREF_DISPLAY:
+            decimal(level, (unsigned)slap_ui.visual + 1u);
+            items[0] = "K1 VISUALIZER"; items[1] = level;
+            items[2] = visual_quality ? "K2 ECO" : "K2 ADAPTIVE"; break;
+        case PREF_DIAG:
+            items[0] = "SEL OPEN DIAGNOSTICS"; items[1] = "CPU / CORE 1 / DMA TRACE"; break;
+        }
+        for (unsigned row = 0; row < 4; ++row) {
+            cv_begin(240, 48, C_BLACK);
+            if (!row) {
+                cv_text(8, 5, &FONT_B, names[settings_section], c);
+                cv_text(8, 26, &FONT_XS, "SELECT SECTION  /  HOME EXIT", C_WHITE);
+            } else if (row < 3) {
+                unsigned first = (row - 1u) * 2u;
+                for (unsigned line = 0; line < 2; ++line)
+                    if (items[first + line]) cv_text(8, 4 + (int)line * 20, &FONT_XS, items[first + line], C_WHITE);
+            } else if (settings_section == PREF_RECORD) {
+                cv_text(8, 8, &FONT_XS, "K1 QUANTIZATION / K2 BARS", c);
+            }
+            cv_blit(0, 48 + row * 48);
+        }
+        return;
+    }
     if (slap_ui.page == LIVE_FX) {
         unsigned mode = live_fx_word >> 3 & 15u;
         for (unsigned row = 0; row < 4; ++row) {
@@ -3373,7 +3502,7 @@ static void draw_panel(void)
                     int x = left + ((int)index - first_step) * 14 + offset;
                     if (width >= period) {
                         cv_rect(0, y, graph_end, 5, c);
-                        if (scroll) cv_rect(0, y, 240, 1, C_WHITE);
+                        if (scroll && note_sounding(row, index)) cv_rect(0, y, 240, 1, C_WHITE);
                         continue;
                     }
                     // Start at the oldest repetition that still reaches the graph.
@@ -3385,7 +3514,7 @@ static void draw_panel(void)
                         int to = end > graph_end ? graph_end : end;
                         if (to <= from) continue;
                         cv_rect(from, y, to - from, 5, c);
-                        if (scroll && x <= 50 && end > 50) {
+                        if (scroll && x <= 50 && end > 50 && note_sounding(row, index)) {
                             cv_rect(from, y, to - from, 1, C_WHITE);
                             cv_rect(50, y, 2, 5, C_WHITE);
                         }
@@ -3483,7 +3612,7 @@ void app_frame(void)
         }
         last_xruns = xruns;
         if (under_pressure && now - last_pressure >= 1000u) under_pressure = 0;
-        if (under_pressure) frame_interval = 85u;
+        if (under_pressure || visual_quality) frame_interval = 85u;
     } else {
         last_xruns = plat_xruns();
     }
@@ -3560,6 +3689,9 @@ int app_expect(const char *name, int *result)
     }
     else if (name_matches(name, "perfect_note")) *result = !(perfect_note_off & (1u << slap_ui.track));
     else if (name_matches(name, "chord_mode")) *result = (int)((tracks[slap_ui.track].harmony >> 16) & 255u);
+    else if (name_matches(name, "settings_section")) *result = (int)settings_section;
+    else if (name_matches(name, "resume_playback")) *result = (int)resume_playback;
+    else if (name_matches(name, "output_trim")) *result = (int)output_trim;
     else if (name_matches(name, "metronome")) *result = (int)metronome;
 #if FM1B_CPU2 && !defined(PLAT_WEB)
     else if (name_matches(name, "worker_wait_us")) *result = (int)(worker_wait_ticks / 24u);
