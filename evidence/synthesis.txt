@@ -1,2 +1,0 @@
-Rendered 128 factory patches across 25 engines at three pitches.
-Every patch produced finite audio, measurable energy, and a distinct sample signature.
