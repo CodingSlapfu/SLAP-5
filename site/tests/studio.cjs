@@ -30,7 +30,7 @@ async function test() {
     assert.equal(await page.locator('#drum-lane option').count(), 16);
     assert.equal(await page.locator('#patch option').count(), 25);
     assert.equal(await page.locator('#patch').inputValue(), '56');
-    await page.locator('#patch').selectOption({ label: 'CINEMATIC HYBRID' });
+    await page.locator('#patch').selectOption({ label: 'CINE HYBRID' });
     assert.ok(await page.locator('#gen-apply').isEnabled());
     const roll = page.locator('#roll');
     const box = await roll.boundingBox();

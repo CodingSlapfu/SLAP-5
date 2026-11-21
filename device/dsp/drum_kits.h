@@ -92,11 +92,11 @@ static const char *const sample_kit_names[SAMPLE_KITS] = {
     "DUBSTEP",
     "ACID JAZZ",
     "SYNTHWAVE",
-    "IDM LABORATORY",
-    "FM PERCUSSION",
+    "IDM LAB",
+    "FM PERC",
     "LO-FI DUST",
     "AMBIENT PERC",
-    "CINEMATIC HYBRID",
+    "CINE HYBRID",
 };
 enum { DRUM_LEGACY_KITS = sizeof(drum_kits) / sizeof(drum_kits[0]),
        DRUM_KITS = DRUM_LEGACY_KITS + SAMPLE_KITS };
