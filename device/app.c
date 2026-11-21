@@ -73,7 +73,7 @@ static unsigned live_fx_knobs[4] = {52, 33, 39, 41};
 static const uint8_t live_black_keys[11] = PLAT_BLACK_KEYS;
 static const char *const live_fx_names[] = {
     "GATE", "STUTTER", "BEAT REPEAT", "FILTER", "DELAY THROW",
-    "REVERB BLOOM", "BITCRUSH", "PITCH MOD", "GLITCH"
+    "REVERB BLOOM", "BITCRUSH", "PITCH MOD", "GLITCH", "TAPE STOP", "PITCH DROP"
 };
 
 static volatile uint32_t scheduled_events;
@@ -2883,15 +2883,10 @@ static void draw_panel(void)
                     cv_text(x + 3, 13, &FONT_T, live_fx_names[index], mode == index + 1 ? C_BLACK : C_WHITE);
                 }
             }
-            if (row == 3) {
-                static const char *const labels[] = {"AMOUNT", "RATE", "TONE", "SPACE"};
-                for (unsigned i = 0; i < 4; ++i) {
-                    int x = 5 + (int)i * 59;
-                    cv_text(x, 2, &FONT_XS, labels[i], c);
-                    decimal(number, live_fx_knobs[i]);
-                    cv_text(x, 17, &FONT_B, number, C_WHITE);
-                }
-            }
+            static const char *const labels[] = {"AMOUNT", "RATE", "TONE", "SPACE"};
+            cv_text(163, 37, &FONT_T, labels[row], c);
+            decimal(number, live_fx_knobs[row]);
+            cv_text(215, 37, &FONT_T, number, C_WHITE);
             cv_blit(0, 48 + row * 48);
         }
         return;

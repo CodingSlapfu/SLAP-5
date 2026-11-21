@@ -68,13 +68,10 @@ for mode in worker single; do
     cp tests/drum-take.txt "$tmp/drum-$mode/input.txt"
     (
         unset SLAP_TEST_SINGLE_CORE SLAP_TEST_DISCARD_WORKER SLAP_TEST_DISCARD_FX
-        if [ "$mode" = worker ]; then
-            echo 'expect worker_jobs >0'
-            echo 'expect worker_fallbacks 0'
-        else
-            echo 'expect worker_jobs 0'
-            export SLAP_TEST_SINGLE_CORE=1
-        fi >> "$tmp/drum-$mode/input.txt"
+        # ADPCM voices stay on Core 0 until physical XIP timing is qualified.
+        echo 'expect worker_jobs 0' >> "$tmp/drum-$mode/input.txt"
+        echo 'expect worker_fallbacks 0' >> "$tmp/drum-$mode/input.txt"
+        if [ "$mode" = single ]; then export SLAP_TEST_SINGLE_CORE=1; fi
         build/host/slap-5_host "$tmp/drum-$mode/input.txt" "$tmp/drum-$mode"
     )
 done

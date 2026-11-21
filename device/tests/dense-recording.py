@@ -15,7 +15,7 @@ import wave
 from pcm_parity import compare_pcm
 
 
-def scenario(seed, bpm, bars, fx, visual, chords=False, arrangement=False, modulated=False):
+def scenario(seed, bpm, bars, fx, visual, chords=False, arrangement=False, modulated=False, live_fx=False):
     rng = random.Random(seed)
     commands = ["wait 6100", f"turn ALGO {bpm - 112}", f"expect tempo {bpm}"]
     if bars > 1:
@@ -34,8 +34,10 @@ def scenario(seed, bpm, bars, fx, visual, chords=False, arrangement=False, modul
             commands += ["tap LFO", "expect page 9", "turn K1 1", "turn K2 17",
                          "expect lfo_rate 48", "tap HOME"]
         commands += ["tap REC", "wait 6400", "expect rec_running 1"]
-        for _ in range(steps if bars == 1 else steps // 2):
+        for step in range(steps if bars == 1 else steps // 2):
             keys = rng.sample(range(8 if track == 4 else 19), rng.choice((2, 2, 3, 4)))
+            if live_fx and track == 4:
+                keys = [f"w{(step + offset) % 16}" for offset in (0, 5, 11)]
             commands += [f"key {key} down" for key in keys]
             commands.append(f"wait {rng.randrange(8, 75)}")
             commands += [f"key {key} up" for key in reversed(keys)]
@@ -64,6 +66,7 @@ def main():
     parser.add_argument("--bars", type=int, choices=(1, 16, 32), default=1)
     parser.add_argument("--fx", action="store_true")
     parser.add_argument("--visual", action="store_true")
+    parser.add_argument("--live-fx", action="store_true", help="Exercise all black-key effects during replay")
     parser.add_argument("--chords", action="store_true")
     parser.add_argument("--voice-split", choices=("cost", "slots", "tracks"), default="cost")
     parser.add_argument("--async-worker", action="store_true")
@@ -72,7 +75,14 @@ def main():
     parser.add_argument("--arrangement", action="store_true", help="Use two synth tracks and drum slicer")
     args = parser.parse_args()
     host = Path(__file__).resolve().parents[1] / "build/host/slap-5_host"
-    commands = scenario(args.seed, args.bpm, args.bars, args.fx, args.visual, args.chords, args.arrangement, args.modulated)
+    commands = scenario(args.seed, args.bpm, args.bars, args.fx, args.visual, args.chords, args.arrangement, args.modulated, args.live_fx)
+    if args.live_fx:
+        commands = commands[:-3]
+        commands += ["tap FX", "wait 450", "tap FX", "tap FX", "expect page 14", "wav dense.wav"]
+        for key in range(11):
+            commands += [f"key b{key} down", f"expect live_fx {key + 1}",
+                         "wait 860", f"key b{key} up", "expect live_fx 0", "wait 100"]
+        commands += ["wavstop"]
     if args.soak_ms < 0:
         parser.error("--soak-ms must be nonnegative")
     if args.soak_ms:

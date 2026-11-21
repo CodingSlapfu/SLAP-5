@@ -46,3 +46,13 @@ expect live_fx 7
 tap HOME
 expect live_fx 0
 key b6 up
+tap FX
+tap FX
+key b9 down
+expect live_fx 10
+key b9 up
+expect live_fx 0
+key b10 down
+expect live_fx 11
+key b10 up
+expect live_fx 0

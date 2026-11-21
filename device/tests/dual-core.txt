@@ -3,7 +3,12 @@ tap SEQ
 key 7 down
 key 7 up
 tap HOME
-turn SELECT 4
+turn SELECT 1
+tap SEQ
+key 11 down
+key 11 up
+tap HOME
+turn SELECT 3
 tap SEQ
 key 0 down
 key 0 up
