@@ -5,7 +5,7 @@ release REC
 expect recording 0
 expect metronome 0
 tap GLO
-turn SELECT 1
+turn ALGO 1
 turn K1 1
 expect metronome 1
 press REC

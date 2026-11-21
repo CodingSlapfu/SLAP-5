@@ -17,7 +17,7 @@ from pcm_parity import compare_pcm
 
 def scenario(seed, bpm, bars, fx, visual, chords=False, arrangement=False, modulated=False, live_fx=False):
     rng = random.Random(seed)
-    commands = ["wait 6100", f"turn ALGO {bpm - 112}", f"expect tempo {bpm}", "tap GLO", "turn SELECT 1", "turn K3 1", "tap HOME"]
+    commands = ["wait 6100", f"turn ALGO {bpm - 112}", f"expect tempo {bpm}", "tap GLO", "turn ALGO 1", "turn SELECT 2", "turn K1 1", "tap HOME"]
     if bars > 1:
         steps = bars * 16
     else:

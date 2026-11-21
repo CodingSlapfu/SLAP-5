@@ -10,6 +10,7 @@ from pathlib import Path
 import runpy
 import statistics
 import subprocess
+import sys
 import tempfile
 
 
@@ -43,7 +44,7 @@ def build(revision, destination, cpu_time=False):
         source = source.replace(clock, clock.replace("CLOCK_MONOTONIC", "CLOCK_THREAD_CPUTIME_ID"))
     host.write_text(source)
     subprocess.run(
-        ["python3", "vendor/fm1-base/tools/build.py", "device", "--host"],
+        [sys.executable, "vendor/fm1-base/tools/build.py", "device", "--host"],
         cwd=destination, check=True, stdout=subprocess.DEVNULL,
     )
     return destination / "device/build/host/slap-5_host"
@@ -75,6 +76,7 @@ def main():
     parser.add_argument("--full", action="store_true", help="Include recording and playback in the timing window")
     parser.add_argument("--chords", action="store_true")
     parser.add_argument("--workload", choices=("dry", "wet", "arrangement", "extreme", "patch-switch"))
+    parser.add_argument("--legacy-settings-baseline", action="store_true", help="Use legacy SETTINGS controls on 0.1.26 and earlier")
     parser.add_argument("--modulated", action="store_true", help="Enable sine LFOs in the wet fixture")
     args = parser.parse_args()
     if args.runs < 1:
@@ -108,6 +110,14 @@ def main():
                 commands = fixtures["scenario"](seed, bpm, 1, fx, fx, chords=args.chords or arrangement,
                                                 arrangement=arrangement, modulated=fx and args.modulated)
             script.write_text("\n".join(commands) + "\n")
+            baseline_script = script
+            if args.legacy_settings_baseline:
+                baseline_script = scratch / f"{case}-legacy.txt"
+                legacy = commands[:]
+                start = legacy.index("tap GLO")
+                assert legacy[start + 1:start + 4] == ["turn ALGO 1", "turn SELECT 2", "turn K1 1"]
+                legacy[start + 1:start + 4] = ["turn SELECT 1", "turn K3 1"]
+                baseline_script.write_text("\n".join(legacy) + "\n")
             for single in (False, True):
                 mode = "single" if single else "worker"
                 results = {label: [] for label in binaries}
@@ -115,7 +125,7 @@ def main():
                     labels = list(binaries)[::1 if run % 2 == 0 else -1]
                     for label in labels:
                         destination = scratch / f"{case}-{mode}-{label}-{run}"
-                        results[label].append(measure(binaries[label], script, destination, single, args.full))
+                        results[label].append(measure(binaries[label], baseline_script if label == "baseline" else script, destination, single, args.full))
                 for label, rows in results.items():
                     stats = " / ".join(f"{statistics.median(values):.2f}" for values in zip(*rows))
                     print(f"{case} {mode} {label}   mean/P95/P99/peak µs   {stats}", flush=True)

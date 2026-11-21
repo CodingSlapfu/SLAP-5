@@ -213,7 +213,7 @@ static volatile uint32_t track_peak[TRACKS], fx_cost_ticks[TRACKS];
 static Voice voices[VOICES];
 static PLAT_POOL SlapSynth synths[VOICES];
 static uint32_t track_timbre[DRUMS], track_fm_envelopes[DRUMS][7];
-static unsigned timbre_open, timbre_operator;
+static unsigned edit_page, timbre_operator, patch_group[TRACKS];
 static PLAT_POOL int16_t synth_strings[VOICES][SLAP_STRING_CAPACITY];
 static volatile uint32_t tempo = 112, swing, playing, positions, sequence_epoch;
 static volatile uint32_t perfect_note_off;
@@ -375,9 +375,13 @@ static void load_patch(unsigned track, unsigned number)
 }
 
 enum { PREF_AUDIO, PREF_METRO, PREF_RECORD, PREF_TRANSPORT, PREF_KEYS, PREF_DISPLAY, PREF_DIAG, PREF_LEDS, PREF_SECTIONS };
-static unsigned settings_section;
+static unsigned settings_section, settings_item;
+static const uint8_t settings_count[PREF_SECTIONS] = {4, 3, 4, 1, 1, 2, 1, 2};
+static const char *const settings_names[] = {
+    "AUDIO", "METRONOME", "RECORDING", "TRANSPORT", "KEYBOARD", "DISPLAY", "SYSTEM", "LEDS"
+};
 static volatile uint32_t output_trim, speaker_mode, click_trim, resume_playback, auto_level_off, auto_mix;
-static unsigned visual_quality, led_style;
+static unsigned visual_quality, led_style, led_keys_on_hit;
 static volatile unsigned split_keys;
 
 void app_init(void)
@@ -406,7 +410,8 @@ void app_init(void)
     for (unsigned t = 0; t < DRUMS; ++t)
         mixer_duck[t] = (uint8_t)clamp((int)((duck >> (8u * t)) & 255u), 0, 100);
     drum_duck_envelope = 0.0f;
-    saved_mixer_options = pending_mixer_options = options;
+    saved_mixer_options = pending_mixer_options = options | 128u |
+        ((!(options & 128u) && (saved_preferences >> 30) == 3u) ? 64u : 0u);
     saved_duck = pending_duck = duck;
     saved_assignments = pending_assignments = live_fx_assignments;
     pending_preferences = saved_preferences;
@@ -425,6 +430,7 @@ void app_init(void)
     auto_level_off = saved_preferences >> 25 & 1u;
     split_keys = saved_preferences >> 26 & 15u;
     led_style = saved_preferences >> 30;
+    led_keys_on_hit = !!(options & 64u) || (!(options & 128u) && led_style == 3u);
     slap_ui.visual = select_visual(saved_preferences >> 22 & 7u, 0);
     startup_sample = 0;
     startup_phase = 0.0f;
@@ -503,6 +509,53 @@ static const uint8_t factory_trim[SLAP_PATCHES] = {
     [105] = 83, [106] = 82, [107] = 85, /* Clarinet, Oboe, Bassoon */
     [122] = 116                        /* Slow Granules */
 };
+
+/* Musical groups are a view over stable factory IDs. */
+static const uint8_t patch_family[] = {
+    8, 1, 4, 4, 5, 5, 2, 2, 2, 3, 2, 2, 8, 4, 2, 8,
+    8, 6, 1, 4, 8, 2, 5, 5, 5, 5, 4, 6, 6, 3, 6, 6,
+    5, 5, 1, 5, 5, 8, 8, 8, 1, 2, 8, 8, 8, 8, 5, 5,
+    4, 1, 8, 4, 8, 1, 8, 8, 2, 8, 8, 8, 8, 8, 2, 2,
+    2, 2, 5, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 4, 4,
+    4, 4, 1, 4, 4, 4, 4, 4, 4, 4, 4, 1, 4, 6, 6, 6,
+    6, 6, 7, 7, 7, 1, 7, 7, 7, 7, 7, 1, 7, 7, 7, 7,
+    7, 5, 5, 5, 5, 5, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
+    2, 3, 3, 2, 8, 2, 2, 1,
+};
+_Static_assert(sizeof patch_family == SLAP_PATCHES, "group every patch");
+
+static const char *const patch_groups[] = {
+    "ALL PATCHES", "BASS", "LEADS", "PADS", "KEYS / PIANOS", "PLUCKS / BELLS",
+    "STRINGS / CHOIRS", "ACOUSTIC / WINDS", "EXPERIMENTAL / FX"
+};
+static const char *const kit_groups[] = {"FACTORY KITS", "LEGACY KITS", "ALL KITS"};
+
+static int patch_in_group(unsigned track, unsigned id)
+{
+    unsigned group = patch_group[track];
+    if (track != DRUMS) return !group || patch_family[id] == group;
+    return group == 2u || (id < DRUM_LEGACY_KITS) == (group == 1u);
+}
+
+static unsigned browse_patch(unsigned track, unsigned current, int delta)
+{
+    int limit = track == DRUMS ? DRUM_KITS : SLAP_PATCHES;
+    int dir = delta < 0 ? -1 : 1;
+    if (!patch_in_group(track, current)) {
+        int id = dir > 0 ? 0 : limit - 1;
+        while (!patch_in_group(track, (unsigned)id)) id += dir;
+        current = (unsigned)id;
+        delta -= dir;
+    }
+    while (delta) {
+        int id = (int)current + dir;
+        while (id >= 0 && id < limit && !patch_in_group(track, (unsigned)id)) id += dir;
+        if (id < 0 || id >= limit) break;
+        current = (unsigned)id;
+        delta -= dir;
+    }
+    return current;
+}
 
 static unsigned select_drum_kit(unsigned current, int delta)
 {
@@ -3129,7 +3182,7 @@ void app_input_only(void)
             global_details = (global_details + 1u) % 10u;
         else {
             slap_ui.page = SETTINGS;
-            settings_section = 0;
+            settings_section = settings_item = 0;
         }
     }
     if (pressed & (1u << B_PLAY)) {
@@ -3273,9 +3326,10 @@ void app_input_only(void)
     }
     if (pressed & (1u << B_SEL) && slap_ui.page == HOME && slap_ui.track < DRUMS) slap_ui.page = HARMONY;
     if (pressed & (1u << B_LFO)) slap_ui.page = LFO;
-    if (pressed & (1u << B_EDIT)) {
+    unsigned entering_edit = !!(pressed & (1u << B_EDIT));
+    if (entering_edit) {
         slap_ui.page = PATCH;
-        timbre_open = 1;
+        edit_page = 0;
     }
     if (pressed & (1u << B_ENV)) slap_ui.page = ENV;
     if (slap_ui.page == MIXER) {
@@ -3292,12 +3346,13 @@ void app_input_only(void)
             unsigned next = (((harmony >> 16) & 255u) + 1u) % HARMONY_CHORDS;
             tracks[slap_ui.track].harmony = (harmony & ~0x00ff0000u) | (next << 16);
         }
-    } else if (slap_ui.page != RECORD && slap_ui.page != GEN_DRUMS && !(slap_ui.page == PATCH && timbre_open == 2u)) {
+    } else if (slap_ui.page != RECORD && slap_ui.page != GEN_DRUMS && slap_ui.page != PATCH) {
         if (pressed & (1u << B_OCTDN)) slap_ui.octave = clamp(slap_ui.octave - 1, 0, 4);
         if (pressed & (1u << B_OCTUP)) slap_ui.octave = clamp(slap_ui.octave + 1, 0, 4);
     }
     int previous_track = slap_ui.track;
     int delta = plat_enc(EN_SELECT);
+    if (entering_edit) delta = 0;
     if (slap_ui.page == SAVE) {
         for (int k = EN_ALGO; k < NE; ++k) (void)plat_enc(k);
         save_input(buttons, pressed, keys, notes, delta);
@@ -3306,7 +3361,7 @@ void app_input_only(void)
         return;
     }
     if (slap_ui.page == SETTINGS)
-        settings_section = (unsigned)clamp((int)settings_section + delta, 0, PREF_SECTIONS - 1);
+        settings_item = (unsigned)clamp((int)settings_item + delta, 0, settings_count[settings_section] - 1);
     else if (slap_ui.page == SEQ && (buttons & (1u << B_SEL)))
         slap_ui.lane = clamp(slap_ui.lane + delta, 0, (int)lane_count(slap_ui.track)-1);
     else if (slap_ui.page == SEQ) {
@@ -3318,35 +3373,50 @@ void app_input_only(void)
     }
     else if (slap_ui.page == VISUAL)
         slap_ui.visual = select_visual(slap_ui.visual, delta);
-    else if (slap_ui.page == PATCH && slap_ui.track < DRUMS &&
-             slap_patches[tracks[slap_ui.track].patch].engine == 0u)
-        timbre_open = (unsigned)clamp((int)timbre_open + delta, 1, 2);
     else if (slap_ui.page == HOME || slap_ui.page == MIXER || (slap_ui.page == RECORD && !recording) ||
              slap_ui.page == PATCH || slap_ui.page == ENV || slap_ui.page == LFO || slap_ui.page == FX || slap_ui.page == LIVE_FX)
         slap_ui.track = clamp(slap_ui.track + delta, 0, TRACKS - 1);
     if (slap_ui.track != previous_track) {
         clear_mode = 0;
-        timbre_open = 1;
+        edit_page = 0;
     }
     if (recording && slap_ui.page == HOME && rec_loop &&
         (slap_ui.track != previous_track || previous_page != HOME))
         rec_follow_track = (unsigned)slap_ui.track + 1u;
     int algorithm = plat_enc(EN_ALGO);
+    if (entering_edit) algorithm = 0;
     if (slap_ui.page == FX) slap_ui.fx_page = clamp(slap_ui.fx_page + algorithm, 0, SLAP_FX_PAGES - 1);
-    else tempo = (uint32_t)clamp((int)tempo + algorithm, 40, 240);
+    else if (slap_ui.page == PATCH) {
+        unsigned track = slap_ui.track;
+        unsigned last = track < DRUMS && slap_patches[tracks[track].patch].engine == 0u ? 4u : 1u;
+        edit_page = (unsigned)clamp((int)edit_page + algorithm, 0, last);
+    } else if (slap_ui.page == SETTINGS) {
+        unsigned next = (unsigned)clamp((int)settings_section + algorithm, 0, PREF_SECTIONS - 1);
+        if (next != settings_section) settings_item = 0;
+        settings_section = next;
+    } else tempo = (uint32_t)clamp((int)tempo + algorithm, 40, 240);
     int patch_delta = plat_enc(EN_PRESET);
 
-    if (patch_delta) {
-        timbre_open = 1;
+    if (patch_delta && !entering_edit) {
+        patch_group[slap_ui.track] = 0;
         int old_patch = (int)tracks[slap_ui.track].patch;
         if (slap_ui.track == DRUMS)
             tracks[DRUMS].patch = select_drum_kit((unsigned)old_patch, patch_delta);
-        else load_patch(slap_ui.track, (unsigned)clamp(old_patch + patch_delta, 0, SLAP_PATCHES-1));
+        else {
+            unsigned next = (unsigned)clamp(old_patch + patch_delta, 0, SLAP_PATCHES - 1);
+            if (next != (unsigned)old_patch) load_patch(slap_ui.track, next);
+            if (slap_patches[next].engine != 0u && edit_page > 1u) edit_page = 1u;
+        }
     }
     int knob[4];
-    for (unsigned k = 0; k < 4; ++k) knob[k] = plat_enc(EN_K1 + k);
+    for (unsigned k = 0; k < 4; ++k) {
+        int movement = plat_enc(EN_K1 + k);
+        knob[k] = entering_edit || (slap_ui.page == PATCH && algorithm) ? 0 : movement;
+    }
     uint32_t mix = tracks[slap_ui.track].mix;
     if (slap_ui.page == SETTINGS) {
+        int change = knob[0];
+        for (unsigned k = 0; k < 4u; ++k) knob[k] = k == settings_item ? change : 0;
         switch (settings_section) {
         case PREF_AUDIO:
             auto_mix = (unsigned)clamp((int)auto_mix + knob[3], 0, 1);
@@ -3372,7 +3442,8 @@ void app_input_only(void)
             if (knob[0]) perfect_note_off = knob[0] > 0 ? 0u : 15u;
             break;
         case PREF_LEDS:
-            led_style = (unsigned)clamp((int)led_style + knob[0], 0, 3);
+            if (knob[0]) led_style = (unsigned)clamp((int)led_style + knob[0], 0, 2);
+            if (knob[1]) led_keys_on_hit = knob[1] > 0;
             break;
         case PREF_DISPLAY:
             slap_ui.visual = select_visual(slap_ui.visual, knob[0]);
@@ -3412,9 +3483,18 @@ void app_input_only(void)
     } else if (slap_ui.page == PATCH) {
         unsigned t = (unsigned)slap_ui.track;
         const SlapPatch *program = t < DRUMS ? &slap_patches[tracks[t].patch] : 0;
-        if (timbre_open && program && (program->engine == 0u || program->engine == 2u) && (knob[0] || knob[1] || knob[2] || knob[3])) {
+        if (!edit_page) {
+            patch_group[t] = (unsigned)clamp((int)patch_group[t] + knob[0], 0, t == DRUMS ? 2 : 8);
+            if (knob[1]) {
+                unsigned next = browse_patch(t, tracks[t].patch, knob[1]);
+                if (t == DRUMS) tracks[t].patch = next;
+                else if (next != tracks[t].patch) load_patch(t, next);
+            }
+        } else if (program && (program->engine == 0u || program->engine == 2u) && (knob[0] || knob[1] || knob[2] || knob[3])) {
             uint32_t value = track_timbre[t];
-            if (program->engine == 0u && timbre_open == 2u) {
+            if (program->engine == 0u && edit_page == 4u) {
+                track_fm_envelopes[t][6] = (unsigned)clamp((int)track_fm_envelopes[t][6] + knob[0], 0, 16);
+            } else if (program->engine == 0u && edit_page == 3u) {
                 uint32_t config = track_fm_envelopes[t][timbre_operator];
                 if (!config) config = 0x14561u;
                 if ((buttons & (1u << B_OCTUP)) && knob[3]) {
@@ -3443,8 +3523,6 @@ void app_input_only(void)
                     (unsigned)clamp(motion + knob[1], 0, 127) << 8;
             }
             tracks[t].mix |= ADVANCED_SYNTH;
-        } else if (t == DRUMS) {
-            if (knob[1]) tracks[t].patch = select_drum_kit(tracks[t].patch, knob[1]);
         } else if (program) {
             if (knob[0]) slap_fx_change(t, 1, 0, knob[0]);
             if (knob[1]) slap_fx_change(t, 8, 0, knob[1]);
@@ -3621,20 +3699,19 @@ void app_input_only(void)
     }
     unsigned priority_lights = context | (lights & (LED_PLAY_GREEN | (1u << B_REC)));
     unsigned ordinary_lights = lights & ~priority_lights;
-    if (slap_ui.page == MIXER || led_style == 0) {
-        plat_lights(priority_lights | ordinary_lights, key_lights, 0, 0, 0);
-    } else {
-        unsigned dim_buttons = led_style == 2 ? ordinary_lights : 0u;
-        unsigned dim_keys = led_style == 3 ? 0u : key_lights;
-        unsigned bright_buttons = led_style == 2 ? priority_lights : priority_lights | ordinary_lights;
-        plat_lights(bright_buttons, 0, dim_buttons, dim_keys, 1);
-    }
+    uint32_t bright_buttons = priority_lights | ordinary_lights;
+    uint32_t dim_buttons = ((1u << NB) - 1u) & ~bright_buttons;
+    uint32_t normal_keys = ((1u << NKEYS) - 1u) & ~key_lights;
+    if (slap_ui.page == MIXER || led_keys_on_hit) normal_keys = 0;
+    plat_lights(bright_buttons, key_lights, dim_buttons, 0, led_style == 2u ? 2 : led_style == 1u ? 0 : 1);
+    plat_lights_mid(0, normal_keys);
     uint32_t preferences = metronome | (perfect_note_off & 15u) << 2 |
         rec_bars << 6 | rec_count_in << 9 | rec_replace << 10 | rec_quantize << 11 |
         output_trim << 15 | speaker_mode << 17 | click_trim << 18 |
         resume_playback << 20 | visual_quality << 21 | (unsigned)slap_ui.visual << 22 | auto_level_off << 25 | split_keys << 26 | led_style << 30;
     uint32_t options = auto_mix | dancer_pattern << 1 | (unsigned)!dancer_outline << 3 |
-        (unsigned)!dancer_lighting << 4 | (unsigned)!dancer_reactivity << 5;
+        (unsigned)!dancer_lighting << 4 | (unsigned)!dancer_reactivity << 5 |
+        led_keys_on_hit << 6 | 128u;
     uint32_t duck = 0;
     for (unsigned t = 0; t < DRUMS; ++t) duck |= (uint32_t)mixer_duck[t] << (8u * t);
     uint32_t now = plat_ms();
@@ -3777,29 +3854,26 @@ static void draw_home_sequences(void)
 {
     unsigned position = positions, run = playing, fraction = step_progress;
     unsigned selection = slap_ui.track, bpm = tempo, solo = mixer_solo;
-    static unsigned idle_meter[TRACKS], idle_revision[TRACKS], idle_patch[TRACKS], idle_mix[TRACKS];
-    static unsigned idle_bpm, idle_position, idle_selection, idle_solo, idle_swing;
-    static int idle_battery;
-    unsigned changed = !home_idle_valid || idle_bpm != bpm || idle_position != position ||
-        idle_selection != selection || idle_solo != solo || idle_swing != swing ||
-        idle_battery != (low_battery ? -2 : battery_status);
-    idle_bpm = bpm; idle_position = position; idle_selection = selection;
-    idle_solo = solo; idle_swing = swing; idle_battery = low_battery ? -2 : battery_status;
-    for (unsigned t = 0; t < TRACKS; ++t) {
-        unsigned level = track_energy[t], revision = pattern_revision[t];
-        unsigned patch = tracks[t].patch, mix = tracks[t].mix;
-        if (idle_meter[t] != level || idle_revision[t] != revision ||
-            idle_patch[t] != patch || idle_mix[t] != mix) changed = 1;
-        idle_meter[t] = level; idle_revision[t] = revision;
-        idle_patch[t] = patch; idle_mix[t] = mix;
-    }
-    if (!run && !recording && !changed) return;
-    home_idle_valid = !run && !recording;
+    static unsigned last_step, last_bpm, last_selection, last_running, last_record, last_swing;
+    static int last_battery;
+    static struct {
+        unsigned cursor, first, patch, mix, revision, meter, peak, focused;
+        uint32_t active;
+    } last_lane[TRACKS];
+    int battery = low_battery ? -2 : battery_status;
+    unsigned rec = rec_running;
+    unsigned full = !home_idle_valid;
+    unsigned redraw_header = full || last_step != position || last_bpm != bpm || last_battery != battery;
+    unsigned redraw_footer = full || last_selection != selection || last_running != run || last_record != rec;
+    unsigned geometry = full || last_bpm != bpm || last_swing != swing;
+    last_step = position; last_bpm = bpm; last_battery = battery;
+    last_selection = selection; last_running = run; last_record = rec; last_swing = swing;
     unsigned active[VOICES], count = 0;
     for (unsigned v = 0; v < VOICES; ++v)
         if (voices[v].age && !voices[v].delay && !voices[v].releasing && voices[v].sequence_note)
             active[count++] = voices[v].sequence_note;
     char number[12];
+    if (redraw_header) {
     cv_begin(240, 33, C_BLACK);
     cv_text(5, 0, &FONT_M, "SLAP-5", C_WHITE);
     decimal(number, bpm);
@@ -3814,6 +3888,7 @@ static void draw_home_sequences(void)
         for (int bar = 0; bar < 4; ++bar)
             cv_rect(66 + bar * 5, 25, 4, 5, bar < battery_status ? C_WHITE : track_surface[0]);
     cv_blit(0, 0);
+    }
     for (unsigned t = 0; t < TRACKS; ++t) {
         unsigned mix = tracks[t].mix, length = pattern_length(mix), patch = tracks[t].patch;
         unsigned step = position % length, first = step & ~15u, lanes = lane_count(t);
@@ -3821,6 +3896,24 @@ static void draw_home_sequences(void)
         const char *name = t == DRUMS ? drum_kit_name(patch) : slap_patches[patch].name;
         unsigned level = (mix & (1u << 24)) || (solo && !(solo & (1u << t))) ? 0u : track_energy[t];
         int meter = (int)(fm_sqrtf(level * (1.0f / 160.0f)) * 44.0f);
+        unsigned peak = level ? track_peak[t] : 0u;
+        unsigned cursor = run ? (step & 15u) * 12u + fraction * 11u / 14u : 192u;
+        unsigned focused = t == selection, revision = pattern_revision[t];
+        uint32_t sounding = 2166136261u;
+        for (unsigned v = 0; v < count; ++v) {
+            unsigned row = (active[v] - 1u) / STEPS;
+            for (unsigned lane = 0; lane < lanes; ++lane) {
+                if (row != pattern_row(t, lane)) continue;
+                sounding = (sounding ^ active[v]) * 16777619u;
+                break;
+            }
+        }
+        if (!geometry && !recording && last_lane[t].cursor == cursor && last_lane[t].first == first &&
+            last_lane[t].patch == patch && last_lane[t].mix == mix && last_lane[t].revision == revision &&
+            last_lane[t].meter == (unsigned)meter && last_lane[t].peak == peak &&
+            last_lane[t].focused == focused && last_lane[t].active == sounding) continue;
+        last_lane[t] = (__typeof__(last_lane[t])){cursor, first, patch, mix, revision,
+            (unsigned)meter, peak, focused, sounding};
         cv_begin(240, 36, C_BLACK);
         cv_rect(5, 0, 24, 34, t == selection ? color : track_rule[t]);
         decimal(number, t + 1u);
@@ -3828,6 +3921,7 @@ static void draw_home_sequences(void)
         cv_text(34, 0, text_w(&FONT_B, name) <= 148 ? &FONT_B : &FONT_S, name, C_WHITE);
         cv_rect(190, 5, 44, 7, track_surface[t]);
         cv_rect(190, 5, meter, 7, color);
+        if (peak) cv_rect(190 + (int)(fm_sqrtf(peak * (1.0f / 160.0f)) * 43.0f), 5, 1, 7, C_WHITE);
         for (unsigned col = 0; col < 16u && first + col < length; ++col) {
             int x = 34 + (int)col * 12;
             cv_rect(x, 17, 11, 15, track_surface[t]);
@@ -3854,18 +3948,78 @@ static void draw_home_sequences(void)
                 cv_rect(x, y, clamp(width, 2, 226 - x), 2, ink);
             }
         }
-        if (run) cv_rect(34 + (int)(step & 15u) * 12 + (int)(fraction * 11u / 14u), 17, 1, 15, C_WHITE);
+        if (run) cv_rect(34 + (int)cursor, 17, 1, 15, C_WHITE);
         cv_blit(0, 33 + (int)t * 36);
     }
+    if (redraw_footer) {
     cv_begin(240, 27, C_BLACK);
     cv_text(5, 5, &FONT_B, rec_running ? "REC" : run ? "PLAY" : "STOP", C_WHITE);
     cv_text(85, 5, &FONT_B, "1/16", C_WHITE);
     cv_text(149, 5, &FONT_B, "SELECT TRK", track_color[selection]);
     cv_blit(0, 213);
+    }
+    home_idle_valid = 1;
 }
+
+static const volatile SlapSynth *graph_voice(unsigned track, unsigned engine)
+{
+    unsigned age = 0;
+    const volatile SlapSynth *voice = 0;
+    for (unsigned v = 0; v < VOICES; ++v) {
+        const volatile Voice *candidate = &voices[v];
+        if (candidate->age > age && candidate->track == track && !candidate->delay &&
+            !candidate->releasing && synths[v].engine == engine) {
+            age = candidate->age;
+            voice = &synths[v];
+        }
+    }
+    return voice;
+}
+
+static void draw_fm_routing(unsigned selected, unsigned algorithm, uint32_t config, uint16_t color)
+{
+    static const uint8_t serial[][2] = {{5, 4}, {4, 3}, {2, 1}, {1, 0}};
+    static const uint8_t x[] = {25, 63, 101, 139, 177, 215};
+    const volatile SlapSynth *live = graph_voice(selected, 0);
+    unsigned energy = track_energy[selected];
+    uint16_t route = live && energy > 6u ? color : track_rule[selected];
+    cv_rect(9, 36, 216, 1, track_surface[selected]);
+    for (unsigned edge = 0; edge < sizeof serial / sizeof serial[0]; ++edge)
+        cv_line(x[serial[edge][0]], 16, x[serial[edge][1]], 16, route);
+    const int modulation = algorithm == 1u ? 5 : 3;
+    cv_line(x[modulation], 9, x[modulation], 2, route);
+    cv_line(x[modulation], 2, x[2], 2, route);
+    cv_line(x[2], 2, x[2], 9, route);
+    if (algorithm == 2u) {
+        cv_line(x[4], 25, x[4], 34, route);
+        cv_line(x[4], 34, x[0], 34, route);
+        cv_line(x[0], 34, x[0], 25, route);
+    }
+    for (unsigned op = 0; op < 6u; ++op) {
+        unsigned level = config ? config >> (18u + 2u * op) & 3u : 3u;
+        float envelope = live && (live->operator_mask & (1u << op)) ? live->operators[op].gain : 1.0f;
+        unsigned height = (unsigned)fm_clampf(envelope * level * energy / 27.0f, 0.0f, 17.0f);
+        int carrier = op == 0u || (algorithm == 1u && op == 3u) || (algorithm == 2u && op == 2u);
+        cv_rect(x[op] - 12, 8, 24, 19, op == timbre_operator ? track_rule[selected] : track_surface[selected]);
+        cv_rect(x[op] - 11, 26 - (int)height, 22, (int)height, carrier ? C_WHITE : color);
+        char label[] = {(char)('1' + op), 0};
+        cv_text(x[op] - 3, 7, &FONT_XS, label, height > 10u && carrier ? C_BLACK : C_WHITE);
+        if (carrier) cv_rect(x[op] - 5, 28, 10, 2, color);
+    }
+}
+
+static unsigned browser_valid, browser_track, browser_patch, browser_group, browser_tempo, browser_page;
 
 static void draw_panel(void)
 {
+    if (slap_ui.page == PATCH && (!edit_page || slap_ui.track == DRUMS)) {
+        unsigned track = slap_ui.track, patch = tracks[track].patch, group = patch_group[track];
+        if (browser_valid && track == browser_track && patch == browser_patch &&
+            group == browser_group && tempo == browser_tempo && edit_page == browser_page) return;
+        browser_valid = 1;
+        browser_track = track; browser_patch = patch; browser_group = group; browser_tempo = tempo; browser_page = edit_page;
+    } else browser_valid = 0;
+
     static const char *const page_names[] = {"SLAP-5", "SEQUENCE", "GLOBAL", "SOUND LAB", "ENV", "FX", "VISUAL", "SAVE", "KEY & CHORDS", "LFO", "ARP", "MIXER", "RECORD", "GEN DRUMS", "LIVE FX", "SETTINGS"};
     static const char *const arp_labels[] = {"MODE", "RATE", "OCT", "GATE"};
     static const char *const arp_modes[] = {"OFF","UP","DOWN","UP/DN","RANDOM","CHORD","PLAYED"};
@@ -3925,62 +4079,61 @@ static void draw_panel(void)
         cv_blit(0, 0);
     }
     if (slap_ui.page == SETTINGS) {
-        static const char *const names[] = {"AUDIO", "METRONOME", "RECORDING", "TRANSPORT", "KEYBOARD", "DISPLAY", "DIAGNOSTICS", "LIGHTS"};
-        const char *items[4] = {0};
-        char level[8], other[8];
+        const char *labels[4] = {0}, *values[4] = {0};
+        char level[12], other[12];
         switch (settings_section) {
         case PREF_AUDIO:
-            items[1] = speaker_mode ? "K2 SPEAKER OPTIMIZED" : "K2 SPEAKER FLAT";
-            items[0] = auto_mix ? "K4 AUTO MIX ON" : "K4 AUTO MIX OFF";
-            items[2] = output_trim == 0 ? "K1 OUTPUT 100%" : output_trim == 1 ? "K1 OUTPUT 80%" :
-                output_trim == 2 ? "K1 OUTPUT 60%" : "K1 OUTPUT 40%";
-            items[3] = auto_level_off ? "K3 AUTO LEVEL OFF" : "K3 AUTO LEVEL ON"; break;
+            labels[0] = "OUTPUT"; labels[1] = "SPEAKER"; labels[2] = "AUTO LEVEL"; labels[3] = "AUTO MIX";
+            decimal(level, 100u - output_trim * 20u);
+            values[0] = level; values[1] = speaker_mode ? "OPTIMIZED" : "FLAT";
+            values[2] = auto_level_off ? "OFF" : "ON"; values[3] = auto_mix ? "ON" : "OFF";
+            break;
         case PREF_METRO:
-            decimal(level, 100 - click_trim * 25);
-            items[0] = metronome == 2 ? "K1 ON" : metronome == 1 ? "K1 REC ONLY" : "K1 OFF";
-            items[1] = "K2 CLICK LEVEL PERCENT"; items[2] = level;
-            items[3] = rec_count_in ? "K3 COUNT-IN" : "K3 FIRST NOTE"; break;
+            labels[0] = "METRONOME"; labels[1] = "CLICK LEVEL"; labels[2] = "RECORD START";
+            decimal(level, 100u - click_trim * 25u);
+            values[0] = metronome == 2u ? "ON" : metronome == 1u ? "REC ONLY" : "OFF";
+            values[1] = level; values[2] = rec_count_in ? "COUNT-IN" : "FIRST NOTE";
+            break;
         case PREF_RECORD:
+            labels[0] = "QUANTIZATION"; labels[1] = "BARS"; labels[2] = "MODE"; labels[3] = "RECORD START";
             decimal(level, rec_quantize); decimal(other, 1u << rec_bars);
-            items[0] = level; items[1] = other;
-            items[2] = rec_replace ? "K3 REPLACE" : "K3 OVERDUB";
-            items[3] = rec_count_in ? "K4 COUNT-IN" : "K4 FIRST NOTE"; break;
+            values[0] = level; values[1] = other;
+            values[2] = rec_replace ? "REPLACE" : "OVERDUB"; values[3] = rec_count_in ? "COUNT-IN" : "FIRST NOTE";
+            break;
         case PREF_TRANSPORT:
-            items[0] = resume_playback ? "K1 RESUME" : "K1 RESTART";
-            items[1] = "TRACKS LOOP INDEPENDENTLY"; break;
+            labels[0] = "PLAY START"; values[0] = resume_playback ? "RESUME" : "RESTART"; break;
         case PREF_KEYS:
-            items[0] = perfect_note_off == 0 ? "K1 PERFECT NOTE ON" :
-                perfect_note_off == 15 ? "K1 PERFECT NOTE OFF" : "K1 PERFECT NOTE MIXED";
-            items[1] = "KEY & CHORDS SETS TRACK SCALE"; break;
+            labels[0] = "PERFECT NOTE";
+            values[0] = perfect_note_off == 0u ? "ON" : perfect_note_off == 15u ? "OFF" : "MIXED"; break;
         case PREF_DISPLAY:
+            labels[0] = "VISUALIZER"; labels[1] = "DISPLAY QUALITY";
             decimal(level, visual_index(slap_ui.visual) + 1u);
-            items[0] = "K1 VISUALIZER"; items[1] = level;
-            items[2] = visual_quality ? "K2 ECO" : "K2 ADAPTIVE"; break;
+            values[0] = level; values[1] = visual_quality ? "ECO" : "ADAPTIVE"; break;
         case PREF_LEDS: {
-            static const char *const led_labels[] = {"K1 BRIGHT", "K1 DIM KEYS", "K1 DIM ALL", "K1 BUTTONS ONLY"};
-            items[0] = led_labels[led_style];
-            items[1] = "TRACK CONTEXT ALWAYS BRIGHT";
+            static const char *const profiles[] = {"SOFT", "OFF", "BRIGHTER", "SOFT"};
+            labels[0] = "IDLE BUTTONS"; values[0] = profiles[led_style];
+            labels[1] = "NORMAL KEYS"; values[1] = led_keys_on_hit ? "OFF" : "MEDIUM";
             break;
         }
         case PREF_DIAG:
-            items[0] = "SEL OPEN DIAGNOSTICS"; items[1] = "CPU / CORE 1 / DMA TRACE"; break;
+            labels[0] = "DIAGNOSTICS"; values[0] = "PRESS SEL"; break;
         }
-        for (unsigned row = 0; row < 4; ++row) {
-            cv_begin(240, 48, C_BLACK);
-            if (!row) {
-                cv_text(8, 5, &FONT_B, names[settings_section], c);
-                cv_text(8, 26, &FONT_XS, "SELECT SECTION  /  HOME EXIT", C_WHITE);
-            } else if (row < 3) {
-                unsigned first = (row - 1u) * 2u;
-                for (unsigned line = 0; line < 2; ++line) {
-                    unsigned k = first + line;
-                    int y = 4 + (int)line * 20;
-                    if (items[k]) cv_text(8, y, &FONT_XS, items[k], C_WHITE);
-                }
-            } else if (settings_section == PREF_RECORD) {
-                cv_text(8, 8, &FONT_XS, "K1 QUANTIZATION / K2 BARS", c);
+        cv_begin(240, 48, C_BLACK);
+        cv_text(8, 4, &FONT_M, settings_names[settings_section], c);
+        cv_text(8, 29, &FONT_XS, "ALGO PAGE / SELECT ITEM / K1 VALUE", C_WHITE);
+        cv_blit(0, 48);
+        for (unsigned row = 0; row < 4u; ++row) {
+            cv_begin(240, 36, C_BLACK);
+            if (labels[row]) {
+                unsigned focused = settings_item == row;
+                cv_rect(5, 2, 230, 32, focused ? c : track_surface[selected]);
+                uint16_t ink = focused ? C_BLACK : C_WHITE;
+                cv_text(12, 10, &FONT_B, labels[row], ink);
+                const char *value = values[row];
+                const felucca_font_t *font = text_w(&FONT_B, value) <= 94 ? &FONT_B : &FONT_XS;
+                cv_text(229 - text_w(font, value), 10, font, value, ink);
             }
-            cv_blit(0, 48 + row * 48);
+            cv_blit(0, 96 + row * 36);
         }
         return;
     }
@@ -4376,9 +4529,25 @@ static void draw_panel(void)
     }
     if (slap_ui.page == PATCH) {
         cv_begin(240, 40, background);
-        if (selected < DRUMS && (patch->engine == 0u || patch->engine == 2u)) {
+        if (edit_page && selected < DRUMS && (patch->engine == 0u || patch->engine == 2u)) {
             uint32_t config = track_timbre[selected];
-            if (patch->engine == 0u && timbre_open == 2u) {
+            if (patch->engine == 0u && edit_page == 4u) {
+                cv_text(8, 5, &FONT_M, "5 FEEDBACK", c);
+                cv_text(8, 27, &FONT_XS, "K1 FEEDBACK / ALGO PAGE", C_WHITE);
+                cv_blit(0, 80);
+                cv_begin(240, 40, background);
+                unsigned feedback = track_fm_envelopes[selected][6];
+                if (feedback) decimal(number, feedback - 1u);
+                cv_text(8, 2, &FONT_L, feedback ? number : "AUTO", C_WHITE);
+                cv_rect(8, 35, 14 * (int)feedback, 3, c);
+                cv_blit(0, 120);
+                for (int y = 160; y < 240; y += 40) {
+                    cv_begin(240, 40, background);
+                    cv_blit(0, y);
+                }
+                return;
+            }
+            if (patch->engine == 0u && edit_page == 3u) {
                 unsigned settings = track_fm_envelopes[selected][timbre_operator];
                 unsigned feedback = track_fm_envelopes[selected][6];
                 if (!settings) settings = 0x14561u;
@@ -4405,29 +4574,20 @@ static void draw_panel(void)
                 cv_blit(0, 168);
                 cv_begin(240, 40, background);
                 cv_text(8, 2, &FONT_XS, "OCT+ / K4 FEEDBACK", C_WHITE);
-                cv_text(8, 20, &FONT_XS, "SELECT PAGE", C_WHITE);
+                cv_text(8, 20, &FONT_XS, "ALGO PAGE / SELECT TRACK", C_WHITE);
                 cv_blit(0, 200);
                 return;
             }
             if (patch->engine == 0u) {
-                if (!config) config = 0x3ffda249u;
-                cv_text(8, 2, &FONT_B, "FM6 OPERATOR", c);
+                unsigned factory = !config;
+                unsigned algorithm = config ? config >> 30 : patch->motion < 44u ? 0u : patch->motion < 87u ? 1u : 2u;
+                cv_text(8, 2, &FONT_B, edit_page == 1u ? "2 FM6 ROUTING" : "3 FM6 OPERATORS", c);
                 decimal(number, timbre_operator + 1u);
                 cv_text(148, 2, &FONT_B, number, C_WHITE);
                 cv_text(8, 22, &FONT_XS, "K1 OP  K2 RATIO  K3 LEVEL  K4 ALG", C_WHITE);
                 cv_blit(0, 80);
                 cv_begin(240, 40, background);
-                for (unsigned op = 0; op < 6u; ++op) {
-                    int x = 12 + (int)op * 38;
-                    int height = 5 + (int)(config >> (18u + 2u * op) & 3u) * 5;
-                    cv_rect(x, 4, 26, 30, op == timbre_operator ? track_rule[selected] : track_surface[selected]);
-                    cv_rect(x + 6, 28 - height, 14, height, c);
-                    unsigned route = config >> 30;
-                    if (op && (route == 0u || op != (route == 1u ? 3u : 2u)))
-                        cv_line(x - 11, 15, x - 1, 15, c);
-                    decimal(number, op + 1u);
-                    cv_text(x + 9, 27, &FONT_T, number, C_WHITE);
-                }
+                draw_fm_routing(selected, algorithm, config, c);
                 cv_blit(0, 120);
                 cv_begin(240, 40, background);
                 unsigned ratio = (config >> (timbre_operator * 3u) & 7u) + 1u;
@@ -4438,12 +4598,12 @@ static void draw_panel(void)
                 number[end++] = ratio & 1u ? '5' : '0';
                 number[end] = 0;
                 cv_text(8, 2, &FONT_XS, "RATIO", c);
-                cv_text(55, 2, &FONT_XS, number, C_WHITE);
+                cv_text(55, 2, &FONT_XS, factory ? "AUTO" : number, C_WHITE);
                 cv_text(99, 2, &FONT_XS, "LEVEL", c);
-                decimal(number, config >> (18u + timbre_operator * 2u) & 3u);
+                decimal(number, factory ? 3u : config >> (18u + timbre_operator * 2u) & 3u);
                 cv_text(145, 2, &FONT_XS, number, C_WHITE);
                 static const char *const routing[] = {"SERIAL", "BRANCH", "LAYER", "SERIAL"};
-                cv_text(8, 21, &FONT_XS, routing[config >> 30], C_WHITE);
+                cv_text(8, 21, &FONT_XS, routing[algorithm], C_WHITE);
             } else {
                 cv_text(8, 2, &FONT_B, "WAVETABLE", c);
                 cv_text(8, 22, &FONT_XS, "K1 MORPH  K2 MOVEMENT", C_WHITE);
@@ -4451,31 +4611,36 @@ static void draw_panel(void)
                 cv_begin(240, 40, background);
                 unsigned morph = config ? config & 127u : patch->color;
                 cv_rect(8, 16, 222, 1, track_rule[selected]);
-                unsigned sweep = (config ? config >> 8 & 127u : patch->motion) / 10u;
-                int scan = (int)morph + (int)(fm_sinf((plat_ms() % 4096u) * (6.2831853f / 4096.0f)) * sweep);
-                unsigned preview = (unsigned)clamp(scan, 0, 127);
+                unsigned movement = config ? config >> 8 & 127u : patch->motion;
+                const volatile SlapSynth *live = graph_voice(selected, 2);
+                float phase = live ? live->slow : (plat_ms() % 10000u) *
+                    ((0.19f + movement * (2.2f / 127.0f)) / 1000.0f);
+                phase -= fm_floorf(phase);
+                float inc = live ? live->inc : 0.0f;
+                unsigned band = inc < 0.059f ? 0u : inc < 0.137f ? 1u : 2u;
+                float preview = slap_wave_scan(morph * (1.0f / 127.0f),
+                    movement * (1.0f / 127.0f), phase);
                 int previous = 16;
                 for (unsigned point = 0; point <= 112u; ++point) {
-                    int y = 16 - (int)(slap_wave_preview(preview, point * 128u / 112u) * 14.0f);
+                    int y = 16 - (int)(slap_wave_preview(preview, band, point * 128u / 112u) * 14.0f);
                     if (point) cv_line(8 + (int)(point - 1u) * 2, previous, 8 + (int)point * 2, y, c);
                     previous = y;
                 }
                 cv_rect(8, 37, 222, 2, track_surface[selected]);
-                cv_rect(8, 37, (int)(preview * 222u / 127u), 2, c);
+                cv_rect(8, 37, (int)(preview * 74.0f), 2, c);
                 cv_blit(0, 120);
                 cv_begin(240, 40, background);
-                unsigned movement = config ? config >> 8 & 127u : patch->motion;
                 cv_rect(8, 5, 222, 10, track_surface[selected]);
                 cv_rect(8, 5, (int)(movement * 222u / 127u), 10, c);
                 cv_text(8, 22, &FONT_XS, "SCAN MOVEMENT", C_WHITE);
             }
             cv_blit(0, 160);
             cv_begin(240, 40, background);
-            cv_text(8, 15, &FONT_XS, patch->engine == 0u ? "SELECT OPERATORS / ENVELOPE" : "PRESETS PATCH / HOME BACK", C_WHITE);
+            cv_text(8, 15, &FONT_XS, patch->engine == 0u ? "ALGO PAGE / SELECT TRACK" : "PRESETS PATCH / HOME BACK", C_WHITE);
             cv_blit(0, 200);
             return;
         }
-        if (selected < DRUMS) {
+        if (edit_page && selected < DRUMS) {
             cv_text(8, 2, &FONT_B, slap_engine_names[patch->engine], c);
             cv_text(8, 22, &FONT_XS, "K1 FILTER  K2 DRIVE  ENV  LFO", C_WHITE);
             cv_blit(0, 80);
@@ -4489,30 +4654,47 @@ static void draw_panel(void)
             }
             return;
         }
-        cv_text(8, 2, &FONT_B, selected == DRUMS ? "DRUM KITS" : slap_engine_names[patch->engine], c);
-        cv_text(8, 21, &FONT_XS, selected == DRUMS ? "SELECT TRACK  /  K2 KIT" :
-                patch->engine == 0u || patch->engine == 2u ? "K1 GROUP / K2 PATCH / SEL TIMBRE" :
-                "SELECT TRACK  /  K1 GROUP  /  K2 PATCH", C_WHITE);
-        cv_blit(0, 80);
-        int current = (int)tracks[selected].patch;
+        if (edit_page && selected == DRUMS) {
+            cv_text(8, 2, &FONT_M, "2 KIT VOICES", c);
+            cv_text(8, 27, &FONT_XS, "PRESETS KIT / ALGO BROWSER", C_WHITE);
+            cv_blit(0, 80);
+            static const char *const kit_voice[] = {
+                "KICK","SNARE","HIHAT","RIM","CLAP","CRASH","SUB","ALT SN",
+                "OPEN","PEDAL","LOW TOM","MID TOM","HI TOM","RIDE","SHAKER","PERC"
+            };
+            for (int row = 0; row < 4; ++row) {
+                cv_begin(240, 30, background);
+                for (int col = 0; col < 4; ++col) {
+                    int x = 5 + col * 59;
+                    cv_rect(x, 3, 55, 25, track_surface[selected]);
+                    cv_text(x + 3, 8, &FONT_XS, kit_voice[row * 4 + col], C_WHITE);
+                }
+                cv_blit(0, 120 + row * 30);
+            }
+            return;
+        }
         int drums = selected == DRUMS;
-        int legacy_kit = drums && current < DRUM_LEGACY_KITS;
-        int minimum = drums ? DRUM_LEGACY_KITS : 0;
-        int count = drums ? DRUM_KITS : SLAP_PATCHES;
-        int first = clamp(current - 1, minimum, count - 3);
-        for (int row = 0; row < 3; ++row) {
-            int item = legacy_kit ? (row == 0 ? current : minimum + row - 1) : first + row;
-            const char *name = selected == DRUMS ? drum_kit_name(item) : slap_patches[item].name;
+        unsigned current = tracks[selected].patch;
+        const char *category = drums ? kit_groups[patch_group[selected]] : patch_groups[patch_group[selected]];
+        cv_text(8, 1, &FONT_B, category, c);
+        cv_text(8, 22, &FONT_XS, "K1 GROUP   K2 PATCH   ALGO PAGE", C_WHITE);
+        cv_blit(0, 80);
+        unsigned choices[] = {browse_patch(selected, current, -1), current, browse_patch(selected, current, 1)};
+        for (unsigned row = 0; row < 3u; ++row) {
+            unsigned id = choices[row];
             cv_begin(240, 30, background);
-            cv_rect(7, 2, 226, 26, item == current ? c : track_surface[selected]);
-            const felucca_font_t *font = &FONT_S;
-            cv_text(14, 4, font, name, item == current ? C_BLACK : C_WHITE);
-            cv_blit(0, 120+row*30);
+            if (row == 1u || id != current) {
+                uint16_t ink = row == 1u ? C_BLACK : C_WHITE;
+                cv_rect(7, 2, 226, 26, row == 1u ? c : track_surface[selected]);
+                decimal(number, id + 1u);
+                cv_text(12, 5, &FONT_XS, number, ink);
+                const char *name = drums ? drum_kit_name(id) : slap_patches[id].name;
+                cv_text(43, 4, text_w(&FONT_B, name) <= 180 ? &FONT_B : &FONT_S, name, ink);
+            }
+            cv_blit(0, 120 + row * 30);
         }
         cv_begin(240, 30, background);
-        cv_rect(7, 14, 226, 1, track_rule[selected]);
-        for (unsigned k = 0; k+1u < SLAP_FX_PLOT; ++k)
-            cv_line(8+k*2u, 14+slap_fx_trace(selected,k)/5, 10+k*2u, 14+slap_fx_trace(selected,k+1u)/5, c);
+        cv_text(8, 7, &FONT_B, drums ? "DRUM KIT" : slap_engine_names[patch->engine], C_WHITE);
         cv_blit(0, 210);
         return;
     }
@@ -4936,13 +5118,14 @@ void app_frame(void)
                 draw_home_sequences();
             } else draw_panel();
             if (slap_ui.page != HOME) home_idle_valid = 0;
+            if (slap_ui.page != PATCH || slap_ui.booting) browser_valid = 0;
         }
     }
 }
 
 void app_ui_init(void)
 {
-    header_valid = graph_valid = home_idle_valid = 0;
+    header_valid = graph_valid = home_idle_valid = browser_valid = 0;
     slap_ui.octave = 2;
     input_octave = 2;
     slap_ui.boot_at = plat_ms();

@@ -84,6 +84,6 @@ expect live_fx 0
 tap HOME
 tap PLAY
 tap GLO
-turn SELECT 7
+turn ALGO 7
 expect settings_section 7
 turn K1 1

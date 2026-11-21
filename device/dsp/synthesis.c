@@ -207,15 +207,24 @@ static inline SLAP_SYNTH_INLINE float table_frame(const int8_t *frame, unsigned 
     return (a + (b - a) * fraction) * 0.009f;
 }
 
-float slap_wave_preview(unsigned morph, unsigned point)
+static inline SLAP_SYNTH_INLINE float table_scan(float morph, float movement, float phase)
 {
-    unsigned scan = morph * 3u;
-    unsigned frame = scan / 128u, blend = scan % 128u;
+    return fm_clampf(morph * 2.74f + movement * (0.12f + 0.25f * sine(phase)), 0.0f, 2.999f);
+}
+
+float slap_wave_scan(float morph, float movement, float phase)
+{
+    return fm_clampf(morph * 2.74f + movement * (0.12f + 0.25f * fm_sinf(phase * 6.2831853f)), 0.0f, 2.999f);
+}
+
+float slap_wave_preview(float scan, unsigned band, unsigned point)
+{
+    unsigned frame = (unsigned)scan;
     unsigned index = (point >> 2) & 31u;
     float fraction = (point & 3u) * 0.25f;
-    float first = table_frame(wavetable[0][frame], index, fraction);
-    float next = table_frame(wavetable[0][frame + 1u], index, fraction);
-    return first + (next - first) * (blend * (1.0f / 128.0f));
+    float first = table_frame(wavetable[band][frame], index, fraction);
+    float next = table_frame(wavetable[band][frame + 1u], index, fraction);
+    return first + (next - first) * (scan - frame);
 }
 
 SLAP_SYNTH_SRAM float slap_synth_sample(SlapSynth *s)
@@ -328,7 +337,7 @@ SLAP_SYNTH_SRAM float slap_synth_sample(SlapSynth *s)
         break;
     case 2: {
         if (s->modern >= 2u) {
-            float scan = fm_clampf(c * 2.74f + m * (0.12f + 0.25f * sine(t)), 0.0f, 2.999f);
+            float scan = table_scan(c, m, t);
             unsigned frame = (unsigned)scan;
             unsigned band = d < 0.059f ? 0u : d < 0.137f ? 1u : 2u;
             float phase = p * 32.0f;
