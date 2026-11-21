@@ -8,7 +8,13 @@ import re
 
 device = Path(__file__).resolve().parents[1]
 header = (device / "build/gen/felucca_font.h").read_text()
-advances = tuple(map(int, re.search(r"FONT_T_ADV\[\d+\] = \{([^}]+)\}", header)[1].split(",")))
+def advances(font):
+    return tuple(map(int, re.search(rf"FONT_{font}_ADV\[\d+\] = \{{([^}}]+)\}}", header)[1].split(",")))
+
+
+tile_advances = advances("T")
+bold_advances = advances("B")
+small_advances = advances("S")
 
 for source, count in [("patches.c", 136), ("drum_kits.h", 81)]:
     names = re.findall(r'^\s*\{\s*"([^"]+)"\s*,', (device / "dsp" / source).read_text(), re.M)
@@ -18,11 +24,14 @@ for source, count in [("patches.c", 136), ("drum_kits.h", 81)]:
     groups = [names] if source == "patches.c" else [names[:32], names[32:56], names[56:]]
     assert all(len(group) == len(set(group)) for group in groups)
     for name in names:
+        bold_width = sum(bold_advances[ord(char) - 32] for char in name)
+        strip_width = bold_width if bold_width <= 148 else sum(small_advances[ord(char) - 32] for char in name)
+        assert strip_width <= 156, f"Scrolling HOME name overlaps the meter: {name!r}"
         remaining = name
         for row, limit in enumerate((33, 40)):
             width = end = space = 0
             for char in remaining:
-                width += advances[ord(char) - 32]
+                width += tile_advances[ord(char) - 32]
                 if width > limit:
                     break
                 if char == " ":
@@ -33,4 +42,4 @@ for source, count in [("patches.c", 136), ("drum_kits.h", 81)]:
             remaining = remaining[end:].lstrip()
         assert not remaining, f"HOME label truncates {name!r}"
 
-print("All 136 patch and 81 kit names fit the two-line HOME tiles.")
+print("All 136 patch and 81 kit names fit the tiles and scrolling HOME lanes.")

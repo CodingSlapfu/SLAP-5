@@ -7,6 +7,7 @@ import argparse
 import array
 import os
 from pathlib import Path
+import re
 import runpy
 import statistics
 import subprocess
@@ -59,13 +60,17 @@ def measure(binary, script, destination, single, full=False, async_worker=False)
         env["SLAP_TEST_SINGLE_CORE"] = "1"
     if async_worker and not single:
         env["SLAP_TEST_ASYNC"] = "1"
-    subprocess.run([binary, script, destination], env=env, check=True, stdout=subprocess.DEVNULL)
+    output = subprocess.check_output([binary, script, destination], env=env, text=True)
+    counters = dict(re.findall(r"^  ok (worker_\w+|fx_worker_\w+) == (\d+) \(>-1\)$", output, re.M))
     samples = array.array("d")
     samples.frombytes(trace.read_bytes())
     # Use the same bounded tail across revisions. Patch-switch includes overdubbing.
     assert len(samples) >= 1600
     played = sorted(nanoseconds / 1000 for nanoseconds in (samples if full else samples[-1600:]))
-    return statistics.mean(played), played[(95 * len(played) - 1) // 100], played[(99 * len(played) - 1) // 100], played[-1]
+    p95 = played[(95 * len(played) - 1) // 100]
+    p99 = played[(99 * len(played) - 1) // 100]
+    over_budget = sum(value > 256 * 1e6 / 44100 for value in played)
+    return (statistics.mean(played), p95, p99, played[-1]), over_budget, counters
 
 
 def main():
@@ -117,6 +122,11 @@ def main():
                 arrangement = name == "arrangement"
                 commands = fixtures["scenario"](seed, bpm, 1, fx, fx, chords=args.chords or arrangement,
                                                 arrangement=arrangement, modulated=fx and args.modulated)
+            if args.async_worker:
+                commands += [
+                    f"expect {name} >-1" for name in ("worker_jobs", "worker_fallbacks",
+                        "fx_worker_jobs", "fx_worker_fallbacks", "worker_wait_us", "worker_work_us")
+                ]
             script.write_text("\n".join(commands) + "\n")
             baseline_script = script
             if args.legacy_settings_baseline:
@@ -134,10 +144,15 @@ def main():
                     for label in labels:
                         destination = scratch / f"{case}-{mode}-{label}-{run}"
                         results[label].append(measure(binaries[label], baseline_script if label == "baseline" else script, destination, single, args.full, args.async_worker))
-                for label, rows in results.items():
+                for label, trials in results.items():
+                    rows, overruns, counters = zip(*trials)
                     stats = " / ".join(f"{statistics.median(values):.2f}" for values in zip(*rows))
                     worst = max(row[-1] for row in rows)
-                    print(f"{case} {mode} {label}   median mean/P95/P99/peak µs   {stats}   worst {worst:.2f}", flush=True)
+                    print(f"{case} {mode} {label}   median mean/P95/P99/peak µs   {stats}"
+                          f"   worst {worst:.2f}   host callbacks over 5805 us {sum(overruns)}", flush=True)
+                    if mode == "worker" and args.async_worker:
+                        for trial in counters:
+                            print("  " + " ".join(f"{key}={value}" for key, value in trial.items()), flush=True)
 
 
 if __name__ == "__main__":

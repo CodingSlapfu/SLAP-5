@@ -5222,6 +5222,8 @@ static void draw_panel(void)
         unsigned page = (unsigned)slap_ui.fx_page;
         for (unsigned k = 0; k < 4; ++k) {
             const char *label = slap_fx_labels[page][k];
+            if (page == 2 && k == 1) label = "PATT";
+            if (page == 6 && k == 2) label = "FDBK";
             unsigned value = slap_fx_value(selected, page, k);
             unsigned limit = slap_live_parameter_limit(4u + page * 4u + k);
             if (page == 4 && k == 1) {
