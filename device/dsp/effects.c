@@ -42,7 +42,7 @@ typedef struct {
     uint32_t gate_boundary;
     unsigned gate_step;
     uint32_t delay_pos, chorus_pos, room_pos, delay_div, crush_count;
-    uint32_t revision, bpm, room_short, room_long;
+    uint32_t revision, bpm, room_short, room_long, live;
     uint16_t pattern;
     int16_t slice[256];
 } Fx;
@@ -183,18 +183,52 @@ void slap_fx_change(unsigned track, unsigned page, unsigned knob, int delta)
 
 void slap_fx_begin(unsigned bpm)
 {
+    slap_fx_begin_live(bpm, 0);
+}
+
+static uint32_t fx_word(unsigned a, unsigned b, unsigned c, unsigned d)
+{
+    return a | b << 8 | c << 16 | d << 24;
+}
+
+void slap_fx_begin_live(unsigned bpm, uint32_t live)
+{
     static const unsigned slice_lengths[4] = {8, 4, 2, 1};
     static const unsigned echo_eighths[6] = {1, 2, 3, 4, 6, 8};
     for (unsigned t = 0; t < SLAP_FX_TRACKS; ++t) {
         Fx *f = &fx[t];
         uint32_t revision = settings_revision[t];
-        if (f->revision == revision && f->bpm == bpm) continue;
+        uint32_t action = (live & 7u) == t ? live >> 3 : 0;
+        if (f->revision == revision && f->bpm == bpm && f->live == action) continue;
+        f->live = action;
         f->revision = revision;
         f->bpm = bpm;
-        const uint32_t filter = settings[t][FILTER];
-        const uint32_t slice = settings[t][SLICER];
-        const uint32_t insert = settings[t][INSERT];
-        const uint32_t delay = settings[t][DELAY];
+        uint32_t filter = settings[t][FILTER], slice = settings[t][SLICER];
+        uint32_t insert = settings[t][INSERT], delay = settings[t][DELAY];
+        uint32_t room = settings[t][REVERB], chorus = settings[t][CHORUS_FX];
+        uint32_t mix = settings[t][DISPLAY];
+        unsigned mode = action & 15u;
+        if (mode) {
+            unsigned amount = (action >> 4 & 63u) * 2u;
+            unsigned speed = (action >> 10 & 63u) * 2u;
+            unsigned tone = (action >> 16 & 63u) * 2u;
+            unsigned space = (action >> 22 & 63u) * 2u;
+            switch (mode) {
+            case 1: slice = fx_word(1, 1, speed >> 5, amount); break;
+            case 2: slice = fx_word(2, 1, speed >> 5, amount); break;
+            case 3: slice = fx_word(2, 4, speed >> 5, amount); break;
+            case 4: filter = fx_word(5 + tone / 2, amount, speed / 3, space); break;
+            case 5: delay = fx_word(amount, 1 + speed / 32, space / 2, tone); break;
+            case 6: room = fx_word(amount, 40 + space / 2, speed, tone); break;
+            case 7: insert = fx_word(5, amount, tone, speed); mix = 127; break;
+            case 8: chorus = fx_word(amount, space, speed, tone); break;
+            case 9:
+                insert = fx_word(5, amount, tone, speed);
+                slice = fx_word(2, 12, speed >> 5, amount);
+                mix = 127;
+                break;
+            }
+        }
         f->low = unit(filter & 255u);
         f->band = unit((filter >> 8) & 255u);
         f->high = unit((filter >> 16) & 255u);
@@ -215,10 +249,10 @@ void slap_fx_begin(unsigned bpm)
         f->amount = unit((insert >> 8) & 255u);
         f->tone = unit((insert >> 16) & 255u);
         f->speed = unit(insert >> 24);
-        f->mix = unit(settings[t][DISPLAY] & 255u);
+        f->mix = unit(mix & 255u);
         f->time = 11025u * 60u / bpm * echo_eighths[(delay >> 8) & 255u] / 8u;
         if (f->time >= TRACK_DELAY) f->time = TRACK_DELAY - 1;
-        uint32_t room = settings[t][REVERB], chorus = settings[t][CHORUS_FX], drive = settings[t][DRIVE];
+        uint32_t drive = settings[t][DRIVE];
         for (unsigned k = 0; k < 4; ++k) {
             unsigned shift = k * 8u;
             f->dp[k] = unit((delay >> shift) & 255u);

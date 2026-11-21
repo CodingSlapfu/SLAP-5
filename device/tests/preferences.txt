@@ -1,0 +1,13 @@
+wait 6100
+tap SEL
+expect perfect_note 1
+tap OCT-
+expect perfect_note 0
+wait 2100
+expect store_writes 1
+reboot
+wait 6100
+tap SEL
+expect perfect_note 0
+tap OCT-
+expect perfect_note 1

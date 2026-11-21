@@ -13,6 +13,7 @@ void slap_fx_init(void);
 void slap_fx_change(unsigned track, unsigned page, unsigned knob, int delta);
 unsigned slap_fx_value(unsigned track, unsigned page, unsigned knob);
 void slap_fx_begin(unsigned bpm);
+void slap_fx_begin_live(unsigned bpm, uint32_t live);
 uint32_t slap_fx_config(unsigned track, unsigned page);
 int slap_fx_config_valid(unsigned page, uint32_t word);
 void slap_fx_restore(unsigned track, unsigned page, uint32_t word);

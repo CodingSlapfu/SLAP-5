@@ -53,7 +53,7 @@ turn SELECT -1
 key 0 down
 wait 4200
 key 0 up
-expect store_writes 2
+expect store_writes 3
 tap HOME
 tap SAVE
 turn SELECT 1
@@ -81,7 +81,7 @@ tap SAVE
 key 0 down
 wait 4200
 key 0 up
-expect store_writes 2
+expect store_writes 3
 tap SEL
 expect length 16
 tap HOME

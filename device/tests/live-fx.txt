@@ -1,0 +1,48 @@
+wait 6100
+tap FX
+tap FX
+expect page 14
+key b0 down
+expect live_fx 1
+key w7 down
+wait 80
+key w7 up
+key b0 up
+expect live_fx 0
+key b1 down
+expect live_fx 2
+key b1 up
+expect live_fx 0
+key b2 down
+expect live_fx 3
+key b2 up
+expect live_fx 0
+key b3 down
+expect live_fx 4
+key b3 up
+expect live_fx 0
+key b4 down
+expect live_fx 5
+key b4 up
+expect live_fx 0
+key b5 down
+expect live_fx 6
+key b5 up
+expect live_fx 0
+key b6 down
+expect live_fx 7
+key b6 up
+expect live_fx 0
+key b7 down
+expect live_fx 8
+key b7 up
+expect live_fx 0
+key b8 down
+expect live_fx 9
+key b8 up
+expect live_fx 0
+key b6 down
+expect live_fx 7
+tap HOME
+expect live_fx 0
+key b6 up
