@@ -24,6 +24,32 @@
       <button id="export" disabled>Export</button>
       <label class="import">Import<input id="import" type="file" accept=".json,application/json" disabled></label>
     </section>
+    <section class="editor song" aria-labelledby="song-title">
+      <div class="editor-head">
+        <div><p>ARRANGEMENT</p><h2 id="song-title">Song Mode</h2></div>
+        <label>Song name<input id="song-name" value="Untitled song" maxlength="80"></label>
+      </div>
+      <div class="settings">
+        <button id="song-play" disabled>Play song</button>
+        <label>Loop<select id="song-loop"><option value="off">Off</option><option value="song">Song</option><option value="scene">Scene</option></select></label>
+        <button id="scene-add" disabled>Add scene</button>
+        <button id="scene-copy" disabled>Duplicate</button>
+        <button id="scene-delete" disabled>Delete</button>
+        <button id="scene-earlier" disabled>Move earlier</button>
+        <button id="scene-later" disabled>Move later</button>
+        <button id="song-export" disabled>Export song</button>
+        <label class="import">Import song<input id="song-import" type="file" accept=".json,application/json" disabled></label>
+      </div>
+      <div id="song-grid" aria-label="Scenes and clips"></div>
+      <div class="settings">
+        <label>Scene name<input id="scene-name" maxlength="80"></label>
+        <label>Scene bars<input id="scene-bars" type="number" min="1" max="16"></label>
+        <label>Repeats<input id="scene-repeats" type="number" min="1" max="16"></label>
+        <button id="clip-copy" disabled>Copy clip</button>
+        <button id="clip-paste" disabled>Paste clip</button>
+        <output id="song-position" aria-live="polite"></output>
+      </div>
+    </section>
     <section class="toolbar" aria-label="Record a take">
       <label>Bars<select id="take-bars"><option>1</option><option>2</option><option>4</option></select></label>
       <label>Start<select id="take-start"><option value="0">First note</option><option value="1">Count-in</option></select></label>
@@ -41,7 +67,7 @@
           <label>Patch<select id="patch" aria-label="Factory patch"></select></label>
           <label>Steps<select id="length" aria-label="Pattern length"></select></label>
           <label>Pan<input id="pan" type="number" min="0" max="255"></label>
-          <label>Level<input id="level" type="number" min="0" max="255"></label>
+          <label>Level<input id="level" type="number" min="0" max="100"></label>
           <label>Mute<input id="mute" type="checkbox"></label>
         </div>
       </div>
@@ -55,6 +81,7 @@
       </div>
       <div id="generator" class="settings" hidden>
         <label>Style<select id="gen-style"></select></label>
+        <label>Bars<select id="gen-bars"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option></select></label>
         <label>Hit %<input id="gen-hit" type="number" min="0" max="100" value="70"></label>
         <label>Groove<input id="gen-groove" type="number" min="0" max="100" value="25"></label>
         <label>Variation<input id="gen-variation" type="number" min="0" max="100" value="40"></label>

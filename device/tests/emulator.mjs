@@ -6,7 +6,7 @@ let Processor;
 globalThis.currentTime = 0;
 const frames = [];
 globalThis.AudioWorkletProcessor = class {
-  port = { postMessage(message) { if (['studio-project', 'studio-generated', 'studio-take', 'studio-take-project'].includes(message.type)) frames.push(message); } };
+  port = { postMessage(message) { if (['studio-project', 'studio-generated', 'studio-take', 'studio-take-project', 'song-position', 'song-stopped'].includes(message.type)) frames.push(message); } };
 };
 globalThis.registerProcessor = (name, type) => { Processor = type; };
 
@@ -168,9 +168,12 @@ for (let style = 0; style < 16; style++) {
 }
 assert.equal(signatures.size, 16);
 await app.onMessage({ type: 'app', command: 'transport', playing: true });
-await app.onMessage({ type: 'app', command: 'gen-drums', id: 16, style: 0, hit: 73, groove: 70, variation: 40 });
-assert.equal(frames.at(-1).drums, null);
-console.log('Studio generated 16 distinct editable drum patterns and rejected generation during playback.');
+await app.onMessage({ type: 'app', command: 'gen-drums', id: 16, style: 0, hit: 73, groove: 70, variation: 40, bars: 3 });
+render(1500);
+assert.equal(frames.at(-1).id, 16);
+assert.equal(frames.at(-1).drums?.length, 48);
+assert.equal(app.ex.studio_is_playing(), 1);
+console.log('Studio generated 16 distinct patterns and applied a 48-step pattern during playback.');
 
 await app.onMessage({ type: 'app', command: 'transport', playing: false });
 await app.onMessage({ type: 'app', command: 'project', project: structuredClone(validateProject(frames[0].project)) });
@@ -245,3 +248,23 @@ for (const quantization of [0, 5, 6, 7, 8]) {
 }
 assert.equal(new Set(timingCases).size, 5);
 console.log('Five quantization strengths changed onset independently of the recorded hold duration.');
+
+
+const songs = [2, 1].map((repeats, scene) => {
+  const project = structuredClone(validateProject(frames[0].project));
+  project.bpm = 240;
+  for (let track = 0; track < 5; track++) {
+    const part = project.tracks[track];
+    part.mix = withPatternLength(part.mix, 16 * (track % 4 + 1));
+    part.steps[0] = encodeNote(track === 4 ? 36 : 55 + track + scene, 95, 150, 100);
+  }
+  return { bars: 1, repeats, project };
+});
+const songStart = frames.length;
+await app.onMessage({ type: 'app', command: 'song-start', song: { scenes: songs, index: 0, loop: 'off' } });
+assert.ok(render(1080) > 0.005);
+assert.deepEqual(frames.slice(songStart).filter(x => x.type === 'song-position').map(x => [x.scene, x.repeat]),
+  [[0, 0], [0, 1], [1, 0]]);
+assert.equal(frames.at(-1).type, 'song-stopped');
+assert.equal(app.ex.studio_is_playing(), 0);
+console.log('Song mode advanced two audible scenes with 1–4 bar clips and exact scene repeats.');

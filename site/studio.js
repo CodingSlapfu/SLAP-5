@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MPL-2.0 */
 /* Copyright (C) 2026 Ziao */
-import { decodeNote, drumNotes, encodeNote, eventLanes, fxLimit, fxPanels, legacyDrumKits, modernSynth, patternLength, validateProject, withPatternLength, within } from './project.mjs';
+import { advancedSynth, decodeNote, drumNotes, encodeNote, eventLanes, fxLimit, fxPanels, legacyDrumKits, modernSynth, patternLength, validateProject, withPatternLength, within } from './project.mjs';
 
 const $ = id => document.getElementById(id);
 const colors = ['#1ce2ff', '#ab70ff', '#ff59b0', '#ffb43a', '#3ef289'];
@@ -21,6 +21,166 @@ let context, worklet, project, stateBefore = [], stateAfter = [];
 let track = 0, step = 0, lane = 0, playing = false, drag, patches = [], drumKits = [];
 let displayedKit = false, displayedLegacy = -1;
 
+const songKey = 'slap-5-arrangement-v1';
+let arrangement, songPlaying = false, sceneIndex = 0, clipClipboard, activeScene = -1;
+const songControls = ['song-play', 'scene-add', 'scene-copy', 'scene-delete', 'scene-earlier',
+  'scene-later', 'song-export', 'song-import', 'scene-name', 'scene-bars', 'scene-repeats', 'clip-copy', 'clip-paste'];
+
+function validateSong(value) {
+  if (value?.format !== 'slap-5-song' || value.version !== 1 || typeof value.name !== 'string' ||
+      value.name.length > 80 || !Array.isArray(value.scenes) || !value.scenes.length || value.scenes.length > 16)
+    throw new Error('Invalid SLAP-5 song.');
+  return { ...value, scenes: value.scenes.map(scene => {
+    if (typeof scene.name !== 'string' || scene.name.length > 80 ||
+        !within(scene.bars, 1, 16) || !within(scene.repeats, 1, 16)) throw new Error('Invalid scene.');
+    return { ...scene, project: validateProject(scene.project) };
+  }) };
+}
+
+function saveSong() {
+  try { localStorage.setItem(songKey, JSON.stringify(arrangement)); }
+  catch { $('status').textContent = 'Song storage is unavailable. Export to keep a copy.'; }
+}
+
+function drawSong() {
+  if (!arrangement) return;
+  const scene = arrangement.scenes[sceneIndex];
+  $('song-name').value = arrangement.name;
+  $('scene-name').value = scene.name;
+  $('scene-bars').value = scene.bars;
+  $('scene-repeats').value = scene.repeats;
+  for (const id of songControls) $(id).disabled = songPlaying && id !== 'song-play';
+  $('scene-delete').disabled ||= arrangement.scenes.length === 1;
+  $('scene-add').disabled ||= arrangement.scenes.length >= 16;
+  $('scene-copy').disabled ||= arrangement.scenes.length >= 16;
+  $('scene-earlier').disabled ||= sceneIndex === 0;
+  $('scene-later').disabled ||= sceneIndex === arrangement.scenes.length - 1;
+  $('clip-paste').disabled ||= !clipClipboard || clipClipboard.drum !== (track === 4);
+  $('song-play').textContent = songPlaying ? 'Stop song' : 'Play song';
+  const grid = $('song-grid');
+  grid.replaceChildren();
+  const labels = ['Scene', 'Track 1', 'Track 2', 'Track 3', 'Track 4', 'Drums'];
+  let bar = 1;
+  const rows = labels.map((label, row) => {
+    const element = document.createElement('div');
+    element.className = 'song-row';
+    const title = document.createElement('strong');
+    title.textContent = label;
+    element.append(title);
+    arrangement.scenes.forEach((item, i) => {
+      const button = document.createElement('button');
+      const part = row ? item.project.tracks[row - 1] : null;
+      button.type = 'button';
+      button.className = 'song-clip';
+      button.setAttribute('aria-pressed', String(sceneIndex === i && (!row || track === row - 1)));
+      if (activeScene === i) button.classList.add('active');
+      if (row) {
+        button.style.setProperty('--clip-color', colors[row - 1]);
+        button.textContent = (row === 5 ? drumKits[part.patch] : patches[part.patch]) ??
+          (row === 5 ? 'Drum clip' : 'Melodic clip');
+        const meta = document.createElement('small');
+        meta.textContent = `${patternLength(part.mix)} steps${part.mix & (1 << 24) ? ' · Muted' : ''}`;
+        button.append(meta);
+      } else {
+        button.textContent = `Bar ${bar} · ${item.name} ×${item.repeats}`;
+        bar += item.bars * item.repeats;
+      }
+      button.addEventListener('click', () => {
+        if (songPlaying) { send('song-queue', { scene: i }); return; }
+        if (take || generation) return;
+        sceneIndex = i;
+        if (row) track = row - 1;
+        activateScene();
+      });
+      element.append(button);
+    });
+    return element;
+  });
+  grid.append(...rows);
+}
+
+function activateScene() {
+  project = structuredClone(arrangement.scenes[sceneIndex].project);
+  stateBefore = [];
+  stateAfter = [];
+  step = lane = 0;
+  sync();
+}
+
+function changeScenes(action) {
+  if (!arrangement || songPlaying || take || generation) return;
+  action();
+  activateScene();
+}
+
+$('song-name').addEventListener('change', () => {
+  if (!arrangement) return;
+  arrangement.name = $('song-name').value;
+  saveSong();
+});
+for (const [id, field] of [['scene-name', 'name'], ['scene-bars', 'bars'], ['scene-repeats', 'repeats']]) {
+  $(id).addEventListener('change', () => {
+    if (!arrangement || songPlaying) return;
+    const value = field === 'name' ? $(id).value : $(id).valueAsNumber;
+    if (field === 'name' || within(value, 1, 16)) arrangement.scenes[sceneIndex][field] = value;
+    saveSong();
+    drawSong();
+  });
+}
+$('scene-add').onclick = () => changeScenes(() => {
+  const empty = structuredClone(project);
+  empty.tracks.forEach(part => {
+    for (const row of [...eventLanes(part), ...part.offsets, ...part.modes, ...part.durations]) row.fill(0);
+  });
+  arrangement.scenes.splice(++sceneIndex, 0, { name: 'New scene', bars: 4, repeats: 1, project: empty });
+});
+$('scene-copy').onclick = () => changeScenes(() => {
+  const scene = structuredClone(arrangement.scenes[sceneIndex]);
+  scene.name = (scene.name + ' copy').slice(0, 80);
+  arrangement.scenes.splice(++sceneIndex, 0, scene);
+});
+$('scene-delete').onclick = () => changeScenes(() => {
+  arrangement.scenes.splice(sceneIndex, 1);
+  sceneIndex = Math.min(sceneIndex, arrangement.scenes.length - 1);
+});
+for (const [id, delta] of [['scene-earlier', -1], ['scene-later', 1]])
+  $(id).onclick = () => changeScenes(() => {
+    const [scene] = arrangement.scenes.splice(sceneIndex, 1);
+    sceneIndex += delta;
+    arrangement.scenes.splice(sceneIndex, 0, scene);
+  });
+$('clip-copy').onclick = () => {
+  clipClipboard = { drum: track === 4, part: structuredClone(project.tracks[track]) };
+  drawSong();
+};
+$('clip-paste').onclick = () => edit(next => { next.tracks[track] = structuredClone(clipClipboard.part); });
+$('song-play').onclick = () => {
+  if (songPlaying) { send('song-stop'); return; }
+  if (playing || take || generation) return;
+  songPlaying = true;
+  send('song-start', { song: { scenes: arrangement.scenes, index: sceneIndex, loop: $('song-loop').value } });
+  draw();
+};
+$('song-export').onclick = () => {
+  const file = URL.createObjectURL(new Blob([JSON.stringify(arrangement)], { type: 'application/json' }));
+  const anchor = document.createElement('a');
+  anchor.href = file;
+  anchor.download = 'slap-5-song.json';
+  anchor.click();
+  setTimeout(() => URL.revokeObjectURL(file), 2000);
+};
+$('song-import').onchange = async () => {
+  try {
+    const input = $('song-import').files[0];
+    if (!input) return;
+    if (input.size > 16 * 1024 * 1024) throw new Error('Song exceeds the import limit.');
+    arrangement = validateSong(JSON.parse(await input.text()));
+    sceneIndex = 0;
+    activateScene();
+  } catch (error) { $('status').textContent = error.message; }
+  finally { $('song-import').value = ''; }
+};
+
 function send(command, fields = {}) {
   worklet.port.postMessage({ type: 'app', command, ...fields });
 }
@@ -32,12 +192,16 @@ function sync() {
   } catch {
     $('status').textContent = 'Local project storage is unavailable. Export to keep a copy.';
   }
+  if (arrangement) {
+    arrangement.scenes[sceneIndex].project = structuredClone(project);
+    saveSong();
+  }
   send('project', { project });
   draw();
 }
 
 function edit(change) {
-  if (take) return;
+  if (take || songPlaying || generation) return;
   const next = structuredClone(project);
   change(next);
   validateProject(next);
@@ -67,6 +231,7 @@ const noteLabel = (pitch) => track === 4 ? drums[drumRow(pitch)] :
 
 function draw() {
   if (!project) return;
+  drawSong();
   const current = selected(), steps = patternLength(current.mix), first = pageStart(), last = Math.min(steps, first + 64);
   const rows = track === 4 ? drums.length : 49;
   document.documentElement.style.setProperty('--accent', colors[track]);
@@ -88,7 +253,7 @@ function draw() {
     patchSelect.replaceChildren(...options);
   }
   patchSelect.value = current.patch;
-  const normalSteps = [16, 32, 64];
+  const normalSteps = [16, 32, 48, 64];
   const lengths = $('length');
   lengths.replaceChildren(...normalSteps.map(length => new Option(length, length)));
   if (!normalSteps.includes(steps)) lengths.append(new Option(`${steps} (legacy)`, steps));
@@ -96,7 +261,7 @@ function draw() {
   $('prev-steps').disabled = first === 0;
   $('next-steps').disabled = last === steps;
   $('pan').value = current.mix >>> 8 & 255;
-  $('level').value = current.mix >>> 16 & 255;
+  $('level').value = Math.round((current.mix >>> 16 & 255) * 100 / 255);
   $('mute').checked = (current.mix >>> 24) & 1;
   $('bpm').value = project.bpm;
   $('swing').value = project.swing;
@@ -125,7 +290,7 @@ function draw() {
   $('tracks').querySelectorAll('button').forEach((b, i) => b.setAttribute('aria-selected', String(i === track)));
   $('drum-controls').hidden = track !== 4;
   $('generator').hidden = track !== 4;
-  $('gen-apply').disabled = playing || !!generation || !!take;
+  $('gen-apply').disabled = songPlaying || !!generation || !!take;
   $('take').disabled = (playing && !take) || !!generation;
   $('quick-take').disabled = !!generation;
   const activeLane = lane ? lane - 1 : 0;
@@ -332,7 +497,7 @@ function startTake(quick) {
     send('record-stop');
     return;
   }
-  if (!project || (playing && !quick) || generation) return;
+  if (!project || (playing && !quick) || generation || songPlaying) return;
   const replace = quick ? 0 : Number($('take-mode').value);
   if (replace && eventLanes(selected()).some(events => events.some(Boolean)) &&
       !window.confirm('Replace events in the selected recording range? You can undo the take.')) return;
@@ -347,7 +512,7 @@ $('take').addEventListener('click', () => startTake(false));
 $('quick-take').addEventListener('click', () => startTake(true));
 
 $('gen-apply').addEventListener('click', () => {
-  if (!project || track !== 4 || playing || generation || take) return;
+  if (!project || track !== 4 || generation || take || songPlaying) return;
   if (eventLanes(project.tracks[4]).some(events => events.some(Boolean)) &&
       !window.confirm('Replace the current drum pattern? You can undo this.')) return;
   const hit = $('gen-hit').valueAsNumber;
@@ -355,7 +520,8 @@ $('gen-apply').addEventListener('click', () => {
   const variation = $('gen-variation').valueAsNumber;
   if (![hit, groove, variation].every(value => within(value, 0, 100))) return;
   generation = { id: ++generationId, project };
-  send('gen-drums', { id: generation.id, style: Number($('gen-style').value), hit, groove, variation });
+  send('gen-drums', { id: generation.id, style: Number($('gen-style').value), hit, groove, variation, bars: Number($('gen-bars').value) });
+  $('status').textContent = playing ? 'Drums queued for the next bar' : 'Generating drums';
   draw();
 });
 
@@ -370,13 +536,14 @@ $('next-steps').addEventListener('click', () => { step = pageStart() + 64; draw(
 $('length').addEventListener('change', () => {
   if (!project || take) return;
   const value = Number($('length').value);
-  if (![16, 32, 64].includes(value)) return;
+  if (![16, 32, 48, 64].includes(value)) return;
   step = Math.min(step, value - 1);
   edit(p => { p.tracks[track].mix = withPatternLength(p.tracks[track].mix, value); });
 });
-for (const [id, shift, min, max] of [['pan', 8, 0, 255], ['level', 16, 0, 255]]) {
+for (const [id, shift, min, max] of [['pan', 8, 0, 255], ['level', 16, 0, 100]]) {
   numberInput(id, min, max, (p, v) => {
-    p.tracks[track].mix = (p.tracks[track].mix & ~(255 << shift) | v << shift) >>> 0;
+    const byte = id === 'level' ? Math.round(v * 255 / 100) : v;
+    p.tracks[track].mix = (p.tracks[track].mix & ~(255 << shift) | byte << shift) >>> 0;
   });
 }
 for (const [id, key, max] of [['velocity', 'velocity', 127], ['gate', 'gate', 255], ['prob', 'probability', 100], ['timing', 'timing', 15]]) {
@@ -405,7 +572,7 @@ numberInput('hold-ms', 0, 190214, (p, value) => {
 $('patch').addEventListener('change', () => {
   edit(p => {
     p.tracks[track].patch = Number($('patch').value);
-    if (track !== 4) p.tracks[track].mix |= modernSynth;
+    if (track !== 4) p.tracks[track].mix |= modernSynth | advancedSynth;
   });
   send('audition', { track, pitch: track === 4 ? 36 : 60 });
 });
@@ -424,19 +591,19 @@ for (const [id, shift] of [['drum-mute', 0], ['drum-solo', 16]]) {
 }
 $('clear').addEventListener('click', () => edit(p => { setNote(p.tracks[track], lane, step, null); }));
 $('undo').addEventListener('click', () => {
-  if (take || !stateBefore.length) return;
+  if (take || songPlaying || generation || !stateBefore.length) return;
   stateAfter.push(project); project = stateBefore.pop(); step = 0; sync();
 });
 $('redo').addEventListener('click', () => {
-  if (take || !stateAfter.length) return;
+  if (take || songPlaying || generation || !stateAfter.length) return;
   stateBefore.push(project); project = stateAfter.pop(); step = 0; sync();
 });
 $('play').addEventListener('click', () => {
-  if (take) return;
+  if (take || songPlaying) return;
   playing = !playing;
   send('transport', { playing });
   $('play').textContent = playing ? 'Stop' : 'Play';
-  $('gen-apply').disabled = playing || !!generation || !!take;
+  $('gen-apply').disabled = songPlaying || !!generation || !!take;
   $('take').disabled = (playing && !take) || !!generation;
   $('quick-take').disabled = !!generation;
 });
@@ -471,6 +638,19 @@ $('start').addEventListener('click', async () => {
     worklet = new AudioWorkletNode(context, 'fm1', { outputChannelCount: [2] });
     worklet.port.onmessage = ({ data }) => {
       if (data.type === 'ready') send('read');
+      if (data.type === 'song-position') {
+        activeScene = data.scene;
+        $('song-position').textContent = `${arrangement.scenes[data.scene].name} · Bar ${data.bar + 1} · Repeat ${data.repeat + 1}`;
+        drawSong();
+        return;
+      }
+      if (data.type === 'song-stopped') {
+        songPlaying = false;
+        activeScene = -1;
+        $('song-position').textContent = 'Song stopped';
+        sync();
+        return;
+      }
       if (data.type === 'studio-take' && take) {
         if (!data.state && !take.finishing) {
           take.finishing = true;
@@ -498,13 +678,17 @@ $('start').addEventListener('click', async () => {
       }
       if (data.type === 'studio-generated') {
         if (!generation || data.id !== generation.id) return;
-        const valid = generation.project === project && !playing && data.drums;
+        const valid = generation.project === project && data.drums;
         generation = undefined;
         if (valid) edit(next => {
-          Object.assign(next.tracks[4], data.drums);
-          next.tracks[4].modes = next.tracks[4].offsets.map(lane => lane.map(() => 0));
+          const { length, ...drums } = data.drums;
+          const previous = next.tracks[4];
+          previous.mix = withPatternLength(previous.mix, length);
+          Object.assign(previous, drums);
+          previous.modes = previous.modes.map(lane => lane.map((mode, step) => step < length ? 0 : mode));
         });
         else sync();
+        $('status').textContent = valid ? 'Drum pattern applied' : 'Drum generation canceled';
         return;
       }
       if (data.type !== 'studio-project') return;
@@ -515,9 +699,16 @@ $('start').addEventListener('click', async () => {
       } catch {
         $('status').textContent = 'The saved project could not be restored.';
       }
-      send('project', { project });
       patches = data.names;
       drumKits = data.kitNames;
+      const initial = { format: 'slap-5-song', version: 1, name: 'Untitled song',
+        scenes: [{ name: 'Scene 1', bars: 4, repeats: 1, project: structuredClone(project) }] };
+      try {
+        const saved = localStorage.getItem(songKey);
+        arrangement = saved ? validateSong(JSON.parse(saved)) : initial;
+      } catch { arrangement = initial; }
+      project = structuredClone(arrangement.scenes[0].project);
+      send('project', { project });
       for (const id of ['play', 'export', 'import', 'take', 'quick-take', 'use-midi']) $(id).disabled = false;
       $('start').textContent = 'Audio enabled';
       drawTakeKeys();

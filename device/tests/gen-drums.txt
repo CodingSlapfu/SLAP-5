@@ -95,3 +95,17 @@ press SEL
 turn SELECT 14
 release SEL
 expect pitch 51
+tap SEQ
+turn K3 2
+tap SEL
+tap SEL
+wait 2500
+expect gen_count 5
+expect length 48
+expect playing 1
+tap HOME
+press REC
+tap OCT-
+release REC
+wait 400
+expect length 16

@@ -99,7 +99,7 @@ void slap_synth_start(SlapSynth *s, int16_t *string, unsigned engine, unsigned p
     s->motion = motion * (1.0f / 127.0f);
     s->rng = seed | 1u;
     s->engine = (uint8_t)engine;
-    s->modern = modern != 0;
+    s->modern = (uint8_t)modern;
     s->string = string;
     switch (engine) {
     case 2: case 5: case 18: case 21: case 23: case 24:
@@ -147,6 +147,16 @@ static SLAP_SYNTH_SRAM float additive(float p, float brightness)
             brightness * brightness * (0.28f * sine(3*p) + 0.16f * sine(5*p))) * 0.54f;
 }
 
+static const int8_t wavetable[3][4][32] = {
+#include "wavetable.inc"
+};
+
+static inline SLAP_SYNTH_INLINE float table_frame(const int8_t *frame, unsigned index, float fraction)
+{
+    float a = frame[index], b = frame[(index + 1u) & 31u];
+    return (a + (b - a) * fraction) * 0.009f;
+}
+
 SLAP_SYNTH_SRAM float slap_synth_sample(SlapSynth *s)
 {
     const float p = s->phase, d = s->inc, c = s->color, m = s->motion;
@@ -154,13 +164,35 @@ SLAP_SYNTH_SRAM float slap_synth_sample(SlapSynth *s)
     float out = 0.0f;
     float next_x = x, next_y = y;
     const float next_p = p + d;
-    if (s->slow_inc) {
+    if (s->slow_inc && !(s->engine == 0u && s->modern >= 2u)) {
         float next = t + s->slow_inc;
         s->slow = wrap_advance(next);
     }
 
     switch (s->engine) {
-    case 0: { /* Four operators, with blended serial and parallel modulation. */
+    case 0: {
+        if (s->modern >= 2u) {
+            /* The first three phases use the common oscillator state. This
+             * engine owns the remaining phase fields and feedback history. */
+            unsigned algorithm = m < 0.34f ? 0u : m < 0.68f ? 1u : 2u;
+            float attack = s->strike;
+            float six = sine(s->pole + s->feedback * (0.022f + 0.11f * c));
+            float five = sine(s->slow_inc + six * (0.10f + 0.23f * m) * attack);
+            float four = sine(t + five * (algorithm == 0u ? 0.35f : 0.11f));
+            float three = sine(y + (algorithm == 1u ? six : four) * c * attack * 0.24f);
+            float two = sine(x + three * (0.12f + 0.31f * c));
+            float one = sine(p + two * (0.035f + 0.25f * c) + (algorithm == 2u ? five * 0.09f : 0.0f));
+            out = algorithm == 0u ? one * 0.78f :
+                one * 0.65f + (algorithm == 1u ? four : three) * (0.08f + 0.14f * attack);
+            s->feedback = six;
+            s->pole = wrap_advance(s->pole + d * (algorithm == 2u ? 5.01f : 3.002f));
+            s->slow_inc = wrap_advance(s->slow_inc + d * (algorithm == 1u ? 2.004f : 1.503f));
+            s->slow = wrap_advance(t + d * (algorithm == 0u ? 4.0f : 2.0f));
+            next_x = x + d * (algorithm == 2u ? 2.001f : 1.0f);
+            next_y = y + d * (algorithm == 0u ? 2.0f : 3.02f);
+            s->strike *= 0.99962f + 0.00032f * m;
+            break;
+        }
         float op4 = sine(y + 0.15f * c * s->feedback);
         float op3 = sine(2.0f * p + op4 * m * 0.22f);
         float op2 = sine(x + op3 * c * s->strike * 0.34f);
@@ -193,7 +225,19 @@ SLAP_SYNTH_SRAM float slap_synth_sample(SlapSynth *s)
         out = s->pole;
         next_x = x + d * 1.005f;
         break;
-    case 2: { /* Interpolate three periodic frames along the timbre axis. */
+    case 2: {
+        if (s->modern >= 2u) {
+            float scan = fm_clampf(c * 2.74f + m * (0.12f + 0.25f * sine(t)), 0.0f, 2.999f);
+            unsigned frame = (unsigned)scan;
+            unsigned band = d < 0.059f ? 0u : d < 0.137f ? 1u : 2u;
+            float phase = p * 32.0f;
+            unsigned index = (unsigned)phase & 31u;
+            float fraction = phase - (unsigned)phase;
+            float a = table_frame(wavetable[band][frame], index, fraction);
+            float b = table_frame(wavetable[band][frame + 1u], index, fraction);
+            out = a + (b - a) * (scan - frame);
+            break;
+        }
         float morph = c * 0.76f + m * (0.12f + 0.12f*sine(t));
         float a = sine(p), b = 0.62f * a + 0.28f * sine(3*p) + 0.10f * sine(5*p);
         if (morph < 0.5f) {

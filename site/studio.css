@@ -69,3 +69,13 @@ header nav { margin: 0; }
 @media (max-width: 620px) { .hero { grid-template-columns: 1fr; } .hero img { max-width: 250px; } }
 
 #generator[hidden] { display: none; }
+
+.song { padding: 1rem; margin-bottom: 1rem; }
+.song h2 { margin: .1rem 0 .5rem; }
+#song-grid { overflow: auto; margin-block: .8rem; }
+.song-row { display: flex; align-items: stretch; gap: .4rem; margin-bottom: .4rem; }
+.song-row > strong { flex: 0 0 5rem; align-self: center; }
+.song-clip { flex: 0 0 10rem; min-height: 3rem; text-align: left; border-left: .3rem solid var(--clip-color, #aaa); }
+.song-clip small { display: block; color: #babfd2; }
+.song-clip[aria-pressed="true"] { border-color: var(--clip-color, #fff); background: #253047; }
+.song-clip.active { box-shadow: inset 0 0 0 2px #fff; }

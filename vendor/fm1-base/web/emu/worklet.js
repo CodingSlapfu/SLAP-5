@@ -111,11 +111,13 @@ class Fm1 extends AudioWorkletProcessor {
     const n = out[0].length;
     const t0 = clock();
     if (this.app.process) this.app.process(this);
-    this.ex.web_render(n);
+    if (!this.app.render?.(this, out, n)) {
+      this.ex.web_render(n);
+      out[0].set(new Float32Array(this.mem.buffer, this.ex.web_out_l(), n));
+      if (out[1]) out[1].set(new Float32Array(this.mem.buffer, this.ex.web_out_r(), n));
+    }
     this.busy += clock() - t0;
     this.frames += n;
-    out[0].set(new Float32Array(this.mem.buffer, this.ex.web_out_l(), n));
-    if (out[1]) out[1].set(new Float32Array(this.mem.buffer, this.ex.web_out_r(), n));
     if (currentTime - this.lastFrame >= 1 / 30) {
       this.lastFrame = currentTime;
       this.publish();
