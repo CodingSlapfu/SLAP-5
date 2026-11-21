@@ -3459,6 +3459,9 @@ void app_input_only(void)
     }
     else if (slap_ui.page == VISUAL)
         slap_ui.visual = select_visual(slap_ui.visual, delta);
+    else if (slap_ui.page == PATCH && slap_ui.track < DRUMS && (edit_page == 2u || edit_page == 3u) &&
+             !(buttons & (1u << B_SEL)))
+        timbre_operator = (unsigned)clamp((int)timbre_operator + delta, 0, 5);
     else if (slap_ui.page == HOME || slap_ui.page == MIXER || (slap_ui.page == RECORD && !recording) ||
              slap_ui.page == PATCH || slap_ui.page == ENV || slap_ui.page == LFO || slap_ui.page == FX || slap_ui.page == LIVE_FX)
         slap_ui.track = clamp(slap_ui.track + delta, 0, TRACKS - 1);
@@ -3629,8 +3632,14 @@ void app_input_only(void)
             }
             tracks[t].mix |= ADVANCED_SYNTH;
         } else if (program) {
-            if (knob[0]) slap_fx_change(t, 1, 0, knob[0]);
-            if (knob[1]) slap_fx_change(t, 8, 0, knob[1]);
+            slap_fx_change(t, 1, 0, knob[0]);
+            slap_fx_change(t, 1, 3, knob[1]);
+            if (knob[2]) {
+                unsigned env = tracks[t].envelope;
+                unsigned decay = (unsigned)clamp((int)(env >> 8 & 127u) + knob[2], 0, 127);
+                tracks[t].envelope = (env & ~0xff00u) | (decay << 8);
+            }
+            slap_fx_change(t, 8, 0, knob[3]);
         }
     } else if (slap_ui.page == GLOBAL && global_details == 8) {
         if (knob[0]) dma_view = (unsigned)clamp((int)dma_view + knob[0], 0, 3);
@@ -4172,6 +4181,21 @@ static void draw_fm_routing(unsigned selected, unsigned algorithm, uint32_t conf
     }
 }
 
+static void draw_sound_controls(unsigned selected, uint16_t color)
+{
+    char number[12];
+    const unsigned values[] = {
+        slap_fx_value(selected, 1, 0), slap_fx_value(selected, 1, 3),
+        selected == DRUMS ? slap_fx_value(selected, 5, 0) : tracks[selected].envelope >> 8 & 127u,
+        slap_fx_value(selected, 8, 0)
+    };
+    const char *const labels[] = {"FILTER", "RES", selected == DRUMS ? "ROOM" : "DECAY", "DRIVE"};
+    for (unsigned k = 0; k < 4; ++k) {
+        decimal(number, values[k]);
+        draw_performance_knob((int)k * 60, labels[k], number, (int)(values[k] * 200u / 127u) - 100, color);
+    }
+}
+
 static unsigned browser_valid, browser_track, browser_patch, browser_group, browser_tempo, browser_page;
 
 static void draw_panel(void)
@@ -4708,16 +4732,7 @@ static void draw_panel(void)
             cv_text(8, 25, &FONT_XS, "ALGO +1 BROWSER / PRESETS PATCH", C_WHITE);
             cv_blit(0, 80);
             cv_begin(240, 40, background);
-            const unsigned values[] = {
-                slap_fx_value(selected, 1, 0), slap_fx_value(selected, 1, 3),
-                selected == DRUMS ? slap_fx_value(selected, 5, 0) : tracks[selected].envelope >> 8 & 127u,
-                slap_fx_value(selected, 8, 0)
-            };
-            const char *const labels[] = {"FILTER", "RES", selected == DRUMS ? "ROOM" : "DECAY", "DRIVE"};
-            for (unsigned k = 0; k < 4; ++k) {
-                decimal(number, values[k]);
-                draw_performance_knob((int)k * 60, labels[k], number, (int)(values[k] * 200u / 127u) - 100, c);
-            }
+            draw_sound_controls(selected, c);
             cv_blit(0, 120);
             for (int y = 160; y < 240; y += 40) {
                 cv_begin(240, 40, background);
@@ -4770,7 +4785,7 @@ static void draw_panel(void)
                 cv_blit(0, 168);
                 cv_begin(240, 40, background);
                 cv_text(8, 2, &FONT_XS, "OCT+ / K4 FEEDBACK", C_WHITE);
-                cv_text(8, 20, &FONT_XS, "ALGO PAGE / SELECT TRACK", C_WHITE);
+                cv_text(8, 20, &FONT_XS, "SELECT OP / SEL+SELECT TRACK", C_WHITE);
                 cv_blit(0, 200);
                 return;
             }
@@ -4838,22 +4853,57 @@ static void draw_panel(void)
             }
             cv_blit(0, 160);
             cv_begin(240, 40, background);
-            cv_text(8, 15, &FONT_XS, patch->engine == 0u ? "ALGO PAGE / SELECT TRACK" : "PRESETS PATCH / HOME BACK", C_WHITE);
+            cv_text(8, 15, &FONT_XS, edit_page == 2u ?
+                "SELECT OP / SEL+SELECT TRACK" : "ALGO PAGE / SELECT TRACK", C_WHITE);
             cv_blit(0, 200);
             return;
         }
         if (edit_page && selected < DRUMS) {
             cv_text(8, 2, &FONT_B, slap_engine_names[patch->engine], c);
-            cv_text(8, 22, &FONT_XS, "K1 FILTER  K2 DRIVE  ENV  LFO", C_WHITE);
+            cv_text(8, 22, &FONT_XS, "LIVE SIGNAL", C_WHITE);
             cv_blit(0, 80);
-            for (int band = 0; band < 3; ++band) {
-                cv_begin(240, 40, background);
-                cv_rect(8, 60 - band * 40, 224, 1, track_rule[selected]);
-                for (unsigned i = 1; i < SLAP_FX_PLOT; ++i)
-                    cv_line(5 + (int)i * 3, 60 - slap_fx_trace(selected, i - 1u) - band * 40,
-                        8 + (int)i * 3, 60 - slap_fx_trace(selected, i) - band * 40, c);
-                cv_blit(0, 120 + band * 40);
+            cv_begin(240, 40, background);
+            cv_rect(8, 20, 224, 1, track_rule[selected]);
+            for (unsigned point = 1; point < SLAP_FX_PLOT; ++point)
+                cv_line(5 + (int)point * 3, 20 - slap_fx_trace(selected, point - 1u) / 2,
+                    8 + (int)point * 3, 20 - slap_fx_trace(selected, point) / 2, c);
+            cv_blit(0, 120);
+            cv_begin(240, 40, background);
+            switch (patch->engine) {
+            case 4: case 5: case 6: case 15: case 16: case 22: {
+                unsigned env = tracks[selected].envelope;
+                int attack = 12 + (int)(env & 127u) / 3;
+                int decay = attack + 15 + (int)(env >> 8 & 127u) / 2;
+                int sustain = 30 - (int)(env >> 16 & 127u) / 6;
+                cv_text(8, 0, &FONT_T, "AMP ENVELOPE", C_WHITE);
+                cv_line(8, 34, attack, 11, c);
+                cv_line(attack, 11, decay, 9 + sustain / 2, c);
+                cv_line(decay, 9 + sustain / 2, 180, 9 + sustain / 2, c);
+                cv_line(180, 9 + sustain / 2, 232, 34, c);
+                break;
             }
+            case 1: case 12: case 13: case 14:
+                cv_text(8, 0, &FONT_T, "TRACK FILTER RESPONSE", C_WHITE);
+                for (unsigned point = 1; point < SLAP_FX_PLOT; ++point)
+                    cv_line(5 + (int)point * 3, 12 + slap_fx_response(selected, point - 1u) / 4,
+                        8 + (int)point * 3, 12 + slap_fx_response(selected, point) / 4, c);
+                break;
+            default: {
+                const volatile SlapSynth *voice = graph_voice(selected, patch->engine);
+                cv_text(8, 0, &FONT_T, "VOICE MODULATION", C_WHITE);
+                cv_rect(8, 19, 224, 8, track_surface[selected]);
+                if (voice) {
+                    float phase = voice->slow;
+                    phase -= fm_floorf(phase);
+                    cv_rect(8 + (int)(phase * 220.0f), 18, 3, 10, c);
+                }
+                break;
+            }
+            }
+            cv_blit(0, 160);
+            cv_begin(240, 40, background);
+            draw_sound_controls(selected, c);
+            cv_blit(0, 200);
             return;
         }
         if (edit_page && selected == DRUMS) {
@@ -4937,9 +4987,11 @@ static void draw_panel(void)
         unsigned value[] = {gen_style + 1, gen_hit, gen_bars, gen_var};
         for (unsigned k = 0; k < 4; ++k) {
             unsigned groove_edit = k == 2u && (slap_ui.buttons & (1u << B_OCTUP));
-            cv_text(8 + k * 58, 2, &FONT_XS, groove_edit ? "GROOVE" : label[k], c);
-            decimal(number, groove_edit ? gen_groove : value[k]);
-            cv_text(8 + k * 58, 17, &FONT_M, number, C_WHITE);
+            unsigned parameter = groove_edit ? gen_groove : value[k];
+            unsigned max = k == 0 ? sizeof(drum_style) / sizeof(drum_style[0]) : k == 2 && !groove_edit ? 4u : 100u;
+            decimal(number, parameter);
+            draw_performance_knob((int)k * 60, groove_edit ? "GROOVE" : label[k], number,
+                (int)(parameter * 200u / max) - 100, c);
         }
         cv_blit(0, 192);
         return;
