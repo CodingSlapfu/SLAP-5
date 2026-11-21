@@ -1,0 +1,67 @@
+wait 6100
+tap SEQ
+key 7 down
+key 7 up
+tap HOME
+turn SELECT 4
+turn K2 496
+expect length 512
+tap SEQ
+tap SEQ
+turn K1 13
+turn K2 100
+turn K4 100
+tap SEL
+expect gen_count 1
+tap SEQ
+press SEL
+turn SELECT 1
+release SEL
+turn SELECT -511
+expect pitch 36
+press SEL
+turn SELECT 15
+release SEL
+turn SELECT 511
+expect pitch -1
+key 0 down
+key 0 up
+expect pitch 81
+tap HOME
+tap PLAY
+press REC
+wait 2050
+release REC
+tap OCT+
+tap OCT+
+wait 200
+expect playing 1
+tap SEQ
+press SEL
+turn SELECT 1
+release SEL
+turn SELECT -511
+expect pitch -1
+press SEL
+turn SELECT 15
+release SEL
+turn SELECT 511
+expect pitch -1
+press REC
+wait 2050
+release REC
+tap ARP
+wait 200
+expect playing 1
+tap SEQ
+press SEL
+turn SELECT 1
+release SEL
+turn SELECT -511
+expect pitch 36
+press SEL
+turn SELECT 15
+release SEL
+turn SELECT 511
+expect pitch 81
+expect length 512

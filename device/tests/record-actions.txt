@@ -44,3 +44,28 @@ tap ARP
 wait 150
 expect pitch 60
 expect playing 1
+tap HOME
+turn K2 1
+expect length 17
+tap SEQ
+turn SELECT 16
+key 7 down
+key 7 up
+press SEL
+turn K4 13
+release SEL
+expect pitch 60
+expect note_offset 13
+press REC
+wait 2050
+release REC
+tap OCT-
+tap OCT-
+wait 200
+expect playing 1
+expect pitch -1
+tap ARP
+wait 200
+expect pitch 60
+expect note_offset 13
+expect playing 1

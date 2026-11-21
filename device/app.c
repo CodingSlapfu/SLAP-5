@@ -711,15 +711,21 @@ static void undo_recording(void)
     take_undo.ready = 0;
     if (pattern_revision[track] != take_undo.after) return;
     const int drums = track == DRUMS;
+    const unsigned length = take_undo.recorded_length;
     for (unsigned lane = 0; lane < lane_count(track); ++lane) {
         const uint32_t *cells = drums ? take_undo.events.drums.cells[lane] : take_undo.events.melody.cells[lane];
         const uint8_t *timing = drums ? take_undo.events.drums.timing[lane] : take_undo.events.melody.timing[lane];
-        unsigned row = pattern_row(track, lane);
-        for (unsigned step = 0; step < take_undo.recorded_length; ++step) {
-            *event_cell(track, step, lane) = cells[step];
-            timing_group[row][step] = (timing[step / 2u] >> (4u * (step & 1u))) & 15u;
-            if (!drums) melodic_duration[track][lane][step] = take_undo.events.melody.duration[lane][step];
+        volatile uint32_t *destination = event_cell(track, 0, lane);
+        uint8_t *groups = timing_group[pattern_row(track, lane)];
+        for (unsigned step = 0; step < length; ++step) destination[step] = cells[step];
+        for (unsigned pair = 0; pair < length / 2u; ++pair) {
+            groups[pair * 2u] = timing[pair] & 15u;
+            groups[pair * 2u + 1u] = timing[pair] >> 4;
         }
+        if (length & 1u) groups[length - 1u] = timing[length / 2u] & 15u;
+        if (!drums)
+            for (unsigned step = 0; step < length; ++step)
+                melodic_duration[track][lane][step] = take_undo.events.melody.duration[lane][step];
     }
     track_setting(track, 0, take_undo.length);
 }
@@ -742,26 +748,27 @@ static void snapshot_take(unsigned track, unsigned length)
     for (unsigned lane = 0; lane < lane_count(track); ++lane) {
         uint32_t *cells = drums ? take_undo.events.drums.cells[lane] : take_undo.events.melody.cells[lane];
         uint8_t *timing = drums ? take_undo.events.drums.timing[lane] : take_undo.events.melody.timing[lane];
-        unsigned row = pattern_row(track, lane);
-        for (unsigned step = 0; step < length; ++step) {
-            cells[step] = *event_cell(track, step, lane);
-            if (step & 1u) timing[step / 2u] |= (uint8_t)(timing_group[row][step] << 4);
-            else timing[step / 2u] = timing_group[row][step];
-            if (!drums) take_undo.events.melody.duration[lane][step] = melodic_duration[track][lane][step];
-        }
+        const volatile uint32_t *source = event_cell(track, 0, lane);
+        const uint8_t *groups = timing_group[pattern_row(track, lane)];
+        for (unsigned step = 0; step < length; ++step) cells[step] = source[step];
+        for (unsigned pair = 0; pair < length / 2u; ++pair)
+            timing[pair] = (uint8_t)(groups[pair * 2u] | groups[pair * 2u + 1u] << 4);
+        if (length & 1u) timing[length / 2u] = groups[length - 1u];
+        if (!drums)
+            for (unsigned step = 0; step < length; ++step)
+                take_undo.events.melody.duration[lane][step] = melodic_duration[track][lane][step];
     }
 }
 
 static void clear_events(unsigned track, unsigned length)
 {
-    for (unsigned step = 0; step < length; ++step) {
-        for (unsigned lane = 0; lane < lane_count(track); ++lane)
-            timing_group[pattern_row(track, lane)][step] = 0;
+    for (unsigned lane = 0; lane < lane_count(track); ++lane) {
+        volatile uint32_t *cells = event_cell(track, 0, lane);
+        uint8_t *groups = timing_group[pattern_row(track, lane)];
+        for (unsigned step = 0; step < length; ++step) cells[step] = 0;
+        for (unsigned step = 0; step < length; ++step) groups[step] = 0;
         if (track < DRUMS)
-            for (unsigned lane = 0; lane < MELODIC_LANES; ++lane) melodic_duration[track][lane][step] = 0;
-        tracks[track].steps[step] = 0;
-        for (unsigned lane = 1; lane < lane_count(track); ++lane)
-            *event_cell(track, step, lane) = 0;
+            for (unsigned step = 0; step < length; ++step) melodic_duration[track][lane][step] = 0;
     }
     ++pattern_revision[track];
 }
