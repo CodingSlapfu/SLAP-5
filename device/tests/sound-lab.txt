@@ -1,0 +1,21 @@
+wait 6100
+shot home-five-lanes.png
+turn SELECT 1
+tap EDIT
+expect page 3
+shot soundlab-fm6.png
+turn SELECT 1
+shot soundlab-operator-envelope.png
+tap ENV
+expect page 4
+shot soundlab-env.png
+tap LFO
+expect page 9
+shot soundlab-lfo.png
+tap HOME
+turn SELECT 2
+turn PRESET -25
+expect patch 12
+tap EDIT
+expect page 3
+shot soundlab-wavetable.png
