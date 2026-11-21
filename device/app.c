@@ -4012,12 +4012,14 @@ static unsigned browser_valid, browser_track, browser_patch, browser_group, brow
 
 static void draw_panel(void)
 {
-    if (slap_ui.page == PATCH && (!edit_page || slap_ui.track == DRUMS)) {
-        unsigned track = slap_ui.track, patch = tracks[track].patch, group = patch_group[track];
-        if (browser_valid && track == browser_track && patch == browser_patch &&
+    unsigned selected = (unsigned)slap_ui.track;
+    if (selected >= TRACKS) return;
+    if (slap_ui.page == PATCH && (!edit_page || selected == DRUMS)) {
+        unsigned patch = tracks[selected].patch, group = patch_group[selected];
+        if (browser_valid && selected == browser_track && patch == browser_patch &&
             group == browser_group && tempo == browser_tempo && edit_page == browser_page) return;
         browser_valid = 1;
-        browser_track = track; browser_patch = patch; browser_group = group; browser_tempo = tempo; browser_page = edit_page;
+        browser_track = selected; browser_patch = patch; browser_group = group; browser_tempo = tempo; browser_page = edit_page;
     } else browser_valid = 0;
 
     static const char *const page_names[] = {"SLAP-5", "SEQUENCE", "GLOBAL", "SOUND LAB", "ENV", "FX", "VISUAL", "SAVE", "KEY & CHORDS", "LFO", "ARP", "MIXER", "RECORD", "GEN DRUMS", "LIVE FX", "SETTINGS"};
@@ -4034,7 +4036,6 @@ static void draw_panel(void)
     char number[12];
     unsigned had_graph = graph_valid;
     graph_valid = 0;
-    unsigned selected = (unsigned)slap_ui.track;
     uint32_t position = positions;
     uint32_t settings = tracks[selected].mix;
     unsigned length = pattern_length(settings), play_step = position % length;

@@ -14,6 +14,97 @@ turn K2 250 4
 expect patch 135
 turn K2 -250 4
 expect patch 1
+turn K1 1
+turn K2 -250 4
+expect patch 6
+turn K2 1
+expect patch 7
+turn K2 -1
+expect patch 6
+turn K2 250 4
+expect patch 134
+turn K2 -1
+expect patch 133
+turn K2 1
+expect patch 134
+turn K1 1
+turn K2 -250 4
+expect patch 9
+turn K2 1
+expect patch 29
+turn K2 -1
+expect patch 9
+turn K2 250 4
+expect patch 130
+turn K2 -1
+expect patch 129
+turn K2 1
+expect patch 130
+turn K1 1
+turn K2 -250 4
+expect patch 2
+turn K2 1
+expect patch 3
+turn K2 -1
+expect patch 2
+turn K2 250 4
+expect patch 92
+turn K2 -1
+expect patch 90
+turn K2 1
+expect patch 92
+turn K1 1
+turn K2 -250 4
+expect patch 4
+turn K2 1
+expect patch 5
+turn K2 -1
+expect patch 4
+turn K2 250 4
+expect patch 117
+turn K2 -1
+expect patch 116
+turn K2 1
+expect patch 117
+turn K1 1
+turn K2 -250 4
+expect patch 17
+turn K2 1
+expect patch 27
+turn K2 -1
+expect patch 17
+turn K2 250 4
+expect patch 97
+turn K2 -1
+expect patch 96
+turn K2 1
+expect patch 97
+turn K1 1
+turn K2 -250 4
+expect patch 98
+turn K2 1
+expect patch 99
+turn K2 -1
+expect patch 98
+turn K2 250 4
+expect patch 112
+turn K2 -1
+expect patch 111
+turn K2 1
+expect patch 112
+turn K1 1
+turn K2 -250 4
+expect patch 0
+turn K2 1
+expect patch 12
+turn K2 -1
+expect patch 0
+turn K2 250 4
+expect patch 132
+turn K2 -1
+expect patch 127
+turn K2 1
+expect patch 132
 turn SELECT 4
 expect track 5
 turn K2 -150 4
@@ -25,3 +116,9 @@ turn K2 -150 4
 expect patch 0
 turn K2 150 4
 expect patch 55
+turn K1 1
+turn K2 -150 4
+expect patch 0
+turn K2 150 4
+expect patch 80
+shot patch-browser.png
