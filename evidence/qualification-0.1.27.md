@@ -1,6 +1,6 @@
 # SLAP-5 0.1.27 candidate qualification and resumption
 
-The engineering candidate is backed up with matching Studio and emulator in `engineering/SLAP-5-0.1.27-candidate.tar.xz`. It is not qualified for publication. Keep 0.1.18 as the primary install, and 0.1.25 and 0.1.26 as existing rollback and experimental options. Source checkpoint before final display index guard and expanded category fixture was `48cca92460e8d38b283b1a63671d80ad18c8ff17`. Hosted Chromium workflow 44948957243 passed at that checkpoint. Local Chromium could not launch because the container denies process-singleton sockets. Recheck the hosted run at the final candidate commit.
+The engineering candidate is backed up with matching Studio and emulator in `engineering/SLAP-5-0.1.27-candidate.tar.xz`. It is not qualified for publication. Keep 0.1.18 as the primary install, and 0.1.25 and 0.1.26 as existing rollback and experimental options. Source checkpoint before final display index guard and expanded category fixture was `48cca92460e8d38b283b1a63671d80ad18c8ff17`. Hosted Chromium workflow 44948957243 passed at that checkpoint. Local Chromium could not launch because the container denies process-singleton sockets. Hosted Chromium workflow 44949400753 passed at the exact archived candidate commit, `60d9c3f91164e88422d86eb683bb09a610caa3a8`. A fresh fetch of that commit verified all four candidate hashes and the unchanged 0.1.18, 0.1.25 and 0.1.26 archive blobs.
 
 ## EDIT distortion
 
@@ -29,6 +29,19 @@ Five alternating trials at each tempo and mode, patch-switch fixture and steady 
 | 160 | Worker | 163.17 / 236.18 / 609.61 | 159.00 / 227.35 / 1268.06 |
 | 160 | Single | 157.19 / 200.33 / 519.44 | 157.94 / 202.82 / 572.44 |
 
+## Follow-up against the exact candidate and two published baselines
+
+Five alternating trials per run, same host and same steady playback fixture. Version 0.1.25 is the published tag at `65ff460b26b0db02d9e9f9ca7f0fc78c79d801b4`. Both baselines used their legacy settings controls to reproduce the same setup. The table reports median trial P95 / P99 / peak in microseconds. On this repeat, the candidate had better P99 than 0.1.26 in worker mode at 112 and 137 BPM, and worse at 160 BPM. It was slower than 0.1.25 at all three tempos in worker P99. Single-core P99 was higher than both baselines at all three tempos. The candidate does not establish the requested performance improvement.
+
+| BPM | Mode | 0.1.25 | 0.1.26 | 0.1.27 |
+|---:|:---|---:|---:|---:|
+| 112 | worker | 143.93 / 190.44 / 368.52 | 156.70 / 232.92 / 477.80 | 146.73 / 211.04 / 483.57 |
+| 112 | single | 142.04 / 210.41 / 429.87 | 148.62 / 196.13 / 458.59 | 151.02 / 234.71 / 497.11 |
+| 137 | worker | 144.97 / 184.75 / 357.65 | 162.19 / 228.76 / 2008.76 | 160.11 / 215.93 / 1183.53 |
+| 137 | single | 151.74 / 220.80 / 1026.52 | 156.87 / 218.22 / 413.61 | 160.42 / 236.32 / 1258.09 |
+| 160 | worker | 150.49 / 183.31 / 416.44 | 151.48 / 183.55 / 355.09 | 160.16 / 212.15 / 534.83 |
+| 160 | single | 156.01 / 203.53 / 328.21 | 157.56 / 195.89 / 382.78 | 158.90 / 209.35 / 1009.68 |
+
 ## Acceptance checklist
 
 | Requirement | Status | Evidence and remaining work |
@@ -45,7 +58,7 @@ Five alternating trials at each tempo and mode, patch-switch fixture and steady 
 | Drum kits and patterns | Verified complete in host | `gen-drums.txt`, `drum-lanes.txt`, emulator and Studio cover 25 factory kits, 56 legacy kits, 16 lanes, 400 factory assignments, 16 styles and 48-step generation during playback. Musical listening remains physical. |
 | Musical features and Live FX | Partially implemented | Existing Super Saw, FM6, wavetable, 16-voice path, record, transport, MIDI, mixer and fixed Live FX retained. Host fixtures pass for recording, overdub, undo, FX and sequencing. Musical and control-latency acceptance remains open. |
 | Other graphical editors and typography | Partially implemented | Existing ENV and LFO direct entry retained and covered by `sound-lab.txt`. HOME label-width test covers all 217 names. Full ENV, LFO, filter, mixer, FX, slicer, drum, step editor and visualizer audit remains open. |
-| Studio and emulator | Verified for tested software paths | WASM and host fixtures passed for projects, 136 programs, 81 kits, overdub, 32-bar takes, pattern generation during playback, scenes, automation and transport. Local Chromium platform error requires confirmation by hosted workflow for the final commit. |
+| Studio and emulator | Verified for tested software paths | WASM and host fixtures passed for projects, 136 programs, 81 kits, overdub, 32-bar takes, pattern generation during playback, scenes, automation and transport. Hosted Chromium passed on the exact candidate. |
 | Installer and rollback simulation | Verified in software | Native package audit and browser updater protocol/staging for 0.1.27 and stable 0.1.18. Simulated interrupted install and rollback through 0.1.18, 0.1.22, 0.1.25 and 0.1.26. Boot head and project flash preserved; damaged and foreign packages refused. Flash interval `[0x4000, 0x93000)`. |
 | Physical timing and publication | Missing | No FM-1 device capture in this session. Current candidate needs completion and qualification before installer deployment. |
 
