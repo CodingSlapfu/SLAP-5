@@ -88,6 +88,12 @@ async function test() {
     await page.locator('#take').click();
     await page.waitForFunction(() => document.getElementById('take-state').textContent === 'Take captured');
     assert.equal(await page.locator('#length').inputValue(), '64');
+    assert.ok(await page.locator('#next-steps').isDisabled());
+    const legacyLength = structuredClone(project);
+    legacyLength.tracks[0].mix = (legacyLength.tracks[0].mix & ~0x060000ff) | 128;
+    await page.locator('#import').setInputFiles({ name: 'legacy-length.json', mimeType: 'application/json',
+      buffer: Buffer.from(JSON.stringify({ ...legacyLength, bpm: 138 })) });
+    await page.waitForFunction(() => document.getElementById('length').value === '128');
     await page.locator('#next-steps').click();
     assert.match(await page.locator('#position').textContent(), /Step 65/);
     await page.reload();
