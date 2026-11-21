@@ -59,6 +59,28 @@ def scenario(seed, bpm, bars, fx, visual, chords=False, arrangement=False, modul
     return commands + ["wav dense.wav", "wait 10000", "wavstop"]
 
 
+def extreme_scenario(seed, bpm, soak_ms=60000):
+    commands = ["wait 6100", "tap FX", "turn ALGO 2"]
+    for track, insert in enumerate((6, 7, 5, 4, 7)):
+        if track:
+            commands.append("turn SELECT 1")
+        commands += ["expect fx_page 3", "turn K1 2", "expect fx_k1 2",
+                     "turn K2 5", "turn ALGO 1", f"turn K1 {insert}",
+                     f"expect fx_k1 {insert}", "turn ALGO 2", "turn K1 25",
+                     "turn ALGO 1", "turn K1 30", "turn ALGO -4"]
+    commands += ["turn SELECT -4", "tap HOME"]
+    dense = scenario(seed, bpm, 1, False, False, chords=True,
+                     modulated=True, live_fx=True)
+    commands += dense[1:-3]
+    commands += ["tap FX", "tap FX", "expect page 14", "wav dense.wav"]
+    for key in range(11):
+        commands += [f"key b{key} down", f"expect live_fx {key + 1}",
+                     "wait 860", f"key b{key} up", "expect live_fx 0", "wait 100"]
+    commands += ["tap HOME", "tap HOME", "expect page 6",
+                 f"wait {max(10000, soak_ms)}", "wavstop", "expect playing 1"]
+    return commands
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--seed", type=int, default=519331)
@@ -73,10 +95,13 @@ def main():
     parser.add_argument("--modulated", action="store_true")
     parser.add_argument("--soak-ms", type=int, default=0)
     parser.add_argument("--arrangement", action="store_true", help="Use two synth tracks and drum slicer")
+    parser.add_argument("--extreme", action="store_true", help="Five wet tracks, LIVE FX and visualizer soak")
     args = parser.parse_args()
     host = Path(__file__).resolve().parents[1] / "build/host/slap-5_host"
     commands = scenario(args.seed, args.bpm, args.bars, args.fx, args.visual, args.chords, args.arrangement, args.modulated, args.live_fx)
-    if args.live_fx:
+    if args.extreme:
+        commands = extreme_scenario(args.seed, args.bpm, args.soak_ms or 60000)
+    elif args.live_fx:
         commands = commands[:-3]
         commands += ["tap FX", "wait 450", "tap FX", "tap FX", "expect page 14", "wav dense.wav"]
         for key in range(11):
@@ -85,7 +110,7 @@ def main():
         commands += ["wavstop"]
     if args.soak_ms < 0:
         parser.error("--soak-ms must be nonnegative")
-    if args.soak_ms:
+    if args.soak_ms and not args.extreme:
         commands += [f"wait {args.soak_ms}"]
     with tempfile.TemporaryDirectory() as work_path:
         work = Path(work_path)

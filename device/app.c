@@ -706,7 +706,7 @@ static PLAT_POOL struct {
 
 static void undo_recording(void)
 {
-    if (playing || recording || rec_running || !take_undo.ready) return;
+    if (recording || rec_running || !take_undo.ready) return;
     unsigned track = take_undo.track;
     take_undo.ready = 0;
     if (pattern_revision[track] != take_undo.after) return;
@@ -767,7 +767,31 @@ static void clear_events(unsigned track, unsigned length)
 }
 
 static unsigned clear_mode, clear_track;
-static unsigned cancel_pending;
+/* Foreground publishes one request. The audio callback owns pattern mutation. */
+enum { PATTERN_UNDO = 1, PATTERN_CLEAR_LOOP, PATTERN_CLEAR_TRACK };
+static volatile uint32_t pattern_action;
+
+static void apply_pattern_action(void)
+{
+    uint32_t request = pattern_action;
+    if (!request || recording || rec_running) return;
+    unsigned track = request >> 8;
+    unsigned action = request & 255u;
+    if (action == PATTERN_UNDO) {
+        track = take_undo.track;
+        if (take_undo.ready && pattern_revision[track] == take_undo.after)
+            monitored_next_step[track] = 0;
+        undo_recording();
+    } else {
+        unsigned length = action == PATTERN_CLEAR_TRACK ? STEPS : pattern_length(tracks[track].mix);
+        snapshot_take(track, length);
+        clear_events(track, length);
+        monitored_next_step[track] = 0;
+        take_undo.after = pattern_revision[track];
+        take_undo.ready = 1;
+    }
+    pattern_action = 0;
+}
 
 static void confirm_clear(unsigned track, unsigned all)
 {
@@ -778,11 +802,8 @@ static void confirm_clear(unsigned track, unsigned all)
         return;
     }
     clear_mode = 0;
-    unsigned length = all ? STEPS : pattern_length(tracks[track].mix);
-    snapshot_take(track, length);
-    clear_events(track, length);
-    take_undo.after = pattern_revision[track];
-    take_undo.ready = 1;
+    if (!pattern_action)
+        pattern_action = (track << 8) | (all ? PATTERN_CLEAR_TRACK : PATTERN_CLEAR_LOOP);
 }
 
 static void begin_recording(void)
@@ -1796,6 +1817,7 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
     was_playing = playing;
     if (!recording && rec_running) end_recording(record_clock);
     if (!recording) rec_countdown = 0;
+    if (!playing) apply_pattern_action();
     if (recording && playing && rec_loop && !rec_start_mode && !rec_running) begin_recording();
     read_notes();
     // The UI publishes these settings; the callback consumes one snapshot.
@@ -1851,6 +1873,11 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
             if (rec_running && !rec_loop && step_number >= rec_length) {
                 end_recording(record_clock + i);
                 recording = 0;
+            }
+            if (pattern_action && !recording && !rec_running) {
+                apply_pattern_action();
+                for (unsigned t = 0; t < TRACKS; ++t)
+                    mix[t] = (mix[t] & ~LENGTH_MASK) | (tracks[t].mix & LENGTH_MASK);
             }
             if (!recording || rec_running) next_step(mix);
         }
@@ -2299,6 +2326,7 @@ static void load_song(unsigned slot)
             }
         }
     }
+    pattern_action = 0;
     take_undo.ready = 0;
     slap_ui.step = 0;
     ++sequence_epoch;
@@ -2482,11 +2510,7 @@ void app_input_only(void)
         }
     }
     boot_suppressed_keys &= keys;
-    if (cancel_pending && !rec_running) {
-        cancel_pending = 0;
-        undo_recording();
-    }
-    if (slap_ui.page != RECORD || playing || recording) clear_mode = 0;
+    if (slap_ui.page != RECORD || recording) clear_mode = 0;
     if (pressed & (1u << B_PLAY)) {
         playing ^= 1u;
         if (!playing) {
@@ -2511,7 +2535,7 @@ void app_input_only(void)
                 playing = 0;
                 ++sequence_epoch;
             }
-        } else if (slap_ui.page == HOME) {
+        } else if (slap_ui.page == HOME && !pattern_action && !rec_running) {
             rec_track = (unsigned)slap_ui.track;
             rec_length = pattern_length(tracks[rec_track].mix);
             rec_start_mode = !playing;
@@ -2529,7 +2553,7 @@ void app_input_only(void)
         if (recording) {
             recording = 0;
             if (rec_countdown) ++sequence_epoch;
-        } else if (!playing) {
+        } else if (!playing && !pattern_action && !rec_running) {
             rec_track = (unsigned)slap_ui.track;
             rec_length = 16u << rec_bars;
             rec_start_mode = rec_count_in;
@@ -2592,19 +2616,25 @@ void app_input_only(void)
     if (slap_ui.page != LIVE_FX) live_fx_word = 0;
     if (slap_ui.page == RECORD) {
         if ((pressed & (1u << B_ARP)) && recording) {
-            cancel_pending = rec_running;
-            recording = playing = 0;
-            ++sequence_epoch;
+            if (rec_running) pattern_action = PATTERN_UNDO;
+            else if (rec_start_mode) {
+                playing = 0;
+                ++sequence_epoch;
+            }
+            recording = 0;
             pressed &= ~(1u << B_ARP);
         }
-        if (!playing && !recording && !rec_running) {
+        if (!recording && !rec_running && !pattern_action) {
             if (pressed & (1u << B_OCTDN)) confirm_clear(slap_ui.track, 0);
             else if (pressed & (1u << B_OCTUP)) confirm_clear(slap_ui.track, 1);
             else if (pressed || clear_track != (unsigned)slap_ui.track) clear_mode = 0;
         }
     }
     if (pressed & (1u << B_ARP)) {
-        if (slap_ui.page == RECORD && !cancel_pending) undo_recording();
+        if (slap_ui.page == RECORD) {
+            if (!pattern_action && !rec_running && take_undo.ready)
+                pattern_action = PATTERN_UNDO;
+        }
         else if (slap_ui.track < DRUMS && slap_ui.page != MIXER) slap_ui.page = ARP;
     }
     if (pressed & (1u << B_SEL) && slap_ui.page == HOME && slap_ui.track < DRUMS) slap_ui.page = HARMONY;
@@ -3291,7 +3321,7 @@ static void draw_panel(void)
             }
             const char *record_action = recording ? "ARP CANCEL TAKE" :
                 clear_mode == 1 ? "OCT- AGAIN: CLEAR PATTERN" :
-                clear_mode == 2 ? "OCT+ AGAIN: CLEAR TRACK" : playing ? "STOP FOR EDIT ACTIONS" :
+                clear_mode == 2 ? "OCT+ AGAIN: CLEAR TRACK" : pattern_action ? "EDIT QUEUED" :
                 take_undo.ready ? "ARP UNDO  /  OCT- PATTERN  /  OCT+ TRACK" : "OCT- PATTERN  /  OCT+ TRACK";
             cv_text(8, 30, &FONT_T, record_action, c);
         }
@@ -3760,7 +3790,7 @@ STUDIO_EXPORT void studio_transport(uint32_t run)
 STUDIO_EXPORT uint32_t studio_begin_take(uint32_t track, uint32_t bars,
                                         uint32_t count_in, uint32_t unquantized, uint32_t replace)
 {
-    if (track >= TRACKS || bars > 5u || playing || recording || rec_running) return 0;
+    if (track >= TRACKS || bars > 5u || playing || recording || rec_running || pattern_action) return 0;
     rec_track = track;
     rec_length = 16u << bars;
     rec_start_mode = !!count_in;
@@ -3775,7 +3805,7 @@ STUDIO_EXPORT uint32_t studio_begin_take(uint32_t track, uint32_t bars,
 
 STUDIO_EXPORT uint32_t studio_quick_take(uint32_t track, uint32_t unquantized)
 {
-    if (track >= TRACKS || recording || rec_running) return 0;
+    if (track >= TRACKS || recording || rec_running || pattern_action) return 0;
     rec_track = track;
     rec_length = pattern_length(tracks[track].mix);
     rec_start_mode = !playing;

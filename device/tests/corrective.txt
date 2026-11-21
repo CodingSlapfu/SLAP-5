@@ -32,13 +32,13 @@ turn K1 40
 expect env_attack 0
 turn SELECT -3
 expect track 2
-expect env_attack 5
+expect env_attack 7
 turn K1 9
-expect env_attack 23
+expect env_attack 25
 turn SELECT 1
-expect env_attack <23
+expect env_attack <25
 turn SELECT -1
-expect env_attack 23
+expect env_attack 25
 tap LFO
 expect page 9
 expect lfo_rate 31

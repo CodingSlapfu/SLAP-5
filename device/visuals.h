@@ -49,10 +49,13 @@ static int visual_wave(unsigned phase, int amplitude)
 
 static void visual_disc(int x, int y, int radius, int sy, uint16_t color)
 {
-    for (int dy = -radius; dy <= radius; ++dy) {
-        if (y + dy < sy || y + dy >= sy + 40) continue;
+    int first = -radius > sy - y ? -radius : sy - y;
+    int last = radius < sy + 39 - y ? radius : sy + 39 - y;
+    int radius_squared = radius * radius;
+    for (int dy = first; dy <= last; ++dy) {
         int span = radius;
-        while (span*span + dy*dy > radius*radius) --span;
+        int square = radius_squared - dy * dy;
+        while (span * span > square) --span;
         cv_rect(x-span, y+dy-sy, 2*span+1, 1, color);
     }
 }
@@ -89,6 +92,18 @@ static void visualizer_draw(unsigned kind, unsigned time)
             unsigned target = rates[i] * (16u + response);
             orbit_speed[i] = (5u * orbit_speed[i] + target) / 6u;
             orbit_phase[i] += elapsed * orbit_speed[i];
+        }
+    }
+    enum { REACTOR_POINTS = (1023 / 53) + 1 };
+    static struct { int8_t x, y; } reactor[TRACKS][REACTOR_POINTS];
+    if (kind == 7) {
+        for (unsigned t = 0; t < TRACKS; ++t) {
+            for (unsigned point = 0; point < REACTOR_POINTS; ++point) {
+                unsigned angle = point * 53u + time * (t + 1u);
+                int radius = 28 + (int)t * 14 + energy[t] / 3;
+                reactor[t][point].x = (int8_t)visual_wave(angle + 256u, radius);
+                reactor[t][point].y = (int8_t)visual_wave(angle, radius);
+            }
         }
     }
     for (int sy = 0; sy < 240; sy += 40) {
@@ -193,6 +208,7 @@ static void visualizer_draw(unsigned kind, unsigned time)
         case 5:
             for (unsigned channel = 0; channel < 2; ++channel) {
                 int y = 43 + (int)channel * 93;
+                if (y + 83 < sy || y >= sy + 40) continue;
                 cv_rect(9, y-sy, 222, 84, RGB(95,60,31));
                 cv_rect(12, y+3-sy, 216, 78, RGB(229,153,74));
                 cv_rect(16, y+7-sy, 208, 54, RGB(255,207,119));
@@ -229,16 +245,14 @@ static void visualizer_draw(unsigned kind, unsigned time)
         default:
             visual_disc(120, 126, 24 + energy[4] / 2, sy, RGB(30,24,66));
             visual_disc(120, 126, 17 + energy[4] / 3, sy, RGB(63,34,107));
-            for (unsigned t=0;t<TRACKS;++t) {
-                int radius=28+(int)t*14;
-                for (unsigned k=0;k<1024;k+=53) {
-                    unsigned a=k+time*(t+1u);
-                    int x=120+visual_wave(a+256,radius+energy[t]/3);
-                    int y=127+visual_wave(a,radius+energy[t]/3);
+            for (unsigned t = 0; t < TRACKS; ++t) {
+                for (unsigned point = 0; point < REACTOR_POINTS; ++point) {
+                    int x = 120 + reactor[t][point].x;
+                    int y = 127 + reactor[t][point].y;
                     if (y + 6 < sy || y - 6 >= sy + 40) continue;
                     visual_disc(x, y, 3 + energy[t] / 10, sy, track_surface[t]);
                     visual_disc(x, y, 1 + energy[t] / 12, sy, track_color[t]);
-                    if (energy[t] > 8 && k % 3u == 0)
+                    if (energy[t] > 8 && point % 3u == 0)
                         cv_rect(x + 4, y - sy, 2, 2, C_WHITE);
                 }
             }

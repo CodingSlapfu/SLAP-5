@@ -10,6 +10,21 @@ tap SEQ
 turn SELECT 1
 expect note_ms >1980
 expect note_ms <2030
+tap PLAY
+press REC
+wait 2050
+release REC
+tap OCT-
+tap OCT-
+wait 150
+expect playing 1
+expect note_ms 0
+tap ARP
+wait 150
+expect playing 1
+expect note_ms >1980
+expect note_ms <2030
+tap PLAY
 tap SAVE
 key 0 down
 wait 4200

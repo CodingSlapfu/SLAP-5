@@ -74,12 +74,12 @@ def main():
     parser.add_argument("--cpu-time", action="store_true", help="Measure synchronous host thread CPU time")
     parser.add_argument("--full", action="store_true", help="Include recording and playback in the timing window")
     parser.add_argument("--chords", action="store_true")
-    parser.add_argument("--workload", choices=("dry", "wet", "arrangement"))
+    parser.add_argument("--workload", choices=("dry", "wet", "arrangement", "extreme"))
     parser.add_argument("--modulated", action="store_true", help="Enable sine LFOs in the wet fixture")
     args = parser.parse_args()
     if args.runs < 1:
         parser.error("--runs must be positive")
-    fixture = runpy.run_path(str(Path(__file__).with_name("dense-recording.py")))["scenario"]
+    fixtures = runpy.run_path(str(Path(__file__).with_name("dense-recording.py")))
     print(f"{'Thread CPU' if args.cpu_time else 'Wall'} time, "
           f"{'full recording and playback' if args.full else 'steady playback'}", flush=True)
     with tempfile.TemporaryDirectory() as directory:
@@ -90,24 +90,31 @@ def main():
         binaries = {label: build(revision, scratch / label, args.cpu_time) for label, revision in revisions}
         workloads = [("dry", 519331, 112, False), ("wet", 220507, 137, True),
                      ("arrangement", 519331, 160, False)]
+        if args.workload == "extreme":
+            workloads = [("extreme", 519331, bpm, True) for bpm in (112, 137, 160)]
         for name, seed, bpm, fx in workloads:
             if args.workload and name != args.workload:
                 continue
-            script = scratch / f"{name}.txt"
-            arrangement = name == "arrangement"
-            script.write_text("\n".join(fixture(seed, bpm, 1, fx, fx, chords=args.chords or arrangement,
-                                                 arrangement=arrangement, modulated=fx and args.modulated)) + "\n")
+            case = f"{name}-{bpm}"
+            script = scratch / f"{case}.txt"
+            if name == "extreme":
+                commands = fixtures["extreme_scenario"](seed, bpm)
+            else:
+                arrangement = name == "arrangement"
+                commands = fixtures["scenario"](seed, bpm, 1, fx, fx, chords=args.chords or arrangement,
+                                                arrangement=arrangement, modulated=fx and args.modulated)
+            script.write_text("\n".join(commands) + "\n")
             for single in (False, True):
                 mode = "single" if single else "worker"
                 results = {label: [] for label in binaries}
                 for run in range(args.runs):
                     labels = list(binaries)[::1 if run % 2 == 0 else -1]
                     for label in labels:
-                        destination = scratch / f"{name}-{mode}-{label}-{run}"
+                        destination = scratch / f"{case}-{mode}-{label}-{run}"
                         results[label].append(measure(binaries[label], script, destination, single, args.full))
                 for label, rows in results.items():
                     stats = " / ".join(f"{statistics.median(values):.2f}" for values in zip(*rows))
-                    print(f"{name} {mode} {label}   mean/P95/P99/peak µs   {stats}", flush=True)
+                    print(f"{case} {mode} {label}   mean/P95/P99/peak µs   {stats}", flush=True)
 
 
 if __name__ == "__main__":
