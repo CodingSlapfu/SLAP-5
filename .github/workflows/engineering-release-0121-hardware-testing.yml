@@ -1,0 +1,57 @@
+name: Publish SLAP-5 0.1.21 hardware test
+on:
+  push:
+    branches: [slap-5-red-alert-dsp]
+    paths: ['.github/workflows/engineering-release-0121-hardware-testing.yml']
+permissions:
+  contents: write
+concurrency:
+  group: slap-5-0.1.21-hardware-testing
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify package identity and simulated install and rollback
+        run: |
+          set -eu
+          candidate="$RUNNER_TEMP/candidate"
+          rollback="$RUNNER_TEMP/rollback"
+          archive=engineering/SLAP-5-0.1.21-hardware-testing.tar.xz
+          mkdir "$candidate" "$rollback"
+          echo "9f912903acc82e05788392c1e97b8b2c1bbe2550b19c673ecab649f151a49335  $archive" | sha256sum -c
+          tar -xJf "$archive" -C "$candidate"
+          tar -xJf engineering/SLAP-5-0.1.18-candidate.tar.xz -C "$rollback"
+          (cd "$candidate" && sha256sum -c SHA256SUMS)
+          (cd "$rollback" && sha256sum -c SHA256SUMS)
+          echo "1cf2b34fa235c0e9d1870429496bdd55b98311d0b466812b51afae9c7483dce9  $candidate/SLAP-5-0.1.21.fwsc" | sha256sum -c
+          harness="$RUNNER_TEMP/flash-tests"
+          mkdir -p "$harness/tests" "$harness/protocol"
+          cp site/flash-release.mjs site/flash-transport.mjs "$harness/"
+          cp site/tests/flash.mjs "$harness/tests/"
+          cp vendor/fm1-base/web/fm1ota.js vendor/fm1-base/web/fm1ports.js vendor/fm1-base/web/fm1pkg.js "$harness/protocol/"
+          printf '{"type":"module"}\n' > "$harness/package.json"
+          node "$harness/tests/flash.mjs" "$candidate/SLAP-5-0.1.21.fwsc" 0.1.21
+          cc -O2 -o "$RUNNER_TEMP/ldr_test" vendor/fm1-base/tests/ldr_test.c
+          "$RUNNER_TEMP/ldr_test" "$rollback/SLAP-5-0.1.18.fwsc" "$candidate/SLAP-5-0.1.21.fwsc"
+          "$RUNNER_TEMP/ldr_test" "$candidate/SLAP-5-0.1.21.fwsc" "$rollback/SLAP-5-0.1.18.fwsc"
+      - name: Upload and verify draft before publication
+        run: |
+          set -eu
+          tag=v0.1.21-hardware-testing
+          candidate="$RUNNER_TEMP/candidate"
+          verify="$RUNNER_TEMP/verify"
+          mkdir "$verify"
+          gh release create "$tag" --target "$GITHUB_SHA" --draft --prerelease --latest=false \
+            --title 'SLAP-5 0.1.21 EXPERIMENTAL HARDWARE TEST — PHYSICALLY UNVERIFIED' \
+            --notes-file evidence/release-0.1.21-hardware-testing.md \
+            "$candidate/SLAP-5-0.1.21.fwsc" "$candidate/SHA256SUMS"
+          gh release download "$tag" --dir "$verify"
+          cmp "$candidate/SHA256SUMS" "$verify/SHA256SUMS"
+          (cd "$verify" && sha256sum -c SHA256SUMS)
+          gh release edit "$tag" --draft=false --prerelease --latest=false
