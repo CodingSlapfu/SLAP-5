@@ -34,7 +34,8 @@ async function test() {
     assert.ok(await page.locator('#gen-apply').isEnabled());
     const roll = page.locator('#roll');
     const box = await roll.boundingBox();
-    await page.mouse.click(box.x + 69 + 5 * 40 + 12, box.y + 27 + 2 * 23 + 10);
+    const gridLeft = box.width - Number(await page.locator("#length").inputValue()) * 40;
+    await page.mouse.click(box.x + gridLeft + 5 * 40 + 12, box.y + 27 + 2 * 23 + 10);
     assert.match(await page.locator('#position').textContent(), /Step 6/);
     assert.equal(await page.locator('#velocity').inputValue(), '100');
     await page.locator('#velocity').fill('88');
@@ -118,7 +119,7 @@ async function test() {
     await page.locator('#mix-auto').check();
     assert.ok(await page.locator('#mix-auto').isChecked());
     assert.deepEqual(errors, []);
-    console.log('Chromium loaded DSP, 128 patches, transport, drum edits, undo/redo and project round-trip.');
+    console.log('Chromium loaded DSP, 136 patches, transport, drum edits, undo/redo and project round-trip.');
   } finally {
     await browser.close();
   }

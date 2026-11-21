@@ -6,7 +6,7 @@ let Processor;
 globalThis.currentTime = 0;
 const frames = [];
 globalThis.AudioWorkletProcessor = class {
-  port = { postMessage(message) { if (['studio-project', 'studio-generated', 'studio-take', 'studio-take-project', 'song-position', 'song-stopped'].includes(message.type)) frames.push(message); } };
+  port = { postMessage(message) { if (['studio-project', 'studio-generated', 'studio-take', 'studio-take-project', 'song-position', 'song-stopped', 'scene-take'].includes(message.type)) frames.push(message); } };
 };
 globalThis.registerProcessor = (name, type) => { Processor = type; };
 
@@ -268,3 +268,33 @@ assert.deepEqual(frames.slice(songStart).filter(x => x.type === 'song-position')
 assert.equal(frames.at(-1).type, 'song-stopped');
 assert.equal(app.ex.studio_is_playing(), 0);
 console.log('Song mode advanced two audible scenes with 1–4 bar clips and exact scene repeats.');
+
+const arrangedTakeStart = frames.length;
+const recordScene = { ...structuredClone(songs[0]), bars: 2, repeats: 1,
+  automation: [{ bar: 1, track: 0, level: 110, pan: 192 }] };
+await app.onMessage({ type: 'app', command: 'song-start', song: { scenes: [recordScene], index: 0, loop: 'scene' } });
+render(10);
+await app.onMessage({ type: 'app', command: 'record-start', track: 1, quick: true });
+render(10);
+await app.onMessage({ type: 'app', command: 'record-note', pitch: 74, velocity: 100 });
+render(38);
+await app.onMessage({ type: 'app', command: 'record-note', pitch: 74, velocity: 0 });
+render(20);
+await app.onMessage({ type: 'app', command: 'record-stop' });
+const recordedClip = frames.slice(arrangedTakeStart).find(frame => frame.type === 'scene-take');
+assert.equal(recordedClip.scene, 0);
+assert.equal(recordedClip.track, 1);
+assert.ok([recordedClip.part.steps, ...recordedClip.part.extra].some(lane =>
+  lane.some(word => (word & 127) === 74)));
+assert.equal(app.ex.studio_is_playing(), 1);
+await app.onMessage({ type: 'app', command: 'gen-drums', id: 451, bars: 2, style: 3,
+  hit: 75, groove: 42, variation: 37 });
+render(340);
+const arrangedDrums = frames.slice(arrangedTakeStart).find(frame => frame.type === 'studio-generated');
+assert.equal(arrangedDrums.scene, 0);
+assert.equal(arrangedDrums.drums.length, 32);
+assert.equal(app.ex.studio_mix(0) >>> 16 & 255, 110);
+assert.equal(app.ex.studio_mix(0) >>> 8 & 255, 192);
+await app.onMessage({ type: 'app', command: 'song-stop' });
+assert.equal(app.ex.studio_is_playing(), 0);
+console.log('Song mode captured the active clip, regenerated its drums and applied bar-level mix automation.');

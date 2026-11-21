@@ -45,13 +45,14 @@ await assert.rejects(transport.serve({ ...link, read: async () => request(valid.
   valid, 0xf0000000, 1000), /bad request/);
 console.log('Checked packaged bytes, corruption, source and target identities, ambiguous ports, and simulated pull requests.');
 
-const experimental = ['0.1.23', '0.1.24'].includes(version);
+const experimental = ['0.1.23', '0.1.24', '0.1.25'].includes(version);
 if (experimental || ['0.1.4', '0.1.7', '0.1.11', '0.1.12', '0.1.13', '0.1.14', '0.1.16', '0.1.17', '0.1.18'].includes(version)) {
   const manifestFile = experimental ? '../release-testing.json' : '../release.json';
   const manifest = validateRelease(JSON.parse(await readFile(new URL(manifestFile, import.meta.url))));
   await verifyPackage(manifest, raw);
   if (experimental) {
-    assert.deepEqual(manifest.sources, ['FM-1_75000118', 'FM-1_75000122']);
+    assert.deepEqual(manifest.sources, version === '0.1.25' ?
+      ['FM-1_75000118', 'FM-1_75000122', 'FM-1_75000124'] : ['FM-1_75000118', 'FM-1_75000122']);
     const primary = validateRelease(JSON.parse(await readFile(new URL('../release.json', import.meta.url))));
     assert.equal(primary.product, 'FM-1_75000118');
   } else {
