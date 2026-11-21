@@ -98,6 +98,33 @@ def patch_switch_scenario(seed, bpm):
     return commands
 
 
+def filter_visual_scenario(seed, bpm, active):
+    commands = patch_switch_scenario(seed, bpm)
+    commands += ["press EDIT", "wait 2100", "release EDIT", "expect page 11",
+                 "expect all_filter 0", "wav filters.wav"]
+    if active:
+        commands += ["turn K3 -70"]
+    for track in range(5):
+        if track:
+            commands += ["turn SELECT 1"]
+        if active:
+            depth = -40 if track % 2 == 0 else 65
+            commands += [f"turn K4 {depth}", f"expect track_filter {depth}"]
+        commands += ["wait 120"]
+    if active:
+        for value in (-35, 0, 35, 70, 0, -70):
+            commands += [f"turn K3 {value + 70}", f"expect all_filter {value}",
+                         "wait 160", f"turn K3 {-70 - value}"]
+    else:
+        commands += ["wait 960"]
+    commands += ["tap HOME", "wait 850", "tap EDIT", "expect page 3", "wait 850",
+                 "tap HOME", "tap HOME", "expect page 6", "wait 1100"]
+    for _ in range(6):
+        commands += ["turn SELECT 1", "wait 1100"]
+    commands += ["wavstop", "expect playing 1"]
+    return commands
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--seed", type=int, default=519331)

@@ -2268,7 +2268,7 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
     uint32_t mix[TRACKS], solo = mixer_solo;
     float left[TRACKS], right[TRACKS], level_at[TRACKS], wet[TRACKS], gain_goal[TRACKS];
     unsigned gain_needed[TRACKS];
-    unsigned filter_mask = 0;
+    unsigned low_filter_mask = 0, high_filter_mask = 0;
     for (unsigned t = 0; t <= TRACKS; ++t) {
         int value = performance_filter[t];
         PerformancePole *low = &performance_poles[t][0], *high = &performance_poles[t][1];
@@ -2277,7 +2277,8 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
             performance_target(high, value, 1);
             applied_performance_filter[t] = (int8_t)value;
         }
-        if (value || low->wet || high->wet) filter_mask |= 1u << t;
+        if (value < 0 || low->wet) low_filter_mask |= 1u << t;
+        if (value > 0 || high->wet) high_filter_mask |= 1u << t;
     }
     float duck_depth[DRUMS];
     unsigned duck_enabled = 0;
@@ -2509,11 +2510,12 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
                 sample *= gain;
                 amplitude *= gain;
             }
-            if (filter_mask & (1u << t)) {
-                for (unsigned type = 0; type < 2; ++type) {
-                    PerformancePole *pole = &performance_poles[t][type];
-                    if (performance_advance(pole)) sample = performance_sample(pole, 0, sample, type);
-                }
+            if ((low_filter_mask | high_filter_mask) & (1u << t)) {
+                PerformancePole *low = &performance_poles[t][0], *high = &performance_poles[t][1];
+                if ((low_filter_mask & (1u << t)) && performance_advance(low))
+                    sample = performance_sample(low, 0, sample, 0);
+                if ((high_filter_mask & (1u << t)) && performance_advance(high))
+                    sample = performance_sample(high, 0, sample, 1);
                 amplitude = fm_fabsf(sample);
             }
             energy_smooth[t] += (amplitude * level_at[t] - energy_smooth[t]) * 0.0015f;
@@ -2523,13 +2525,15 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
         }
         if (profile) section = plat_ticks24();
         if (live_mix_active) slap_fx_mix_sample(&l, &r);
-        if (filter_mask & (1u << TRACKS)) {
-            for (unsigned type = 0; type < 2; ++type) {
-                PerformancePole *pole = &performance_poles[TRACKS][type];
-                if (!performance_advance(pole)) continue;
-                l = performance_sample(pole, 0, l, type);
-                r = performance_sample(pole, 1, r, type);
-            }
+        PerformancePole *low_mix = &performance_poles[TRACKS][0];
+        PerformancePole *high_mix = &performance_poles[TRACKS][1];
+        if ((low_filter_mask & (1u << TRACKS)) && performance_advance(low_mix)) {
+            l = performance_sample(low_mix, 0, l, 0);
+            r = performance_sample(low_mix, 1, r, 0);
+        }
+        if ((high_filter_mask & (1u << TRACKS)) && performance_advance(high_mix)) {
+            l = performance_sample(high_mix, 0, l, 1);
+            r = performance_sample(high_mix, 1, r, 1);
         }
         if (!intro_skipped && !playing && startup_sample < RATE * 42u / 100u) {
             float tone = startup_sound();
@@ -3982,7 +3986,9 @@ static void draw_performance_knob(int x, const char *label, const char *value, i
     cv_line(center + visual_wave(angle + 256u, 4), 13 + visual_wave(angle, 4),
         center + visual_wave(angle + 256u, 8), 13 + visual_wave(angle, 8), color);
     cv_text(x + 27, 2, text_w(&FONT_XS, label) <= 32 ? &FONT_XS : &FONT_T, label, color);
-    cv_text(x + 27, 12, &FONT_T, value, C_WHITE);
+    int width = text_w(&FONT_T, value);
+    if (width <= 32) cv_text(x + 27, 12, &FONT_T, value, C_WHITE);
+    else cv_text(x + 1, 25, &FONT_T, value, C_WHITE);
 }
 
 static void draw_home_sequences(void)
@@ -4062,9 +4068,12 @@ static void draw_home_sequences(void)
         int playhead = run ? 58 : 34;
         int origin = playhead - (int)cursor;
         int first_column = run ? -3 : 0;
+        int wrapped_column = ((int)first + first_column) % (int)length;
+        unsigned grid_index = (unsigned)(wrapped_column < 0 ? wrapped_column + (int)length : wrapped_column);
         for (int col = first_column; col < 17; ++col) {
             if (!run && first + (unsigned)col >= length) break;
-            unsigned index = (unsigned)(((int)first + col) % (int)length + (int)length) % length;
+            unsigned index = grid_index;
+            if (++grid_index == length) grid_index = 0;
             int x = origin + col * 12;
             int start = clamp(x, 34, 226), end = clamp(x + 11, 34, 226);
             if (end > start) cv_rect(start, 17, end - start, 15, track_surface[t]);
@@ -4072,6 +4081,7 @@ static void draw_home_sequences(void)
                 cv_rect(x, 17, (index & 15u) ? 1 : 2, 15, track_rule[t]);
         }
         unsigned base = RATE * 15u / bpm;
+        unsigned swing_samples = base * swing / 200u;
         int first_note = run ? (t == DRUMS ? -4 : -(int)length) : 0;
         unsigned index = run ? (unsigned)(((int)first + first_note % (int)length + (int)length) % (int)length) : first;
         for (int col = first_note; col < 17; ++col) {
@@ -4081,7 +4091,6 @@ static void draw_home_sequences(void)
                 if (!(word & ACTIVE)) continue;
                 unsigned row = pattern_row(t, lane), timing = note_timing(row, index, word);
                 unsigned duration = t < DRUMS ? melodic_duration[t][lane][index] : 0u;
-                unsigned swing_samples = base * swing / 200u;
                 unsigned span = index & 1u ? base - swing_samples : base + swing_samples;
                 unsigned gate = duration ? duration * NOTE_DURATION_UNIT : span * ((word >> 16) & 255u) / 192u;
                 int x = origin + col * 12 + (int)(timing * 12u / 16u);
@@ -5209,11 +5218,51 @@ static void draw_panel(void)
         cv_blit(0, 80 + strip * 36);
     }
     cv_begin(240, 52, background);
-    if (slap_ui.page == FX && slap_ui.fx_page == 4) {
-        cv_text(8, 1, &FONT_XS, "FX TICKS / SAMPLE", C_WHITE);
-        unsigned v = fx_cost_ticks[selected];
-        decimal(number, v > 999 ? 999 : v);
-        cv_text(176, 1, &FONT_XS, number, c);
+    if (slap_ui.page == FX) {
+        unsigned page = (unsigned)slap_ui.fx_page;
+        for (unsigned k = 0; k < 4; ++k) {
+            const char *label = slap_fx_labels[page][k];
+            unsigned value = slap_fx_value(selected, page, k);
+            unsigned limit = slap_live_parameter_limit(4u + page * 4u + k);
+            if (page == 4 && k == 1) {
+                label = "BLEND";
+                value = percent_from_byte(mixer_proc[selected]);
+                limit = 100;
+            }
+            if (!label) continue;
+            const char *display = number;
+            if (page == 2 && k == 0) {
+                static const char *const modes[] = {"OFF", "GATE", "STUT"};
+                display = modes[value];
+            } else if (page == 2 && k == 2) {
+                static const char *const divisions[] = {"1/8", "1/16", "1/32", "1/64"};
+                display = divisions[value];
+            } else if (page == 3 && k == 0) {
+                display = slap_insert_names[value];
+            }
+            decimal(number, page == 2 && k == 3 ? (value * 100u + 63u) / 127u : value);
+            draw_performance_knob((int)k * 60, label, display, (int)(value * 200u / limit) - 100, c);
+        }
+        if (page == 4) {
+            cv_text(8, 32, &FONT_XS, "FX TICKS / SAMPLE", C_WHITE);
+            unsigned cost = fx_cost_ticks[selected];
+            decimal(number, cost > 999 ? 999 : cost);
+            cv_text(176, 32, &FONT_XS, number, c);
+        }
+        cv_blit(0, 188);
+        return;
+    }
+    if (slap_ui.page == ARP) {
+        static const uint8_t min[] = {0, 0, 1, 0}, max[] = {6, 5, 4, 100};
+        for (unsigned k = 0; k < 4; ++k) {
+            unsigned value = arp_setup[selected] >> (8u * k) & 255u;
+            int position = (int)(value - min[k]) * 200 / (max[k] - min[k]) - 100;
+            decimal(number, value);
+            const char *display = k == 0 ? arp_modes[value] : k == 1 ? arp_rates[value] : number;
+            draw_performance_knob((int)k * 60, arp_labels[k], display, position, c);
+        }
+        cv_blit(0, 188);
+        return;
     }
     uint32_t word = event_get(selected, slap_ui.step, slap_ui.page == SEQ ? slap_ui.lane : 0);
     unsigned values[] = { (settings >> 8) & 255u, length, percent_from_byte((settings >> 16) & 255u), swing };
@@ -5281,46 +5330,13 @@ static void draw_panel(void)
             }
             continue;
         }
-        if (slap_ui.page == ARP) {
-            unsigned value = (arp_setup[selected] >> (8u*k)) & 255u;
-            if (k < 2u) {
-                cv_text(x, 15, &FONT_XS, k == 0 ? arp_modes[value] : arp_rates[value], C_WHITE);
-                continue;
-            }
-            values[k] = value;
-        } else if (slap_ui.page == LFO || slap_ui.page == HARMONY) {
+        if (slap_ui.page == HARMONY) {
             unsigned v = (modulation >> (8u*k)) & 255u;
-            const char *tag = slap_ui.page == LFO ? (k == 0 ? lfo_waves[v] : 0) :
-                k == 0 ? harmony_keys[v] : k == 1 ? ((split_keys & (1u << selected)) ? "ON" : "OFF") : k == 2 ? harmony_chords[v] : !v ? "OFF" : 0;
+            const char *tag = k == 0 ? harmony_keys[v] :
+                k == 1 ? ((split_keys & (1u << selected)) ? "ON" : "OFF") :
+                k == 2 ? harmony_chords[v] : !v ? "OFF" : 0;
             if (tag) { cv_text(x, 15, &FONT_XS, tag, C_WHITE); continue; }
-            values[k] = slap_ui.page == HARMONY ? 99u + v : v;
-        } else if (slap_ui.page == FX) {
-            unsigned page = (unsigned)slap_ui.fx_page;
-            values[k] = page == 4 && k == 1 ? percent_from_byte(mixer_proc[selected]) :
-                slap_fx_value(selected, page, k);
-            if (page == 3 && k == 0) {
-                cv_text(x, 18, &FONT_XS, slap_insert_names[values[k]], C_WHITE);
-                continue;
-            }
-            if (page == 2 && k == 2) {
-                static const char *const divisions[] = {"1/8", "1/16", "1/32", "1/64"};
-                cv_text(x, 18, &FONT_XS, divisions[values[k]], C_WHITE);
-                continue;
-            }
-            if (page == 2 && k == 3) {
-                decimal(number, (values[k] * 100u + 63u) / 127u);
-                unsigned len = 0;
-                while (number[len]) ++len;
-                number[len++] = '%';
-                number[len] = 0;
-                cv_text(x, 15, &FONT_B, number, C_WHITE);
-                continue;
-            }
-            if (page == 2 && k == 0) {
-                static const char *const modes[] = {"OFF", "GATE", "STUTTER"};
-                cv_text(x, 18, &FONT_XS, modes[values[k]], C_WHITE);
-                continue;
-            }
+            values[k] = 99u + v;
         }
         if (melodic_edit && !detail_edit && k == 2) {
             cv_text(x, 16, &FONT_B, word & ACTIVE ? "PLAY" : "REST", C_WHITE);
