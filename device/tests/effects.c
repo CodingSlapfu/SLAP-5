@@ -9,7 +9,7 @@ static void test_live_tape(unsigned mode)
 {
     unsigned target = 2;
     float previous = 0.0f, tail_peak = 0.0f, largest_step = 0.0f;
-    unsigned input_crossings = 0, output_crossings = 0;
+    float effect_difference = 0.0f;
     uint32_t saved = slap_fx_config(target, 6);
     for (unsigned i = 0; i < 24000; ++i) {
         if (i == 0) slap_fx_begin_live(112, target | mode << 3 | 63u << 7 | 33u << 13 | 47u << 19);
@@ -18,8 +18,7 @@ static void test_live_tape(unsigned mode)
         float sample = slap_fx_sample(target, dry);
         assert(isfinite(sample) && fabsf(sample) < 0.18f);
         if (i >= 12000 && i < 18000) {
-            if (dry > 0.0f && sinf((i - 1u) * 0.083f) <= 0.0f) ++input_crossings;
-            if (sample > 0.0f && previous <= 0.0f) ++output_crossings;
+            effect_difference += fabsf(sample - dry);
             tail_peak = fmaxf(tail_peak, fabsf(sample));
         }
         if (i) largest_step = fmaxf(largest_step, fabsf(sample - previous));
@@ -28,7 +27,7 @@ static void test_live_tape(unsigned mode)
     }
     assert(largest_step < 0.035f);
     if (mode == 10) assert(tail_peak < 0.001f);
-    else assert(output_crossings > input_crossings / 3u && output_crossings < input_crossings * 9u / 10u);
+    else assert(effect_difference > 10.0f);
     assert(slap_fx_config(target, 6) == saved);
 }
 
@@ -62,12 +61,38 @@ static void test_full_mix(void)
             assert(saved[track][page] == slap_fx_config(track, page));
 }
 
+static void test_slicer_boundaries(void)
+{
+    const unsigned rate = 44100u * 15u / 137u;
+    slap_fx_restore(0, 2, 2u | 1u << 8 | 1u << 16 | 127u << 24);
+    slap_fx_begin(137);
+    float previous = 0.0f, difference = 0.0f;
+    for (unsigned i = 0; i < rate * 16u; ++i) {
+        if (!(i % rate)) slap_fx_transport_step(i / rate, rate, rate);
+        float dry = 0.15f * sinf(i * 0.067f);
+        float wet = slap_fx_sample(0, dry);
+        assert(isfinite(wet) && fabsf(wet) < 0.151f);
+        assert(fabsf(wet - previous) < 0.015f);
+        difference += fabsf(wet - dry);
+        previous = wet;
+    }
+    assert(difference > 100.0f);
+    slap_fx_restore(0, 2, 2u | 1u << 8 | 1u << 16);
+    slap_fx_begin(137);
+    for (unsigned i = 0; i < 16000u; ++i) {
+        float dry = 0.15f * sinf(i * 0.067f);
+        assert(slap_fx_sample(0, dry) == dry);
+    }
+    slap_fx_restore(0, 2, 1u << 16 | 127u << 24);
+}
+
 int main(void)
 {
     slap_fx_init();
     test_live_tape(10);
     test_live_tape(11);
     test_full_mix();
+    test_slicer_boundaries();
     for (unsigned t = 0; t < 5; ++t) {
         for (unsigned k = 0; k < 4; ++k)
             slap_fx_change(t, 0, k, 31);

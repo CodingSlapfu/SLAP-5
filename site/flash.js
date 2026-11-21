@@ -12,7 +12,7 @@ const desktop = document.getElementById('desktop-fallback');
 let release, access, checked, running = false;
 
 async function loadRelease() {
-  const response = await fetch('./release.json', { cache: 'no-store', redirect: 'error' });
+  const response = await fetch(document.body.dataset.experimental === 'true' ? './release-testing.json' : './release.json', { cache: 'no-store', redirect: 'error' });
   if (response.status === 404) throw new Error('No browser release is available. Use M-Flasher below.');
   if (!response.ok) throw new Error('Could not load the release manifest.');
   release = validateRelease(await response.json());

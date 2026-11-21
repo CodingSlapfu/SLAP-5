@@ -31,22 +31,29 @@
     <section class="copy" id="features">
       <h2>Features</h2>
       <div class="features">
-        <article><h3>Five tracks</h3><p>Four pitched tracks and a drum track with independent pattern lengths, pan, level and mute. Edit two notes per pitched step or work with six independent drum lanes. Set velocity, gate, hit probability and timing offset.</p></article>
+        <article><h3>Five tracks</h3><p>Four pitched tracks and a drum track with independent pattern lengths, pan, level and mute. Edit two notes per pitched step or work with 16 independent drum lanes. Set velocity, gate, hit probability and timing offset.</p></article>
         <article><h3>25 synth engines</h3><p>Browse 128 factory patches. Play the FM, analog, modeled strings, keys, formants, bell and texture engines.</p></article>
         <article><h3>Nine effects pages</h3><p>Shape each track with filter, slicer, inserts, reverb, tempo delay, chorus and drive.</p></article>
-        <article><h3>Eight visualizers</h3><p>Switch between audio-reactive scenes and a waterfall that reads the actual sequencer notes.</p></article>
+        <article><h3>Seven visualizers in 0.1.23</h3><p>Follow each track in DNA Helix, Ferrofluid, Gravity Rings, Solar System, Digital VU, Slap Reactor and the restored PARALLAX-8 Dancer.</p></article>
       </div>
     </section>
     <section class="copy" id="manual">
-      <h2>Manual</h2>
+      <h2>SLAP-5 0.1.23 manual</h2>
+      <p>These controls describe the experimental hardware-testing build. The primary browser installer offers 0.1.18.</p>
+      <img src="screens/dancer.png" alt="The restored PARALLAX-8 dancer on the SLAP-5 stage" width="240" height="240">
       <dl>
         <dt>HOME</dt><dd>SELECT chooses a track. ALGO changes BPM. The four knobs set pan, steps, level and swing. Press HOME again to open visualizers.</dd>
-        <dt>SEQ</dt><dd>SELECT chooses a step. Press a key to add or clear its note. Use the four knobs to change note, velocity, gate and hit probability. Hold SEL and turn SELECT to choose the note or drum lane. Hold SEL and turn knob 4 to adjust timing offset.</dd>
+        <dt>SEQ</dt><dd>SELECT chooses a step. On melodic tracks, K1 sets pitch, K2 accent, K3 rest or play, and K4 hold length in steps. A zero hold uses the saved gate. Hold SEL to access hit probability, gate, fine hold and timing offset. Hold SEL and turn SELECT to choose the note or drum lane. SEL with EDIT copies, LFO cuts, ENV pastes, OCT− deletes and OCT+ cycles Normal, Ratchet and Fill.</dd>
         <dt>EDIT / ENV / LFO</dt><dd>EDIT opens the patch browser. Play keys to audition. ENV sets attack, decay, sustain and release. LFO sets waveform, rate, phase and fade.</dd>
-        <dt>REC</dt><dd>Tap HOME REC to overdub during playback. From stopped, REC starts an audible four-click count-in. Tap again to end the take. Hold REC for two seconds to open settings for 1, 2, 4, 8, 16 or 32 bars. While stopped, ARP in RECORD undoes the previous take if its pattern has not changed.</dd>
+        <dt>REC</dt><dd>Tap REC on HOME to overdub. From stopped, REC arms for the first note or runs an audible four-click count-in, according to Settings. PLAY flashes green once the loop starts. Turn SELECT to move the active take to another track. Tap REC again to end the take. Hold REC for two seconds for recording options. On HOME, REC+OCT− undoes, REC+ARP cancels the take, and REC+OCT+ or REC+SEL twice clears the loop or selected track.</dd>
         <dt>Recording storage</dt><dd>Older banks remain readable. Long takes and sixteenth-step offsets use the new sparse format, which stores up to 587 events per bank. A bank that is too dense leaves the old saved bank intact. Studio JSON v3 supports extended length and timing.</dd>
+        <dt>MIXER</dt><dd>Hold EDIT for two seconds. K1 is level (0–100), K2 pan, K3 solo and K4 drum-triggered ducking on melodic tracks. White keys 1–5 mute tracks. FX PROC K2 adjusts the overall FX blend.</dd>
+        <dt>SETTINGS</dt><dd>Tap GLO. Under Audio, K3 toggles Auto Level and K4 toggles Auto Mix. Lights controls keyboard and button brightness. HOME shows battery bars, USB power, or a low-battery message. Hold GLO for five seconds to open diagnostics.</dd>
         <dt>SEL / FX</dt><dd>SEL opens harmony for the selected melodic track. FX opens the effect chain. SELECT chooses a track and ALGORITHM moves through the nine FX pages. The four numbered knobs edit the current effect.</dd>
-        <dt>GEN DRUMS</dt><dd>Select Track 5 and press SEQ to open its sequencer. Press SEQ again to enter GEN DRUMS. With transport stopped, adjust the four knobs and press SEL to generate. Press SEQ to return to the editable pattern.</dd>
+        <dt>SLICER</dt><dd>On the Slicer FX page, K1 picks Off, Gate or Stutter. K2 selects a pattern, K3 selects the rate and K4 sets depth. Stutter blends a short captured repeat into the closed cells.</dd>
+        <dt>LIVE FX</dt><dd>Double-tap FX. Hold a black key to play an effect and tap SEL to switch selected track or full mix. Assign K1–K4 in Settings under Live FX Knobs. The effects include Halo Room, Beat Repeat, Vinyl Stop and Rewind.</dd>
+        <dt>GEN DRUMS</dt><dd>On Track 5, press SEQ twice. K1–K4 set style, hit density, groove and variation. Press SEL to generate and confirm replacement when prompted. During playback with a 16, 32 or 64-step drum loop, the pattern applies on the next bar. In the drum sequencer, SEL+ARP protects a step on its lane until another song is loaded. Use HOME REC+OCT− to undo.</dd>
+        <dt>DANCER</dt><dd>Press HOME again and turn SELECT to PARALLAX-8 DANCER. K1 selects the dance pattern, K2 toggles the outline, K3 controls club lights and K4 toggles music reactivity.</dd>
         <dt>ARP</dt><dd>Choose the mode, tempo division, octave range and gate. Hold notes on a melodic track to play them in sequence.</dd>
         <dt>SAVE</dt><dd>Stop playback. SELECT chooses one of eight slots. Hold the blinking white key for four seconds to save. Press SEL to load its saved song.</dd>
         <dt>MIDI</dt><dd>Send notes on channels 1–5 to address tracks 1–5. The FM-1 keyboard sends notes on the selected track’s channel.</dd>
@@ -54,7 +61,8 @@
     </section>
     <section class="copy" id="downloads">
       <h2>Downloads</h2>
-      <p><strong>SLAP-5 0.1.18 engineering TESTING is available.</strong> <a href="flash.html">Open SLAP FLASH</a> for the USB MIDI installer, downloads and supported hardware.</p>
+      <p><a href="flash.html">Primary browser installer · 0.1.18</a></p>
+      <p><a href="flash-testing.html">Experimental hardware testing · 0.1.23</a></p>
       <a href="https://github.com/CodingSlapfu/SLAP-5">SLAP-5 source</a> · <a href="https://github.com/CodingSlapfu/SLAP-5/actions/workflows/browser.yml">Browser test results</a>
     </section>
   </main>

@@ -12,6 +12,7 @@ extern const char *const slap_insert_names[8];
 void slap_fx_init(void);
 void slap_fx_change(unsigned track, unsigned page, unsigned knob, int delta);
 unsigned slap_fx_value(unsigned track, unsigned page, unsigned knob);
+void slap_fx_transport_step(unsigned position, unsigned step_frames, unsigned straight_frames);
 void slap_fx_begin(unsigned bpm);
 void slap_fx_begin_live(unsigned bpm, uint32_t live);
 void slap_fx_begin_assigned(unsigned bpm, uint32_t live, uint32_t assignments);

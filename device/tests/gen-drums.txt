@@ -55,3 +55,19 @@ press SEL
 turn SELECT 1
 release SEL
 expect pitch 36
+tap HOME
+tap PLAY
+tap SEQ
+tap SEQ
+tap SEL
+tap SEL
+expect gen_count 2
+wait 2400
+expect gen_count 3
+expect playing 1
+tap HOME
+press REC
+tap OCT-
+release REC
+wait 400
+expect playing 1

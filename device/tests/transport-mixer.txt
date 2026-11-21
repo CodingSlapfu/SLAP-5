@@ -1,0 +1,67 @@
+wait 6100
+tap REC
+expect recording 1
+expect playing 0
+expect step 0
+wait 300
+expect playing 0
+key w2 down
+wait 30
+expect playing 1
+expect rec_running 1
+wait 500
+key w2 up
+expect step >0
+tap PLAY
+expect playing 0
+expect step 0
+tap PLAY
+expect playing 1
+expect step 0
+tap PLAY
+tap GLO
+turn K4 1
+expect auto_mix 1
+turn SELECT 1
+turn K3 1
+tap HOME
+tap REC
+expect rec_countdown 4
+expect playing 0
+wait 2200
+expect rec_running 1
+expect playing 1
+tap PLAY
+expect step 0
+press EDIT
+wait 2100
+release EDIT
+expect page 11
+turn K1 -100
+expect level 0
+turn K1 50
+expect level 50
+turn K1 1
+expect level 51
+turn K1 49
+expect level 100
+turn K2 -20
+expect pan_percent -20
+turn K2 1
+expect pan_percent -19
+turn K4 20
+expect duck 20
+turn K4 1
+expect duck 21
+wait 700
+reboot
+wait 6100
+expect auto_mix 1
+press EDIT
+wait 2100
+release EDIT
+expect duck 21
+tap HOME
+tap HOME
+turn SELECT 6
+shot dancer.png

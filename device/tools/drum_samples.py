@@ -30,12 +30,24 @@ VOICINGS = (
     (1.53, .82, .78, .35), (.81, .82, .24, .41), (1.02, 1.50, .38, .04),
     (.76, 1.57, .55, .21),
 )
+# Independent membrane, wire and metal characters for the 25 factory IDs.
+# These coefficients alter synthesis before compression, keeping the sample budget fixed.
+CHARACTER = (
+    (.64, .69, .45), (.78, .56, .58), (.30, .48, .23), (.56, .70, .35), (.85, .92, .33),
+    (.19, .31, .62), (.91, .86, .72), (.71, .40, .85), (.37, .51, .64), (.83, .58, .76),
+    (.96, .62, .74), (.68, .30, .87), (.62, .88, .28), (.43, .77, .57), (.35, .39, .91),
+    (.89, .95, .39), (.97, .98, .61), (.76, .45, .81), (.51, .74, .49), (.44, .52, .69),
+    (.73, .29, .99), (.57, .23, .92), (.26, .83, .17), (.20, .18, .55), (.40, .65, .79),
+)
 LENGTHS = (.21, .24, .14, .16, .06, .17, .075, .12,
            .08, .16, .14, .13, .24, .19, .095, .13)
 
 
 def samples(kit, hit):
     tune, room, bright, drive = VOICINGS[kit]
+    beater, wire, alloy = CHARACTER[kit]
+    acoustic = kit in (0, 1, 2, 3, 4, 15, 18)
+    fm = kit in (11, 19, 20, 21, 24)
     length = int(RATE * LENGTHS[hit] * min(room, 1.24))
     rng = random.Random(25_016 * kit + hit)
     phase = low = 0.0
@@ -47,27 +59,40 @@ def samples(kit, hit):
         tail = math.exp(-5.2 * i / length)
         if hit < 2 or 9 <= hit <= 11:
             fundamental = (48, 39, 0, 0, 0, 0, 0, 0, 0, 98, 144, 197)[hit] * tune
-            phase += math.tau * fundamental * (1 + 1.9 * math.exp(-t * 115)) / RATE
-            body = math.sin(phase)
-            x = .86 * body + .12 * math.sin(1.59 * phase) * math.exp(-t * 34)
-            x += (.12 + .25 * bright) * air * math.exp(-t * 270)
+            phase += math.tau * fundamental * (1 + 1.9 * math.exp(-t * (70 + 105 * beater))) / RATE
+            mod = .68 * math.sin(2.23 * phase) * math.exp(-t * 44) if fm else 0.0
+            body = math.sin(phase + mod)
+            membrane = 1.43 + .52 * alloy
+            x = .83 * body + (.07 + .12 * acoustic) * math.sin(membrane * phase) * math.exp(-t * 36)
+            x += (.09 + .35 * beater) * air * math.exp(-t * (165 + 130 * beater))
             if hit == 1 and kit in (5, 14, 17):
                 tail = math.exp(-3.4 * i / length)
         elif hit in (2, 3, 7, 8):
             pitch = (173 if hit == 2 else 222 if hit == 3 else 460) * tune
             body = math.sin(math.tau * pitch * t)
-            snap = air * bright + low * (1 - bright)
-            cluster = max(math.exp(-abs(t - middle) * 260) for middle in (.003, .013, .024))
-            x = (.76 * snap * (.24 + .76 * cluster) if hit == 7 else
-                 .77 * snap + (.33 if hit != 8 else .57) * body * math.exp(-t * 27))
+            snap = air * (.18 + .73 * wire) + low * (.83 - .53 * wire)
+            spacing = .006 + .009 * (1 - beater)
+            cluster = max(math.exp(-abs(t - middle) * (170 + 140 * wire))
+                          for middle in (.003, .003 + spacing, .003 + 2 * spacing))
+            if kit == 2:
+                snap *= .62 + .38 * math.sin(math.tau * 17 * t) ** 2
+            if fm:
+                body = math.sin(math.tau * pitch * t + .75 * math.sin(math.tau * pitch * 2.71 * t))
+            x = (.76 * snap * (.19 + .81 * cluster) if hit == 7 else
+                 (.58 + .19 * wire) * snap + (.34 if hit != 8 else .62) * body * math.exp(-t * (22 + 15 * wire)))
+            if acoustic:
+                x += .10 * math.sin(math.tau * pitch * 1.54 * t) * math.exp(-t * 49)
         else:
             frequencies = (472, 831, 1269, 1787) if hit == 15 else (951, 1571, 2387, 3731)
-            metal = sum(math.sin(math.tau * f * tune * t) for f in frequencies) * .25
-            x = (.62 - .18 * bright) * air + (.20 + .28 * bright) * metal
+            metal = sum(math.sin(math.tau * f * tune * t * (.84 + alloy * .31 + k * alloy * .032))
+                        for k, f in enumerate(frequencies)) * .25
+            x = (.70 - .29 * alloy) * air + (.15 + .48 * alloy) * metal
+            if hit in (12, 13):
+                x += .10 * math.sin(math.tau * (811 + 580 * alloy) * t) * math.exp(-t * 18)
             if hit == 14:
                 x *= .55 + .45 * math.sin(math.tau * 24 * t) ** 2
         x = math.tanh(x * (1.35 + drive)) * tail
-        fade = min(1, i / 7, (length - 1 - i) / 100)
+        fade = min(1, i / (17 if kit == 2 else 5), (length - 1 - i) / 100)
         yield round(x * fade * 28000)
 
 

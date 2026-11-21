@@ -17,7 +17,7 @@ expect page 11
 turn SELECT 1
 expect track 2
 turn K1 -2
-expect level 162
+expect level 65
 press REC
 wait 2050
 release REC
@@ -36,11 +36,11 @@ turn SELECT -3
 expect track 2
 expect env_attack 7
 turn K1 9
-expect env_attack 25
+expect env_attack 16
 turn SELECT 1
-expect env_attack <25
+expect env_attack <16
 turn SELECT -1
-expect env_attack 25
+expect env_attack 16
 tap LFO
 expect page 9
 expect lfo_rate 31
@@ -58,7 +58,7 @@ expect track 2
 expect lfo_rate 42
 tap HOME
 shot home-five-tracks.png
-turn K1 -50
+turn K1 -100
 tap HOME
 turn SELECT 3
 shot solar-system.png

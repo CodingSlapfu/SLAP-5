@@ -11,10 +11,10 @@ tap FX
 expect page 5
 expect fx_page 1
 turn K1 20
-expect fx_k1 40
+expect fx_k1 20
 turn ALGO 5
 expect fx_page 6
-expect fx_k1 40
+expect fx_k1 20
 turn ALGO 3
 expect fx_page 9
 expect tempo 112
@@ -24,7 +24,7 @@ expect track 5
 expect fx_k1 0
 turn SELECT -4
 expect track 1
-expect fx_k1 40
+expect fx_k1 20
 tap HOME
 expect page 0
 tap HOME

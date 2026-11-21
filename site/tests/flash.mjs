@@ -45,11 +45,19 @@ await assert.rejects(transport.serve({ ...link, read: async () => request(valid.
   valid, 0xf0000000, 1000), /bad request/);
 console.log('Checked packaged bytes, corruption, source and target identities, ambiguous ports, and simulated pull requests.');
 
-if (['0.1.4', '0.1.7', '0.1.11', '0.1.12', '0.1.13', '0.1.14', '0.1.16', '0.1.17', '0.1.18'].includes(version)) {
-  const manifest = validateRelease(JSON.parse(await readFile(new URL('../release.json', import.meta.url))));
+const experimental = version === '0.1.23';
+if (experimental || ['0.1.4', '0.1.7', '0.1.11', '0.1.12', '0.1.13', '0.1.14', '0.1.16', '0.1.17', '0.1.18'].includes(version)) {
+  const manifestFile = experimental ? '../release-testing.json' : '../release.json';
+  const manifest = validateRelease(JSON.parse(await readFile(new URL(manifestFile, import.meta.url))));
   await verifyPackage(manifest, raw);
-  for (const source of ['FM-1_73000738', 'FM-1_75000102', 'FM-1_015'])
-    assert.ok(manifest.sources.includes(source));
+  if (experimental) {
+    assert.deepEqual(manifest.sources, ['FM-1_75000118', 'FM-1_75000122']);
+    const primary = validateRelease(JSON.parse(await readFile(new URL('../release.json', import.meta.url))));
+    assert.equal(primary.product, 'FM-1_75000118');
+  } else {
+    for (const source of ['FM-1_73000738', 'FM-1_75000102', 'FM-1_015'])
+      assert.ok(manifest.sources.includes(source));
+  }
   assert.ok(!manifest.sources.includes('FM-1_016'));
 
   async function simulate(source, { loader = 'ota-FM-1_900', disconnect = false, result = manifest.product } = {}) {
@@ -86,13 +94,10 @@ if (['0.1.4', '0.1.7', '0.1.11', '0.1.12', '0.1.13', '0.1.14', '0.1.16', '0.1.17
       ['write', 128], ['reboot', undefined], ['done', undefined]]);
   }
   await Promise.all([
-    simulate('FM-1_73000738'), simulate('FM-1_75000102'), simulate('FM-1_75000104'), simulate('FM-1_75000107'), simulate('FM-1_015'),
-    ...(manifest.sources.includes('FM-1_75000111') ? [simulate('FM-1_75000111')] : []),
-    ...(manifest.sources.includes('FM-1_75000112') ? [simulate('FM-1_75000112')] : []),
-    ...(manifest.sources.includes('FM-1_75000113') ? [simulate('FM-1_75000113')] : []),
-    simulate('FM-1_73000738', { loader: 'ota-FM1C_014' }),
-    simulate('FM-1_73000738', { disconnect: true }),
-    simulate('FM-1_73000738', { result: 'FM-1_73000738' }),
+    ...manifest.sources.map(source => simulate(source)),
+    simulate(manifest.sources[0], { loader: 'ota-FM1C_014' }),
+    simulate(manifest.sources[0], { disconnect: true }),
+    simulate(manifest.sources[0], { result: manifest.sources[0] }),
   ]);
-  console.log('Simulated full AQUORA, SLAP-5 and stock OTA staging, loader reconnect, writes, restart, and rejection paths.');
+  console.log('Simulated OTA staging, loader reconnect, writes, restart and rejection paths for the release manifest.');
 }

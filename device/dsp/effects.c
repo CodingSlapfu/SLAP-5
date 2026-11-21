@@ -4,7 +4,7 @@
 #include "fastmath.h"
 #include "plat.h"
 
-enum { TRACK_DELAY = 12288, MIX_DELAY = 3072, CHORUS = 1024, ROOM = 2048 };
+enum { TRACK_DELAY = 12288, MIX_DELAY = 3072, CHORUS = 1024, ROOM = 2048, SLICE_CAPTURE = 640, SLICE_RAMP = 128 };
 enum { MAIN_FX, FILTER, SLICER, INSERT, DISPLAY, REVERB, DELAY, CHORUS_FX, DRIVE };
 
 const char *const slap_fx_pages[SLAP_FX_PAGES] = {
@@ -40,7 +40,7 @@ typedef struct {
     float depth, mix, amount, tone, speed, filter_scale, phase_step;
     uint32_t time, mode, insert, clock_step, gate_sample, block_index;
     uint32_t gate_boundary;
-    unsigned gate_step;
+    unsigned gate_step, slice_rate, nominal_clock;
     uint32_t delay_pos, chorus_pos, room_pos, delay_div, crush_count;
     uint32_t revision, bpm, room_short, room_long, live, assigned;
     unsigned tape_mode;
@@ -49,9 +49,11 @@ typedef struct {
     float previous_sample, transition;
     unsigned transition_pending;
     uint16_t pattern;
-    int16_t slice[256];
+    unsigned capture_head, capture_count, capture_phase, repeat_phase;
+    float capture_sum;
 } Fx;
 static Fx fx[SLAP_FX_TRACKS + 1];
+static int16_t slice_line[SLAP_FX_TRACKS + 1][SLICE_CAPTURE];
 
 // These coefficients stay fixed throughout a callback, including while the
 // worker renders or Core 0 rolls back an FX job.
@@ -75,8 +77,9 @@ static uint8_t smooth_controls[4];
 #if !defined(PLAT_WEB)
 typedef struct {
     Fx state;
-    unsigned track, delay_count, chorus_count, room_count;
+    unsigned track, delay_count, chorus_count, room_count, slice_count;
     int16_t delay[SLAP_FX_BATCH / 4], chorus[SLAP_FX_BATCH], room[SLAP_FX_BATCH];
+    int16_t slice[SLAP_FX_BATCH / 4];
     int8_t trace[SLAP_FX_PLOT];
 } FxCheckpoint;
 
@@ -111,6 +114,8 @@ static void fx_checkpoint_rings(FxCheckpoint *checkpoint, int restore)
                  checkpoint->chorus_count, restore);
     fx_ring_copy(checkpoint->room, room_line[t], ROOM, f->room_pos,
                  checkpoint->room_count, restore);
+    fx_ring_copy(checkpoint->slice, slice_line[t], SLICE_CAPTURE, f->capture_head,
+                 checkpoint->slice_count, restore);
 }
 
 void slap_fx_checkpoint(unsigned slot, unsigned track, unsigned frames)
@@ -122,6 +127,7 @@ void slap_fx_checkpoint(unsigned slot, unsigned track, unsigned frames)
     checkpoint->delay_count = f->dp[0] > 0.0f || f->tape_mode ? (frames + 3u - ((4u - f->delay_div) & 3u)) / 4u : 0u;
     checkpoint->chorus_count = f->ch[0] > 0.0f || f->insert == 7 ? frames : 0u;
     checkpoint->room_count = f->rv[0] > 0.0f ? frames : 0u;
+    checkpoint->slice_count = f->mode == 2u ? (frames + f->capture_phase) / 4u : 0u;
     for (unsigned i = 0; i < SLAP_FX_PLOT; ++i)
         checkpoint->trace[i] = traces[track][i];
     fx_checkpoint_rings(checkpoint, 0);
@@ -213,21 +219,44 @@ void slap_fx_change(unsigned track, unsigned page, unsigned knob, int delta)
     if (!delta || track >= SLAP_FX_TRACKS || page >= SLAP_FX_PAGES ||
         knob >= 4 || !slap_fx_labels[page][knob]) return;
     if (page == MAIN_FX) { page = REVERB + knob; knob = 0; }
-    int cap = 127, stride = 2;
-    if (page == INSERT && !knob) { cap = 7; stride = 1; }
+    int cap = 127;
+    if (page == INSERT && !knob) cap = 7;
     if (page == SLICER && knob < 3u) {
         static const uint8_t max[] = {2, 19, 3};
         cap = max[knob];
-        stride = 1;
     }
-    if (page == DELAY && knob == 1) { cap = 5; stride = 1; }
+    if (page == DELAY && knob == 1) cap = 5;
     unsigned shift = knob * 8u;
     uint32_t word = settings[track][page];
-    unsigned v = (unsigned)clamp((int)((word >> shift) & 255u) + delta * stride, 0, cap);
+    unsigned raw = (word >> shift) & 255u;
+    unsigned v;
+    if (page == SLICER && knob == 3) {
+        unsigned percent = (unsigned)clamp((int)((raw * 100u + 63u) / 127u) + delta, 0, 100);
+        v = (percent * 127u + 50u) / 100u;
+    } else v = (unsigned)clamp((int)raw + delta, 0, cap);
     uint32_t changed = (word & ~(255u << shift)) | v << shift;
     if (changed != word) {
         settings[track][page] = changed;
         ++settings_revision[track];
+    }
+}
+
+void slap_fx_transport_step(unsigned position, unsigned step_frames, unsigned straight_frames)
+{
+    for (unsigned track = 0; track <= SLAP_FX_TRACKS; ++track) {
+        Fx *f = &fx[track];
+        if (!f->mode || (track == SLAP_FX_TRACKS && !mix_engaged)) continue;
+        unsigned rate = f->slice_rate;
+        if (rate == 0u && (position & 1u)) continue;
+        unsigned subdivisions = rate ? 1u << (rate - 1u) : 1u;
+        unsigned gate_step = rate ? position * subdivisions : position / 2u;
+        f->clock_step = rate ? step_frames / subdivisions : straight_frames * 2u;
+        f->gate_step = gate_step & 15u;
+        f->gate_sample = f->gate_step * f->clock_step;
+        f->gate_boundary = f->gate_sample + f->clock_step;
+        f->repeat_phase = f->capture_phase = 0;
+        f->capture_sum = 0.0f;
+        if (position == 0u) f->capture_count = 0;
     }
 }
 
@@ -313,13 +342,16 @@ void slap_fx_begin_assigned(unsigned bpm, uint32_t live, uint32_t assignments)
             case 3: slice = fx_word(2, 4, speed >> 5, amount); break;
             case 4: filter = fx_word(5 + tone / 2, amount, speed / 3, space); break;
             case 5: delay = fx_word(amount, 1 + speed / 32, space / 2, tone); break;
-            case 6: room = fx_word(amount, 40 + space / 2, speed, tone); break;
-            case 7: insert = fx_word(5, amount, tone, speed); mix = 127; break;
+            case 6:
+                room = fx_word(amount * 3u / 4u, 69 + space / 3u, 64 + speed / 2u, 52 + tone / 2u);
+                chorus = fx_word(amount / 5u, 39, 26, 74);
+                break;
+            case 7: insert = fx_word(5, amount, tone, speed); mix = amount; break;
             case 8: chorus = fx_word(amount, space, speed, tone); break;
             case 9:
-                insert = fx_word(5, amount, tone, speed);
+                insert = fx_word(5, amount / 2u, tone, speed / 2u);
                 slice = fx_word(2, 12, speed >> 5, amount);
-                mix = 127;
+                mix = amount / 2u;
                 break;
             }
         }
@@ -342,14 +374,22 @@ void slap_fx_begin_assigned(unsigned bpm, uint32_t live, uint32_t assignments)
         f->filter_scale = total > 0.0f ? 1.0f / total : 0.0f;
         f->damp = 1.55f - 1.34f * unit(filter >> 24);
         f->coef = 0.025f + 0.34f * (0.15f + f->low + f->band * .55f + f->high * .33f) / 2.1f;
-        f->mode = slice & 255u;
-        f->pattern = slicer_patterns[(slice >> 8) & 255u];
-        unsigned clock_step = 44100u * 60u / bpm * slice_lengths[(slice >> 16) & 255u] / 16u;
-        if (f->clock_step != clock_step) {
-            f->clock_step = clock_step;
-            f->gate_step = (f->gate_sample / clock_step) & 15u;
-            f->gate_boundary = (f->gate_step + 1u) * clock_step;
+        unsigned slice_mode = slice & 255u;
+        uint16_t pattern = slicer_patterns[(slice >> 8) & 255u];
+        unsigned rate = (slice >> 16) & 255u;
+        unsigned clock_step = 44100u * 60u / bpm * slice_lengths[rate] / 16u;
+        if (f->nominal_clock != clock_step || f->mode != slice_mode || f->pattern != pattern) {
+            if (!master && f->mode) f->transition_pending = 1;
+            f->clock_step = f->nominal_clock = clock_step;
+            f->gate_sample = f->gate_step = 0;
+            f->gate_boundary = clock_step;
+            f->capture_head = f->capture_count = f->capture_phase = f->repeat_phase = 0;
+            f->capture_sum = 0.0f;
+            f->gate = 1.0f;
         }
+        f->mode = slice_mode;
+        f->pattern = pattern;
+        f->slice_rate = rate;
         f->depth = unit(slice >> 24);
         f->insert = insert & 255u;
         f->amount = unit((insert >> 8) & 255u);
@@ -474,18 +514,22 @@ static inline __attribute__((always_inline)) float tape_sample(Fx *f, int16_t *e
         float delay = fm_minf(f->tape_phase + 2.0f, (float)(capacity - 2u));
         wet = tape_read(echo, capacity, pos, delay) * (1.0f - f->tape_age);
     } else {
-        float length = 256.0f + 512.0f * space;
-        if (held) {
-            f->tape_phase += (0.025f + 0.16f * amount) / length;
-            if (f->tape_phase >= 1.0f) f->tape_phase -= 1.0f;
+        float length = 192.0f + 640.0f * space;
+        if (f->tape_age < 2048.0f) f->tape_age += 0.25f;
+        if (f->tape_age < 2.0f * length + 4.0f) {
+            wet = dry;
+        } else {
+            float phase = f->tape_phase;
+            f->tape_phase += 0.25f + rate * 0.125f;
+            if (f->tape_phase >= length) f->tape_phase = 0.0f;
+            float window = fm_minf(1.0f, fm_minf(phase, length - phase) * (1.0f / 32.0f));
+            float reverse = tape_read(echo, capacity, pos, 2.0f + 2.0f * phase);
+            wet = dry + (reverse - dry) * window;
         }
-        float phase = f->tape_phase;
-        float second = phase < 0.5f ? phase + 0.5f : phase - 0.5f;
-        float weight = 1.0f - fm_fabsf(2.0f * phase - 1.0f);
-        wet = weight * tape_read(echo, capacity, pos, 2.0f + length * phase) +
-              (1.0f - weight) * tape_read(echo, capacity, pos, 2.0f + length * second);
     }
-    f->tape_tone += (wet - f->tape_tone) * (0.05f + 0.80f * tone);
+    if (f->tape_mode == 11u && f->tape_age < 2.0f * (192.0f + 640.0f * space) + 4.0f)
+        f->tape_tone = dry;
+    else f->tape_tone += (wet - f->tape_tone) * (0.05f + 0.80f * tone);
     if (!held && f->tape_wet < 0.00005f) f->tape_mode = 0;
     return dry + (f->tape_tone - dry) * f->tape_wet;
 }
@@ -528,22 +572,46 @@ static inline __attribute__((always_inline)) float process_sample(
         }
     }
     if (f->mode) {
-        unsigned in_slice = f->gate_sample & 255u;
+        unsigned remaining = f->gate_boundary - f->gate_sample;
         int open = (f->pattern >> (15u - f->gate_step)) & 1u;
-        ++f->gate_sample;
-        if (f->gate_sample >= f->clock_step * 16u) {
-            f->gate_sample = 0;
-            f->gate_step = 0;
-            f->gate_boundary = f->clock_step;
-        } else if (f->gate_sample == f->gate_boundary) {
-            ++f->gate_step;
-            f->gate_boundary += f->clock_step;
-        }
-        f->gate += ((open ? 1.0f : 1.0f - f->depth) - f->gate) * 0.032f;
         if (f->mode == 2) {
-            if (open) f->slice[in_slice] = pack(x);
-            else x += (unpack(f->slice[in_slice]) - x) * f->depth;
-        } else x *= f->gate;
+            if (open) {
+                f->capture_sum += x;
+                if (++f->capture_phase == 4u) {
+                    slice_line[track][f->capture_head] = pack(f->capture_sum * 0.25f);
+                    if (++f->capture_head == SLICE_CAPTURE) f->capture_head = 0;
+                    if (f->capture_count < SLICE_CAPTURE) ++f->capture_count;
+                    f->capture_sum = 0.0f;
+                    f->capture_phase = 0;
+                }
+            } else if (f->capture_count >= 2u * SLICE_RAMP / 4u) {
+                unsigned phase = f->repeat_phase;
+                unsigned length = (f->capture_count - 1u) * 4u;
+                unsigned index = f->capture_head + SLICE_CAPTURE - f->capture_count + phase / 4u;
+                if (index >= SLICE_CAPTURE) index -= SLICE_CAPTURE;
+                unsigned next = index + 1u == SLICE_CAPTURE ? 0u : index + 1u;
+                float a = unpack(slice_line[track][index]), b = unpack(slice_line[track][next]);
+                float repeated = a + (b - a) * (phase % 4u * 0.25f);
+                unsigned fade = phase;
+                if (length - phase < fade) fade = length - phase;
+                if (remaining - 1u < fade) fade = remaining - 1u;
+                float window = fade >= SLICE_RAMP ? 1.0f : fade * (1.0f / SLICE_RAMP);
+                x += (repeated - x) * f->depth * window;
+                if (++f->repeat_phase == length) f->repeat_phase = 0;
+            }
+        } else {
+            f->gate += ((open ? 1.0f : 1.0f - f->depth) - f->gate) * 0.032f;
+            x *= f->gate;
+        }
+        if (++f->gate_sample == f->gate_boundary) {
+            if (++f->gate_step == 16u) {
+                f->gate_step = f->gate_sample = 0;
+                f->gate_boundary = 0;
+            }
+            f->gate_boundary += f->clock_step;
+            f->repeat_phase = f->capture_phase = 0;
+            f->capture_sum = 0.0f;
+        }
     }
     if (f->rv[0] > 0.0f) {
         unsigned idx = f->room_pos;

@@ -60,8 +60,55 @@ static void visual_disc(int x, int y, int radius, int sy, uint16_t color)
     }
 }
 
+#include "dancer-art.h"
+
+static void dancer_draw(unsigned time)
+{
+    unsigned energy = 0;
+    for (unsigned track = 0; track < TRACKS; ++track)
+        energy += track_energy[track] + note_activity[track] * 2u;
+    unsigned active = dancer_reactivity && energy > 12u;
+    unsigned cycle = active ? ((positions & 31u) * 15u + step_progress) / 16u : (time / 85u) % 4u;
+    if (active && !playing) cycle = time / 19u;
+    unsigned pose = active ? (cycle + dancer_pattern * 10u) % 30u : (cycle + 6u * dancer_pattern) % 30u;
+    unsigned light_track = ((positions >> 2) + dancer_pattern) % TRACKS;
+    const uint8_t *span = dancer_frames[pose];
+    for (int sy = 0; sy < 240; sy += 40) {
+        cv_begin(240, 40, RGB(8, 7, 24));
+        if (dancer_lighting) {
+            int spread = 16 + (int)(active ? note_activity[DRUMS] / 2u : 3u);
+            cv_line(38, 9 - sy, 120 - spread, 218 - sy, track_rule[light_track]);
+            cv_line(201, 9 - sy, 120 + spread, 218 - sy, track_rule[(light_track + 2u) % TRACKS]);
+        }
+        cv_rect(15, 218 - sy, 210, 2, track_rule[light_track]);
+        for (int y = 0; y < 40; y += 2) {
+            const uint8_t *row = span;
+            if (dancer_outline) {
+                while (*row != 255u) {
+                    cv_rect(row[0] * 2 - 1, y, (row[1] >> 3) * 2 + 4, 2, track_rule[light_track]);
+                    row += 2;
+                }
+            }
+            while (*span != 255u) {
+                cv_rect(span[0] * 2, y, ((span[1] >> 3) + 1) * 2, 2, dancer_palette[span[1] & 7u]);
+                span += 2;
+            }
+            ++span;
+        }
+        if (sy == 0) cv_text(8, 5, &FONT_B, "PARALLAX-8 DANCER", C_WHITE);
+        if (sy == 200) {
+            cv_text(8, 23, &FONT_T, "K1 PATTERN  K2 OUTLINE  K3 LIGHTS  K4 REACT", C_WHITE);
+        }
+        cv_blit(0, sy);
+    }
+}
+
 static void visualizer_draw(unsigned kind, unsigned time, unsigned intro)
 {
+    if (kind == 6u) {
+        dancer_draw(time);
+        return;
+    }
     static const char *const names[] = {
         "DNA HELIX", "FERROFLUID", "GRAVITY RINGS", "SOLAR SYSTEM",
         "", "DIGITAL VU METER", "", "SLAP REACTOR"
@@ -69,13 +116,9 @@ static void visualizer_draw(unsigned kind, unsigned time, unsigned intro)
     int energy[TRACKS];
     for (unsigned t = 0; t < TRACKS; ++t)
         energy[t] = intro ? clamp((int)intro / 24 - (int)t * 3, 0, 34) :
-            (int)(track_energy[t] >> 2);
-    float meter[2] = {0};
+            (int)(track_energy[t] >> 2) + (int)(note_activity[t] >> 2);
     float levels[SPECTRUM_BANDS];
     static unsigned orbit_time, orbit_phase[8], orbit_speed[8];
-    if (kind == 5)
-        for (unsigned c = 0; c < 2; ++c)
-            meter[c] = fm_clampf((fm_log2f(fm_maxf(visual_rms[c], 0.000001f)) + 18.0f) / 15.0f, 0.0f, 1.0f);
     for (unsigned b = 0; b < SPECTRUM_BANDS; ++b) {
         levels[b] = fm_clampf((fm_log2f(fm_maxf(visual_band[b], 0.000001f)) + 18.0f) / 13.0f, 0.0f, 1.0f);
     }
@@ -87,8 +130,8 @@ static void visualizer_draw(unsigned kind, unsigned time, unsigned intro)
         if (elapsed > 25u) elapsed = 0;
         orbit_time = time;
         for (unsigned i = 0; i < 8; ++i) {
-            unsigned response = i == 7 ? (unsigned)energy[4] * 6u :
-                (unsigned)(levels[bands[i]] * 240.0f);
+            unsigned response = i < TRACKS ? note_activity[i] * 3u + (unsigned)energy[i] * 2u :
+                (unsigned)(levels[bands[i]] * 150.0f);
             unsigned target = rates[i] * (16u + response);
             orbit_speed[i] = (5u * orbit_speed[i] + target) / 6u;
             orbit_phase[i] += elapsed * orbit_speed[i];
@@ -141,6 +184,15 @@ static void visualizer_draw(unsigned kind, unsigned time, unsigned intro)
         case 2:
             for (unsigned t = 0; t < TRACKS; ++t) {
                 int radius = 24 + (int)t*17 + energy[t]/5;
+                unsigned activity = note_activity[t];
+                if (activity > 7u) {
+                    int wave_radius = clamp(radius + 13 - (int)activity / 5, 12, 116);
+                    for (unsigned angle = 0; angle < 1024u; angle += 64u) {
+                        int x = 120 + visual_wave(angle + 256u, wave_radius);
+                        int y = 130 + visual_wave(angle, wave_radius / 2);
+                        cv_rect(x, y - sy, 2, 2, track_color[t]);
+                    }
+                }
                 for (unsigned k = 0; k < 1024; k += 37) {
                     unsigned phase = k + time*(3u+t);
                     int x = 120 + visual_wave(phase+256, radius);
@@ -179,7 +231,9 @@ static void visualizer_draw(unsigned kind, unsigned time, unsigned intro)
                 unsigned phase = (orbit_phase[i] >> 12) + i * 113u;
                 int x = 120+visual_wave(phase+256,r), y = 128+visual_wave(phase,r*3/4);
                 if (i == 5) cv_line(x-13,y+4-sy,x+13,y-4-sy,RGB(237,202,142));
-                visual_disc(x,y,sizes[i],sy,planet[i]);
+                if (i < TRACKS && energy[i] > 8)
+                    visual_disc(x, y, sizes[i] + 2 + energy[i] / 13, sy, track_surface[i]);
+                visual_disc(x,y,sizes[i],sy,i < TRACKS ? track_color[i] : planet[i]);
                 if (sizes[i] > 3) {
                     visual_disc(x - 1, y - 1, (int)sizes[i] / 3, sy, RGB(250,218,165));
                     cv_rect(x + sizes[i] / 2, y - sy + 2, 2, 1, RGB(65,40,52));
@@ -199,15 +253,16 @@ static void visualizer_draw(unsigned kind, unsigned time, unsigned intro)
                 cv_text(127, 2, &FONT_XS, "BAR", track_color[4]);
                 cv_text(159, 0, &FONT_M, bar, C_WHITE);
             }
-            for (unsigned channel = 0; channel < 2; ++channel) {
-                int y = channel ? 148 : 106;
-                if (y < sy || y >= sy + 40) continue;
-                cv_text(10, y - sy, &FONT_B, channel ? "R" : "L", C_WHITE);
-                unsigned active = (unsigned)(meter[channel] * 23.0f + 0.5f);
+            for (unsigned track = 0; track < TRACKS; ++track) {
+                int y = 77 + (int)track * 29;
+                if (y + 13 < sy || y >= sy + 40) continue;
+                char name[] = {'T', (char)('1' + track), 0};
+                cv_text(8, y - sy, &FONT_XS, name, track_color[track]);
+                unsigned active = (track_energy[track] * 23u + 80u) / 160u;
+                unsigned peak = (track_peak[track] * 22u + 80u) / 160u;
                 for (unsigned cell = 0; cell < 23; ++cell) {
-                    uint16_t color = cell >= active ? RGB(23, 33, 46) :
-                        cell >= 20 ? RGB(250, 75, 80) :
-                        cell >= 16 ? RGB(255, 185, 58) : RGB(55, 229, 167);
+                    uint16_t color = cell >= active ? track_surface[track] : track_color[track];
+                    if (track_peak[track] && cell == peak) color = C_WHITE;
                     cv_rect(31 + (int)cell * 9, y - sy, 7, 12, color);
                 }
             }

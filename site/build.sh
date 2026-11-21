@@ -2,13 +2,13 @@
 # SPDX-License-Identifier: MPL-2.0
 set -eu
 cd "$(dirname "$0")/.."
-python3 vendor/fm1-base/tools/build.py device --web --release "${SLAP_WEB_RELEASE:-0.1.18}"
+python3 vendor/fm1-base/tools/build.py device --web --release "${SLAP_WEB_RELEASE:-0.1.23}"
 out="${1:-device/build/studio}"
 mkdir -p "$out/emulator" "$out/protocol" "$out/screens"
 mkdir -p "$out/fonts"
 cp device/build/gen/fonts/SLAPBlock-*.ttf site/slap-block.css "$out/fonts/"
 cp vendor/fm1-base/assets/fonts/Barlow-OFL.txt "$out/fonts/OFL.txt"
-cp site/index.html site/flash.html site/flash.js site/flash-release.mjs site/flash-transport.mjs site/studio.html site/studio.css site/studio.js site/project.mjs "$out/"
+cp site/index.html site/flash.html site/flash-testing.html site/flash.js site/flash-release.mjs site/flash-transport.mjs site/studio.html site/studio.css site/studio.js site/project.mjs "$out/"
 cp device/build/emu/index.html device/build/emu/app.wasm device/build/emu/worklet.js device/build/emu/app_worklet.js "$out/emulator/"
 sed -i -e '/<\/head>/i\  <link rel="stylesheet" href="../fonts/slap-block.css">' \
   -e 's/Barlow Semi Condensed/SLAP Block/g' -e 's/"Barlow"/"SLAP Block"/g' "$out/emulator/index.html"
@@ -40,8 +40,13 @@ cp "$release_dir/SLAP-5-0.1.18.fwsc" "$out/"
 mkdir -p "$out/tests"
 cp site/tests/flash.mjs "$out/tests/"
 printf '{"type":"module"}\n' > "$out/package.json"
-if [ ! -f device/build/host/home.png ]; then
+if [ ! -f device/build/host/slap-5_host ]; then
     python3 vendor/fm1-base/tools/build.py device --host
-    device/build/host/slap-5_host device/tests/groovebox.txt device/build/host
 fi
-cp device/build/host/home.png "$out/screens/"
+device/build/host/slap-5_host device/tests/groovebox.txt device/build/host
+device/build/host/slap-5_host device/tests/transport-mixer.txt device/build/host
+cp device/build/host/home.png device/build/host/dancer.png "$out/screens/"
+if [ -n "${SLAP_TESTING_ASSETS:-}" ]; then
+    cp "$SLAP_TESTING_ASSETS/release-testing.json" "$SLAP_TESTING_ASSETS/SLAP-5-0.1.23.fwsc" \
+        "$SLAP_TESTING_ASSETS/SLAP-5-0.1.23-Studio.zip" "$SLAP_TESTING_ASSETS/SHA256SUMS-0.1.23" "$out/"
+fi
