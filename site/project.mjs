@@ -90,10 +90,13 @@ export function validateProject(project) {
     }
   }
   if (project.mixer !== undefined) {
-    const { solo, duck, autoLevel, autoMix } = project.mixer ?? {};
+    const { solo, duck, autoLevel, autoMix, allFilter, trackFilter } = project.mixer ?? {};
     if (!within(solo, 0, 31) || !Array.isArray(duck) || duck.length !== 4 ||
         !duck.every(depth => within(depth, 0, 100)) ||
-        typeof autoLevel !== 'boolean' || typeof autoMix !== 'boolean')
+        typeof autoLevel !== 'boolean' || typeof autoMix !== 'boolean' ||
+        (allFilter !== undefined && !within(allFilter, -100, 100)) ||
+        (trackFilter !== undefined && (!Array.isArray(trackFilter) || trackFilter.length !== 5 ||
+          !trackFilter.every(value => within(value, -100, 100)))))
       throw new Error('Invalid mixer settings.');
   }
   return { ...project, version: 6, drumFilters: legacy ? 0 : expanded ? project.drumFilters : ((project.drumFilters & 63) | (project.drumFilters & 0x3f00) << 8),

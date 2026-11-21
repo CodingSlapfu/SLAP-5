@@ -16,20 +16,24 @@ SLAP-5 is an original five-track groovebox for the M-VAVE FM-1. Copyright (C) 20
 | REC + SEL twice | Clear the complete selected track, including hidden legacy steps. |
 | REC + ARP | Cancel the current take and restore its snapshot. |
 | Hold REC for 2 seconds | Open advanced RECORD. |
-| Tap EDIT | Open PATCH. |
+| Tap EDIT | Open SOUND LAB. K1 Filter, K2 Resonance, K3 Decay (Room on drums), K4 Drive. Turn ALGO right for the patch browser and synthesis display. |
 | Hold EDIT for 2 seconds | Open MIXER. Press HOME to exit. The first five white keys mute tracks 1–5 and show their enabled state. ARP toggles the selected track's solo. |
 | Tap GLO | Open SETTINGS from a performance page. |
 | Hold GLO for 5 seconds | Open DIAGNOSTICS. Short GLO presses inside diagnostics cycle its pages. |
 | Double-press FX | Open LIVE FX. Black keys apply momentary effects and white keys play notes. SEL switches between the selected track and the full mix. |
 | SEL on HOME | Open KEY & CHORDS for the selected melodic track. OCT− toggles Perfect Note, OCT+ cycles the chord type, K2 sets Split Keys, and SEL+K2 sets the scale. |
 
-HOME offers 16, 32 and 64 steps. Legacy lengths and stored notes remain intact on load. An explicit length change changes the loop boundary while retaining events beyond it. Undo keeps one snapshot per track for short loops. Long legacy edits reuse the bounded whole-track snapshot.
+HOME assigns K1 to selected-track level, K2 to loop length, K3 to stereo pan and K4 to global swing. K2 offers 16, 32 and 64 steps. Legacy lengths and stored notes remain intact on load. An explicit length change changes the loop boundary while retaining events beyond it. Undo keeps one snapshot per track for short loops. Long legacy edits reuse the bounded whole-track snapshot.
+
+MIXER assigns K1 to selected-track solo and K2 to kick-triggered ducking on the four melodic tracks. The drum track supplies the sidechain. K3 filters the whole mix and K4 filters the selected track. Both sweep from −100 low-pass through 0 bypass to +100 high-pass. Each track remembers its own filter. Saving an active filter writes a V12 song slot. Older slots open with all filters at zero. Keep a pre-V12 song backup for use with older firmware.
+
+In SETTINGS → AUDIO, select **FM-1 SPEAKER** for speaker processing or **HEADPHONES / AUDIO OUT** for full-range stereo. The selection applies to the shared output mix and persists across reboot.
 
 SEQ edits four melodic note lanes or sixteen fixed drum lanes plus the legacy drum row. Turn SELECT to move the cursor and hold SEL to choose a lane. K1–K4 set pitch, velocity, gate and probability. SEL+K3 sets melodic hold duration, and SEL+K4 sets timing within the step. Holding SEL activates Fill in SEQ. SEL+OCT+ cycles Normal, Ratchet and Fill Only for the current note. SEL+EDIT copies a step, SEL+LFO cuts it, SEL+ENV pastes it within the same lane, and SEL+OCT− clears it. Sample-backed drums play one-shots; melodic holds can span step boundaries.
 
 SETTINGS offers Audio, Metronome, Recording, Transport, Keyboard, Display, Diagnostics, Live FX Knobs and Lights. Auto Level is enabled by default and works alongside manual mixer levels. Metronome modes are Off, On and Rec Only. Live FX assignments temporarily control the labeled effect parameters and persist across reboot. The full-mix path uses a centered wet signal and a bounded short echo with a stereo dry return.
 
-USB MIDI channels 1–5 address the five tracks. Use ALGO for tempo and PRESET for one of 128 melodic patches or the 25 sample-backed factory kits. All 56 legacy drum kits remain readable. Press SAVE while stopped, hold the target white key for four seconds to save, or press SEL to load the selected slot.
+USB MIDI channels 1–5 address the five tracks. Use ALGO for tempo and PRESET for one of 136 melodic patches or the 25 sample-backed factory kits. All 56 legacy drum kits remain readable. Press SAVE while stopped, hold the target white key for four seconds to save, or press SEL to load the selected slot.
 
 To generate a drum pattern on the FM-1, select track 5 from HOME and press SEQ.
 The drum sequencer shows **SEQ: GEN DRUMS**. Press SEQ again to open the

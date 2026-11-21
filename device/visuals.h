@@ -31,7 +31,7 @@ static void slap_wordmark(int center, int y)
 }
 
 static const uint16_t track_color[] = {
-    RGB(28,226,255), RGB(171,112,255), RGB(255,89,176), RGB(255,180,58), RGB(62,242,137)
+    RGB(0,225,255), RGB(157,62,255), RGB(255,37,158), RGB(255,175,16), RGB(21,255,102)
 };
 
 static const uint16_t track_surface[] = {
@@ -164,17 +164,19 @@ static void visualizer_draw(unsigned kind, unsigned time, unsigned intro)
         case 0:
             for (int y = 38; y < 230; y += 7) {
                 unsigned t = (unsigned)y / 7u % TRACKS;
-                int x = visual_wave(time * 3u + (unsigned)y * 13u, 46 + energy[t] + (int)(levels[t] * 19));
+                unsigned angle = time * 3u + (unsigned)y * (13u + (unsigned)(levels[0] * 3));
+                int separation = 46 + energy[t] / 2 + (int)(levels[0] * 16);
+                int x = visual_wave(angle, separation);
                 if (y + 7 < sy || y - 5 >= sy + 40) continue;
                 int span = x < 0 ? -x : x;
-                int depth = visual_wave(time * 3u + (unsigned)y * 13u + 256u, 3);
+                int depth = visual_wave(angle + 256u, 3 + energy[3] / 16);
                 cv_rect(120 - span, y - sy, span * 2 + 1, 1, track_surface[t]);
                 visual_disc(120 + x, y, 5 + depth / 2, sy, track_rule[t]);
                 visual_disc(120 - x, y, 5 - depth / 2, sy, track_rule[(t + 2u) % TRACKS]);
                 visual_disc(120 + x, y, 2 + (depth > 0), sy, track_color[t]);
                 visual_disc(120 - x, y, 2 + (depth < 0), sy, track_color[(t + 2u) % TRACKS]);
-                if (energy[t] > 7 && !(y % 3))
-                    cv_rect(120 + x / 2, y - sy - 3, 2, 2, C_WHITE);
+                if (note_activity[t] > 8u && !(y % 3))
+                    cv_rect(120 + x / 2, y - sy - 3, 2 + (note_activity[4] > 22u), 2, C_WHITE);
             }
             break;
         case 1:
@@ -192,6 +194,7 @@ static void visualizer_draw(unsigned kind, unsigned time, unsigned intro)
         case 2:
             for (unsigned t = 0; t < TRACKS; ++t) {
                 int radius = 24 + (int)t*17 + energy[t]/5;
+                int depth = 14 + (int)(levels[0] * 13);
                 unsigned activity = note_activity[t];
                 if (activity > 7u) {
                     int wave_radius = clamp(radius + 13 - (int)activity / 5, 12, 116);
@@ -203,8 +206,9 @@ static void visualizer_draw(unsigned kind, unsigned time, unsigned intro)
                 }
                 for (unsigned k = 0; k < 1024; k += 37) {
                     unsigned phase = k + time*(3u+t);
+                    if (playing) phase += (positions & 63u) * 16u + step_progress;
                     int x = 120 + visual_wave(phase+256, radius);
-                    int y = 130 + visual_wave(phase, radius/2) + visual_wave(2*phase+t*80u,20);
+                    int y = 130 + visual_wave(phase, radius/2) + visual_wave(2*phase+t*80u,depth);
                     if (y + 4 < sy || y - 4 >= sy + 40) continue;
                     visual_disc(x, y, 4, sy, track_surface[t]);
                     visual_disc(x, y, 2 + (int)(t == 4), sy, track_color[t]);
@@ -234,14 +238,20 @@ static void visualizer_draw(unsigned kind, unsigned time, unsigned intro)
             visual_disc(120,128,11+bass/2,sy,RGB(255,228,102));
             for (unsigned i = 0; i < 8; ++i) {
                 int r = 21 + (int)i*12;
+                uint16_t orbit_ink = i == 3 && energy[3] > 7 ? track_rule[3] : RGB(46+mids,62+mids,85+mids);
                 for (unsigned k=0; k<1024; k+=57)
-                    cv_rect(120+visual_wave(k+256,r),128+visual_wave(k,r*3/4)-sy,1,1,RGB(46+mids,62+mids,85+mids));
+                    cv_rect(120+visual_wave(k+256,r),128+visual_wave(k,r*3/4)-sy,1,1,orbit_ink);
                 unsigned phase = (orbit_phase[i] >> 12) + i * 113u;
                 int x = 120+visual_wave(phase+256,r), y = 128+visual_wave(phase,r*3/4);
                 if (i == 5) cv_line(x-13,y+4-sy,x+13,y-4-sy,RGB(237,202,142));
                 if (i < TRACKS && energy[i] > 8)
                     visual_disc(x, y, sizes[i] + 2 + energy[i] / 13, sy, track_surface[i]);
-                visual_disc(x,y,sizes[i],sy,i < TRACKS ? track_color[i] : planet[i]);
+                int size = sizes[i] + (i == 1 ? energy[1] / 8 : 0);
+                uint16_t body = i < TRACKS ? track_color[i] : planet[i];
+                if (i == 2 && energy[2] < 6) body = track_rule[2];
+                if (i == 4 && note_activity[4] > 12u)
+                    visual_disc(x, y, size + 2 + (int)note_activity[4] / 10, sy, track_rule[4]);
+                visual_disc(x, y, size, sy, body);
                 if (sizes[i] > 3) {
                     visual_disc(x - 1, y - 1, (int)sizes[i] / 3, sy, RGB(250,218,165));
                     cv_rect(x + sizes[i] / 2, y - sy + 2, 2, 1, RGB(65,40,52));
@@ -259,16 +269,20 @@ static void visualizer_draw(unsigned kind, unsigned time, unsigned intro)
             }
             for (unsigned track = 0; track < TRACKS; ++track) {
                 int y = 77 + (int)track * 29;
-                if (y + 13 < sy || y >= sy + 40) continue;
+                if (y + 16 < sy || y - 4 >= sy + 40) continue;
                 char name[] = {'T', (char)('1' + track), 0};
                 cv_text(8, y - sy, &FONT_XS, name, track_color[track]);
+                cv_rect(29, y - sy - 4, 209, 20, RGB(20,23,28));
                 unsigned active = (track_energy[track] * 23u + 80u) / 160u;
                 unsigned peak = (track_peak[track] * 22u + 80u) / 160u;
                 for (unsigned cell = 0; cell < 23; ++cell) {
                     uint16_t color = cell >= active ? track_surface[track] : track_color[track];
                     if (track_peak[track] && cell == peak) color = C_WHITE;
-                    int height = 4 + (int)(cell / 3u);
-                    cv_rect(31 + (int)cell * 9, y + 12 - height - sy, 7, height, color);
+                    int x = 31 + (int)cell * 9;
+                    int height = 11 + (int)(cell / 7u);
+                    cv_rect(x, y + 12 - height - sy, 7, height, color);
+                    if (cell < active) cv_rect(x, y + 12 - height - sy, 7, 1, C_WHITE);
+                    if (!(cell % 5u)) cv_rect(x, y + 14 - sy, 4, 1, C_WHITE);
                 }
             }
             break;

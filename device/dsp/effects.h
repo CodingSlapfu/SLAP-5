@@ -31,6 +31,7 @@ unsigned slap_fx_brake_speed(unsigned track);
 void slap_fx_mix_sample(float *left, float *right);
 int slap_fx_response(unsigned track, unsigned point);
 int slap_fx_trace(unsigned track, unsigned point);
+unsigned slap_fx_slicer_state(unsigned track);
 unsigned slap_fx_slicer_cell(unsigned track, unsigned step);
 
 #if !defined(PLAT_WEB)

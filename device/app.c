@@ -206,6 +206,47 @@ static volatile uint32_t active_voices, voice_steals;
 static unsigned host_peak_voices;
 #endif
 static volatile uint8_t mixer_proc[TRACKS], mixer_duck[DRUMS];
+static volatile int8_t performance_filter[TRACKS + 1];
+
+typedef struct {
+    float pole[2], coefficient, wet, target_coefficient, target_wet;
+} PerformancePole;
+
+static PerformancePole performance_poles[TRACKS + 1][2];
+
+static float performance_sample(PerformancePole *pole, unsigned channel, float sample, unsigned high_pass)
+{
+    float state = pole->pole[channel];
+    state += pole->coefficient * (sample - state);
+    pole->pole[channel] = state;
+    return high_pass ? sample - pole->wet * state : sample + pole->wet * (state - sample);
+}
+
+static void performance_target(PerformancePole *pole, int depth, unsigned high_pass)
+{
+    float amount = fm_clampf(depth * (1.0f / 100.0f), 0.0f, 1.0f);
+    // Fade to the exact dry signal over the first ten detents in either direction.
+    pole->target_wet = fm_minf(amount * 10.0f, 1.0f);
+    if (!pole->target_wet) return;
+    float cutoff = high_pass ? 35.0f * fm_exp2f(amount * 7.836501f) :
+        17000.0f * fm_exp2f(amount * -6.561562f);
+    pole->target_coefficient = 1.0f - fm_expf((-6.2831853f / RATE) * cutoff);
+}
+
+static int performance_advance(PerformancePole *pole)
+{
+    if (!pole->target_wet) {
+        if (!pole->wet) return 0;
+        if (pole->wet < 0.0001f) {
+            *pole = (PerformancePole){.wet = 0.0f};
+            return 0;
+        }
+    }
+    pole->coefficient += (pole->target_coefficient - pole->coefficient) * 0.005f;
+    pole->wet += (pole->target_wet - pole->wet) * 0.005f;
+    return 1;
+}
+
 static float drum_duck_envelope, duck_amount[DRUMS], mix_share_gain[TRACKS];
 static uint32_t boot_suppressed_keys;
 static float mixer_envelope[TRACKS], mixer_gain[TRACKS];
@@ -213,6 +254,7 @@ static volatile uint32_t track_peak[TRACKS], fx_cost_ticks[TRACKS];
 static Voice voices[VOICES];
 static PLAT_POOL SlapSynth synths[VOICES];
 static uint32_t track_timbre[DRUMS], track_fm_envelopes[DRUMS][7];
+enum { SOUND_LAB_MAIN = 5 };
 static unsigned edit_page, timbre_operator, patch_group[TRACKS];
 static PLAT_POOL int16_t synth_strings[VOICES][SLAP_STRING_CAPACITY];
 static volatile uint32_t tempo = 112, swing, playing, positions, sequence_epoch;
@@ -410,6 +452,11 @@ void app_init(void)
     for (unsigned t = 0; t < DRUMS; ++t)
         mixer_duck[t] = (uint8_t)clamp((int)((duck >> (8u * t)) & 255u), 0, 100);
     drum_duck_envelope = 0.0f;
+    for (unsigned t = 0; t <= TRACKS; ++t) {
+        performance_filter[t] = 0;
+        for (unsigned type = 0; type < 2; ++type)
+            performance_poles[t][type] = (PerformancePole){.wet = 0.0f};
+    }
     saved_mixer_options = pending_mixer_options = options | 128u |
         ((!(options & 128u) && (saved_preferences >> 30) == 3u) ? 64u : 0u);
     saved_duck = pending_duck = duck;
@@ -2220,6 +2267,15 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
     uint32_t mix[TRACKS], solo = mixer_solo;
     float left[TRACKS], right[TRACKS], level_at[TRACKS], wet[TRACKS], gain_goal[TRACKS];
     unsigned gain_needed[TRACKS];
+    unsigned filter_mask = 0;
+    for (unsigned t = 0; t <= TRACKS; ++t) {
+        int value = performance_filter[t];
+        for (unsigned type = 0; type < 2; ++type) {
+            PerformancePole *pole = &performance_poles[t][type];
+            performance_target(pole, type ? value : -value, type);
+            if (pole->target_wet || pole->wet) filter_mask |= 1u << t;
+        }
+    }
     float duck_depth[DRUMS];
     unsigned duck_enabled = 0;
     for (unsigned t = 0; t < DRUMS; ++t) {
@@ -2313,7 +2369,8 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
     const unsigned muted = muted_drums();
     unsigned measure_fx = slap_ui.page == FX && slap_ui.fx_page == 4;
     const unsigned analyze = slap_ui.page == VISUAL;
-    const unsigned inspect_fx = slap_ui.page == FX || slap_ui.page == PATCH;
+    const unsigned inspect_fx = slap_ui.page == FX ||
+        (slap_ui.page == PATCH && edit_page && edit_page != SOUND_LAB_MAIN);
     const unsigned active_effects = slap_fx_active_mask();
     const unsigned effect_mask = inspect_fx ? (1u << TRACKS) - 1u : active_effects;
     float meter_sum[2] = {0}, meter_peak[2] = {0};
@@ -2449,6 +2506,13 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
                 sample *= gain;
                 amplitude *= gain;
             }
+            if (filter_mask & (1u << t)) {
+                for (unsigned type = 0; type < 2; ++type) {
+                    PerformancePole *pole = &performance_poles[t][type];
+                    if (performance_advance(pole)) sample = performance_sample(pole, 0, sample, type);
+                }
+                amplitude = fm_fabsf(sample);
+            }
             energy_smooth[t] += (amplitude * level_at[t] - energy_smooth[t]) * 0.0015f;
             l += sample * left[t];
             r += sample * right[t];
@@ -2456,6 +2520,14 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
         }
         if (profile) section = plat_ticks24();
         if (live_mix_active) slap_fx_mix_sample(&l, &r);
+        if (filter_mask & (1u << TRACKS)) {
+            for (unsigned type = 0; type < 2; ++type) {
+                PerformancePole *pole = &performance_poles[TRACKS][type];
+                if (!performance_advance(pole)) continue;
+                l = performance_sample(pole, 0, l, type);
+                r = performance_sample(pole, 1, r, type);
+            }
+        }
         if (!intro_skipped && !playing && startup_sample < RATE * 42u / 100u) {
             float tone = startup_sound();
             l += tone;
@@ -2602,7 +2674,7 @@ static int step_valid(uint32_t word)
 }
 
 /* V5 is indexed and sparse. V2–V4 retain their exact byte layout. */
-enum { SONG_MAX = 3840, SONG5_HEADER = 316, SONG5_EVENT = 6 };
+enum { SONG_MAX = 3840, SONG5_HEADER = 316, SONG5_EVENT = 6, SONG_FILTER_BYTES = TRACKS + 1 };
 static uint8_t song_bytes[SONG_MAX];
 
 static uint32_t song_get32(unsigned at)
@@ -2669,7 +2741,8 @@ static unsigned song5_bytes;
 static unsigned song_header_size(unsigned version)
 {
     return SONG5_HEADER + (version >= 10u ? sizeof(track_timbre) : 0u) +
-        (version >= 11u ? sizeof(track_fm_envelopes) : 0u);
+        (version >= 11u ? sizeof(track_fm_envelopes) : 0u) +
+        (version >= 12u ? SONG_FILTER_BYTES : 0u);
 }
 
 static int prepare_sparse_song(unsigned bytes, unsigned version)
@@ -2685,6 +2758,9 @@ static int prepare_sparse_song(unsigned bytes, unsigned version)
                 if (i == 6u ? value > 16u : value && (value < 65536u || value > 131071u)) return 0;
             }
     }
+    if (version >= 12u)
+        for (unsigned t = 0; t <= TRACKS; ++t)
+            if (song_bytes[header - SONG_FILTER_BYTES + t] > 200u) return 0;
     unsigned previous = 0;
     for (unsigned at = header; at < bytes; at += stride) {
         unsigned packed = song_bytes[at] | (unsigned)song_bytes[at + 1] << 8;
@@ -2724,6 +2800,8 @@ static unsigned encode_sparse_song(unsigned version)
     if (version >= 11u)
         for (unsigned track = 0; track < DRUMS; ++track)
             for (unsigned i = 0; i < 7u; ++i, at += 4u) song_put32(at, track_fm_envelopes[track][i]);
+    if (version >= 12u)
+        for (unsigned t = 0; t <= TRACKS; ++t) song_bytes[at++] = (uint8_t)(performance_filter[t] + 100);
     for (unsigned row = 0; row < (version >= 8u ? SONG_LANES : version >= 6u ? SONG7_LANES : SONG5_LANES); ++row) {
         for (unsigned step = 0; step < STEPS; ++step) {
             uint32_t word = song_event_get(row, step);
@@ -2760,7 +2838,7 @@ static int read_song(unsigned slot)
     int bytes = plat_store_load(OBJ_SONG1 + slot, song_bytes, sizeof(song_bytes));
     if (bytes < 8) return 0;
     unsigned version = song_get32(4);
-    if (version >= 5u && version <= 11u) {
+    if (version >= 5u && version <= 12u) {
         if (!prepare_sparse_song((unsigned)bytes, version)) return 0;
     } else {
         if ((unsigned)bytes > sizeof(song_io)) return 0;
@@ -2771,7 +2849,7 @@ static int read_song(unsigned slot)
     if (song_io.magic != SONG_MAGIC ||
         !((song_io.version == 2 && bytes == v2bytes) ||
           (song_io.version == 3 && bytes == v3bytes) ||
-          (song_io.version == 4 && bytes == (int)sizeof(song_io)) || (song_io.version >= 5u && song_io.version <= 11u)) ||
+          (song_io.version == 4 && bytes == (int)sizeof(song_io)) || (song_io.version >= 5u && song_io.version <= 12u)) ||
         song_io.bpm < 40 || song_io.bpm > 240 || song_io.swing > 70) return 0;
     for (unsigned t = 0; t < TRACKS; ++t) {
         uint32_t mix = song_io.track[t].mix;
@@ -2821,6 +2899,9 @@ static void load_song(unsigned slot)
             track_fm_envelopes[t][i] = song_io.version >= 11u ?
                 song_get32(SONG5_HEADER + sizeof(track_timbre) + (t * 7u + i) * 4u) : 0u;
     }
+    for (unsigned t = 0; t <= TRACKS; ++t)
+        performance_filter[t] = song_io.version >= 12u ?
+            (int8_t)((int)song_bytes[song_header_size(song_io.version) - SONG_FILTER_BYTES + t] - 100) : 0;
     tempo = song_io.bpm;
     swing = song_io.swing;
     for (unsigned t = 0; t < TRACKS; ++t) {
@@ -2945,6 +3026,8 @@ static void write_song(unsigned slot)
     for (unsigned t = 0; t < DRUMS; ++t)
         for (unsigned i = 0; i < 7u; ++i)
             if (track_fm_envelopes[t][i]) version = 11u;
+    for (unsigned t = 0; t <= TRACKS; ++t)
+        if (performance_filter[t]) version = 12u;
     if (version < 8u) song_io.filters = (drum_filters & 63u) | ((drum_filters >> 8) & 0x3f00u);
     unsigned bytes = version > 4u ? encode_sparse_song(version) : sizeof(song_io);
     if (!bytes) { slap_ui.notice = "BANK TOO DENSE"; return; }
@@ -3329,7 +3412,7 @@ void app_input_only(void)
     unsigned entering_edit = !!(pressed & (1u << B_EDIT));
     if (entering_edit) {
         slap_ui.page = PATCH;
-        edit_page = 0;
+        edit_page = SOUND_LAB_MAIN;
     }
     if (pressed & (1u << B_ENV)) slap_ui.page = ENV;
     if (slap_ui.page == MIXER) {
@@ -3378,7 +3461,7 @@ void app_input_only(void)
         slap_ui.track = clamp(slap_ui.track + delta, 0, TRACKS - 1);
     if (slap_ui.track != previous_track) {
         clear_mode = 0;
-        edit_page = 0;
+        if (edit_page != SOUND_LAB_MAIN) edit_page = 0;
     }
     if (recording && slap_ui.page == HOME && rec_loop &&
         (slap_ui.track != previous_track || previous_page != HOME))
@@ -3389,7 +3472,9 @@ void app_input_only(void)
     else if (slap_ui.page == PATCH) {
         unsigned track = slap_ui.track;
         unsigned last = track < DRUMS && slap_patches[tracks[track].patch].engine == 0u ? 4u : 1u;
-        edit_page = (unsigned)clamp((int)edit_page + algorithm, 0, last);
+        int page = edit_page == SOUND_LAB_MAIN ? -1 : (int)edit_page;
+        page = clamp(page + algorithm, -1, (int)last);
+        edit_page = page < 0 ? SOUND_LAB_MAIN : (unsigned)page;
     } else if (slap_ui.page == SETTINGS) {
         unsigned next = (unsigned)clamp((int)settings_section + algorithm, 0, PREF_SECTIONS - 1);
         if (next != settings_section) settings_item = 0;
@@ -3405,7 +3490,7 @@ void app_input_only(void)
         else {
             unsigned next = (unsigned)clamp(old_patch + patch_delta, 0, SLAP_PATCHES - 1);
             if (next != (unsigned)old_patch) load_patch(slap_ui.track, next);
-            if (slap_patches[next].engine != 0u && edit_page > 1u) edit_page = 1u;
+            if (slap_patches[next].engine != 0u && edit_page > 1u && edit_page != SOUND_LAB_MAIN) edit_page = 1u;
         }
     }
     int knob[4];
@@ -3472,18 +3557,28 @@ void app_input_only(void)
         rec_replace = (unsigned)clamp((int)rec_replace + knob[3], 0, 1);
     } else if (slap_ui.page == MIXER) {
         unsigned t = (unsigned)slap_ui.track;
-        if (knob[0]) track_setting(t, 16, level_after_turn((mix >> 16) & 255u, knob[0]));
-        if (knob[1]) track_setting(t, 8, pan_after_turn((mix >> 8) & 255u, knob[1]));
-        if (knob[2]) {
-            if (knob[2] > 0) mixer_solo |= 1u << t;
-            else mixer_solo &= ~(1u << t);
-        }
-        if (t < DRUMS)
-            mixer_duck[t] = (uint8_t)clamp((int)mixer_duck[t] + knob[3], 0, 100);
+        if (knob[0] > 0) mixer_solo |= 1u << t;
+        else if (knob[0] < 0) mixer_solo &= ~(1u << t);
+        if (t < DRUMS && knob[1])
+            mixer_duck[t] = (uint8_t)clamp((int)mixer_duck[t] + knob[1], 0, 100);
+        if (knob[2])
+            performance_filter[TRACKS] = (int8_t)clamp(performance_filter[TRACKS] + knob[2], -100, 100);
+        if (knob[3])
+            performance_filter[t] = (int8_t)clamp(performance_filter[t] + knob[3], -100, 100);
     } else if (slap_ui.page == PATCH) {
         unsigned t = (unsigned)slap_ui.track;
         const SlapPatch *program = t < DRUMS ? &slap_patches[tracks[t].patch] : 0;
-        if (!edit_page) {
+        if (edit_page == SOUND_LAB_MAIN) {
+            slap_fx_change(t, 1, 0, knob[0]);
+            slap_fx_change(t, 1, 3, knob[1]);
+            if (t == DRUMS) slap_fx_change(t, 5, 0, knob[2]);
+            else if (knob[2]) {
+                unsigned env = tracks[t].envelope;
+                unsigned decay = (unsigned)clamp((int)(env >> 8 & 127u) + knob[2], 0, 127);
+                tracks[t].envelope = (env & ~0xff00u) | (decay << 8);
+            }
+            slap_fx_change(t, 8, 0, knob[3]);
+        } else if (!edit_page) {
             patch_group[t] = (unsigned)clamp((int)patch_group[t] + knob[0], 0, t == DRUMS ? 2 : 8);
             if (knob[1]) {
                 unsigned next = browse_patch(t, tracks[t].patch, knob[1]);
@@ -3519,8 +3614,15 @@ void app_input_only(void)
             } else {
                 int morph = value ? value & 127u : program->color;
                 int motion = value ? value >> 8 & 127u : program->motion;
-                track_timbre[t] = 0x80000000u | (unsigned)clamp(morph + knob[0], 0, 127) |
+                if (knob[0] || knob[1]) track_timbre[t] = 0x80000000u |
+                    (unsigned)clamp(morph + knob[0], 0, 127) |
                     (unsigned)clamp(motion + knob[1], 0, 127) << 8;
+                if (knob[2]) {
+                    unsigned env = tracks[t].envelope;
+                    unsigned decay = (unsigned)clamp((int)(env >> 8 & 127u) + knob[2], 0, 127);
+                    tracks[t].envelope = (env & ~0xff00u) | (decay << 8);
+                }
+                slap_fx_change(t, 8, 0, knob[3]);
             }
             tracks[t].mix |= ADVANCED_SYNTH;
         } else if (program) {
@@ -3644,7 +3746,7 @@ void app_input_only(void)
         }
         tracks[slap_ui.track].envelope = env;
     } else if (slap_ui.page == HOME) {
-        if (knob[0]) track_setting(slap_ui.track, 8, pan_after_turn((mix >> 8) & 255u, knob[0]));
+        if (knob[0]) track_setting(slap_ui.track, 16, level_after_turn((mix >> 16) & 255u, knob[0]));
         if (knob[1] && !recording && !rec_running) {
             unsigned old_length = pattern_length(mix);
             int index = old_length <= 16u ? 0 : old_length <= 32u ? 1 : 2;
@@ -3653,7 +3755,7 @@ void app_input_only(void)
             if (old_length <= 64u || knob[1] < 0)
                 track_setting(slap_ui.track, 0, 16u << index);
         }
-        if (knob[2]) track_setting(slap_ui.track, 16, level_after_turn((mix >> 16) & 255u, knob[2]));
+        if (knob[2]) track_setting(slap_ui.track, 8, pan_after_turn((mix >> 8) & 255u, knob[2]));
         swing = (unsigned)clamp((int)swing + knob[3], 0, 70);
         slap_ui.step = clamp(slap_ui.step, 0, (int)(pattern_length(tracks[slap_ui.track].mix)) - 1);
     }
@@ -3850,24 +3952,46 @@ static int held_note_width(unsigned duration, unsigned step, unsigned base, unsi
     return (int)(pixels + duration * 14u / span);
 }
 
+static void draw_performance_knob(int x, const char *label, const char *value, int position, uint16_t color)
+{
+    int center = x + 13;
+    for (unsigned tick = 0; tick <= 8; ++tick) {
+        unsigned angle = 384u + tick * 96u;
+        cv_rect(center + visual_wave(angle + 256u, 12),
+            13 + visual_wave(angle, 12), 1, 1, tick == 4 ? C_WHITE : 0x630c);
+    }
+    for (int row = -9; row <= 9; ++row) {
+        static const uint8_t half_width[] = {9, 9, 9, 8, 8, 7, 6, 5, 4, 1};
+        int half = half_width[row < 0 ? -row : row];
+        cv_rect(center - half, 13 + row, 2 * half + 1, 1,
+            row < -5 ? 0x73ae : row < 0 ? 0x4208 : 0x2104);
+    }
+    unsigned angle = 384u + (unsigned)(position + 100) * 768u / 200u;
+    cv_line(center + visual_wave(angle + 256u, 4), 13 + visual_wave(angle, 4),
+        center + visual_wave(angle + 256u, 8), 13 + visual_wave(angle, 8), color);
+    cv_text(x + 27, 2, &FONT_XS, label, color);
+    cv_text(x + 27, 12, &FONT_T, value, C_WHITE);
+}
+
 static void draw_home_sequences(void)
 {
     unsigned position = positions, run = playing, fraction = step_progress;
     unsigned selection = slap_ui.track, bpm = tempo, solo = mixer_solo;
-    static unsigned last_step, last_bpm, last_selection, last_running, last_record, last_swing;
+    static unsigned last_bar, last_bpm, last_selection, last_mix, last_swing;
     static int last_battery;
     static struct {
-        unsigned cursor, first, patch, mix, revision, meter, peak, focused;
+        unsigned cursor, first, patch, mix, revision, meter, peak, focused, pulse;
         uint32_t active;
     } last_lane[TRACKS];
     int battery = low_battery ? -2 : battery_status;
-    unsigned rec = rec_running;
+    unsigned bar = ((position >> 4) & 3u) + 1u;
+    unsigned selected_mix = tracks[selection].mix;
     unsigned full = !home_idle_valid;
-    unsigned redraw_header = full || last_step != position || last_bpm != bpm || last_battery != battery;
-    unsigned redraw_footer = full || last_selection != selection || last_running != run || last_record != rec;
+    unsigned redraw_header = full || last_bar != bar || last_bpm != bpm || last_battery != battery;
+    unsigned redraw_footer = full || last_selection != selection || last_mix != selected_mix || last_swing != swing;
     unsigned geometry = full || last_bpm != bpm || last_swing != swing;
-    last_step = position; last_bpm = bpm; last_battery = battery;
-    last_selection = selection; last_running = run; last_record = rec; last_swing = swing;
+    last_bar = bar; last_bpm = bpm; last_battery = battery;
+    last_selection = selection; last_mix = selected_mix; last_swing = swing;
     unsigned active[VOICES], count = 0;
     for (unsigned v = 0; v < VOICES; ++v)
         if (voices[v].age && !voices[v].delay && !voices[v].releasing && voices[v].sequence_note)
@@ -3875,12 +3999,11 @@ static void draw_home_sequences(void)
     char number[12];
     if (redraw_header) {
     cv_begin(240, 33, C_BLACK);
-    cv_text(5, 0, &FONT_M, "SLAP-5", C_WHITE);
     decimal(number, bpm);
-    cv_text(100, 0, &FONT_M, number, C_WHITE);
-    cv_text(141, 5, &FONT_B, "BPM", C_WHITE);
-    decimal(number, (position & 15u) + 1u);
-    cv_text(183, 1, &FONT_B, "STEP", C_WHITE);
+    cv_text(5, 0, &FONT_M, number, C_WHITE);
+    cv_text(48, 5, &FONT_B, "BPM", C_WHITE);
+    decimal(number, bar);
+    cv_text(185, 1, &FONT_B, "BAR", C_WHITE);
     cv_text(238 - text_w(&FONT_B, number), 1, &FONT_B, number, C_WHITE);
     if (low_battery) cv_text(5, 22, &FONT_T, "LOW BATTERY", track_color[3]);
     else if (battery_status == 4) cv_text(66, 22, &FONT_T, "USB", C_WHITE);
@@ -3891,14 +4014,15 @@ static void draw_home_sequences(void)
     }
     for (unsigned t = 0; t < TRACKS; ++t) {
         unsigned mix = tracks[t].mix, length = pattern_length(mix), patch = tracks[t].patch;
-        unsigned step = position % length, first = step & ~15u, lanes = lane_count(t);
+        unsigned step = position % length, first = run ? step : step & ~15u, lanes = lane_count(t);
         uint16_t color = track_color[t];
         const char *name = t == DRUMS ? drum_kit_name(patch) : slap_patches[patch].name;
         unsigned level = (mix & (1u << 24)) || (solo && !(solo & (1u << t))) ? 0u : track_energy[t];
         int meter = (int)(fm_sqrtf(level * (1.0f / 160.0f)) * 44.0f);
         unsigned peak = level ? track_peak[t] : 0u;
-        unsigned cursor = run ? (step & 15u) * 12u + fraction * 11u / 14u : 192u;
+        unsigned cursor = run ? fraction * 11u / 14u : 0u;
         unsigned focused = t == selection, revision = pattern_revision[t];
+        unsigned pulse = focused && run && !(position & 3u) && fraction < 7u;
         uint32_t sounding = 2166136261u;
         for (unsigned v = 0; v < count; ++v) {
             unsigned row = (active[v] - 1u) / STEPS;
@@ -3911,25 +4035,35 @@ static void draw_home_sequences(void)
         if (!geometry && !recording && last_lane[t].cursor == cursor && last_lane[t].first == first &&
             last_lane[t].patch == patch && last_lane[t].mix == mix && last_lane[t].revision == revision &&
             last_lane[t].meter == (unsigned)meter && last_lane[t].peak == peak &&
-            last_lane[t].focused == focused && last_lane[t].active == sounding) continue;
+            last_lane[t].focused == focused && last_lane[t].pulse == pulse && last_lane[t].active == sounding) continue;
         last_lane[t] = (__typeof__(last_lane[t])){cursor, first, patch, mix, revision,
-            (unsigned)meter, peak, focused, sounding};
+            (unsigned)meter, peak, focused, pulse, sounding};
         cv_begin(240, 36, C_BLACK);
-        cv_rect(5, 0, 24, 34, t == selection ? color : track_rule[t]);
+        cv_rect(5, 0, 24, 34, focused && (!run || pulse) ? color : track_rule[t]);
+        if (focused) cv_rect(5, 0, 2, 34, color);
         decimal(number, t + 1u);
-        cv_text(10, 4, &FONT_M, number, t == selection ? C_BLACK : C_WHITE);
+        cv_text(12, 9, &FONT_B, number, focused && (!run || pulse) ? C_BLACK : C_WHITE);
         cv_text(34, 0, text_w(&FONT_B, name) <= 148 ? &FONT_B : &FONT_S, name, C_WHITE);
         cv_rect(190, 5, 44, 7, track_surface[t]);
         cv_rect(190, 5, meter, 7, color);
         if (peak) cv_rect(190 + (int)(fm_sqrtf(peak * (1.0f / 160.0f)) * 43.0f), 5, 1, 7, C_WHITE);
-        for (unsigned col = 0; col < 16u && first + col < length; ++col) {
-            int x = 34 + (int)col * 12;
-            cv_rect(x, 17, 11, 15, track_surface[t]);
-            if (!(col & 3u)) cv_rect(x, 17, col ? 1 : 2, 15, track_rule[t]);
+        int playhead = run ? 58 : 34;
+        int origin = playhead - (int)cursor;
+        int first_column = run ? -3 : 0;
+        for (int col = first_column; col < 17; ++col) {
+            if (!run && first + (unsigned)col >= length) break;
+            unsigned index = (unsigned)(((int)first + col) % (int)length + (int)length) % length;
+            int x = origin + col * 12;
+            int start = clamp(x, 34, 226), end = clamp(x + 11, 34, 226);
+            if (end > start) cv_rect(start, 17, end - start, 15, track_surface[t]);
+            if (!(index & 3u) && x >= 34 && x < 225)
+                cv_rect(x, 17, (index & 15u) ? 1 : 2, 15, track_rule[t]);
         }
         unsigned base = RATE * 15u / bpm;
-        for (unsigned col = 0; col < 16u && first + col < length; ++col) {
-            unsigned index = first + col;
+        int first_note = run ? (t == DRUMS ? -4 : -(int)length) : 0;
+        unsigned index = run ? (unsigned)(((int)first + first_note % (int)length + (int)length) % (int)length) : first;
+        for (int col = first_note; col < 17; ++col) {
+            if (!run && first + (unsigned)col >= length) break;
             for (unsigned lane = 0; lane < lanes; ++lane) {
                 unsigned word = event_get(t, index, lane);
                 if (!(word & ACTIVE)) continue;
@@ -3938,24 +4072,37 @@ static void draw_home_sequences(void)
                 unsigned swing_samples = base * swing / 200u;
                 unsigned span = index & 1u ? base - swing_samples : base + swing_samples;
                 unsigned gate = duration ? duration * NOTE_DURATION_UNIT : span * ((word >> 16) & 255u) / 192u;
-                int x = 34 + (int)col * 12 + (int)(timing * 12u / 16u);
+                int x = origin + col * 12 + (int)(timing * 12u / 16u);
                 int y = 29 - (int)((word & NOTES) % 12u);
                 int width = held_note_width(gate, index, base, span * timing / 16u) * 12 / 14;
                 uint16_t ink = color;
                 unsigned id = 1u + row * STEPS + index;
                 for (unsigned v = 0; v < count; ++v)
                     if (active[v] == id) { ink = C_WHITE; break; }
-                cv_rect(x, y, clamp(width, 2, 226 - x), 2, ink);
+                int start = clamp(x, 34, 226), end = clamp(x + (width > 2 ? width : 2), 34, 226);
+                if (end > start) cv_rect(start, y, end - start, 2, ink);
             }
+            if (++index == length) index = 0;
         }
-        if (run) cv_rect(34 + (int)cursor, 17, 1, 15, C_WHITE);
+        if (run) cv_rect(playhead, 17, 1, 15, C_WHITE);
         cv_blit(0, 33 + (int)t * 36);
     }
     if (redraw_footer) {
     cv_begin(240, 27, C_BLACK);
-    cv_text(5, 5, &FONT_B, rec_running ? "REC" : run ? "PLAY" : "STOP", C_WHITE);
-    cv_text(85, 5, &FONT_B, "1/16", C_WHITE);
-    cv_text(149, 5, &FONT_B, "SELECT TRK", track_color[selection]);
+    uint16_t accent = track_color[selection];
+    unsigned level = percent_from_byte((selected_mix >> 16) & 255u);
+    unsigned length = pattern_length(selected_mix);
+    int pan = pan_percent((selected_mix >> 8) & 255u);
+    decimal(number, level);
+    draw_performance_knob(0, "LEVEL", number, (int)level * 2 - 100, accent);
+    decimal(number, length);
+    draw_performance_knob(60, "STEPS", number, length <= 16 ? -100 : length <= 32 ? 0 : 100, accent);
+    number[0] = pan < 0 ? 'L' : 'R';
+    decimal(number + 1, (unsigned)(pan < 0 ? -pan : pan));
+    draw_performance_knob(120, "PAN", pan ? number : "CTR", pan, accent);
+    number[0] = 'G';
+    decimal(number + 1, swing);
+    draw_performance_knob(180, "SWING", number, (int)swing * 200 / 70 - 100, accent);
     cv_blit(0, 213);
     }
     home_idle_valid = 1;
@@ -3984,8 +4131,22 @@ static void draw_fm_routing(unsigned selected, unsigned algorithm, uint32_t conf
     unsigned energy = track_energy[selected];
     uint16_t route = live && energy > 6u ? color : track_rule[selected];
     cv_rect(9, 36, 216, 1, track_surface[selected]);
-    for (unsigned edge = 0; edge < sizeof serial / sizeof serial[0]; ++edge)
-        cv_line(x[serial[edge][0]], 16, x[serial[edge][1]], 16, route);
+    for (unsigned edge = 0; edge < sizeof serial / sizeof serial[0]; ++edge) {
+        unsigned source = serial[edge][0], target = serial[edge][1];
+        int left = x[target], right = x[source];
+        int old_y = 16;
+        for (int i = 1; i <= 6; ++i) {
+            int y = 16 - i * (6 - i) / 2;
+            cv_line(left + (right - left) * (i - 1) / 6, old_y,
+                left + (right - left) * i / 6, y, route);
+            old_y = y;
+        }
+        if (live && (live->operator_mask & (1u << source)) && live->operators[source].gain > 0.02f) {
+            unsigned phase = (plat_ms() / 35u) % 6u;
+            int y = 16 - (int)(phase * (6u - phase)) / 2;
+            cv_rect(right - (right - left) * (int)phase / 6, y, 2, 2, C_WHITE);
+        }
+    }
     const int modulation = algorithm == 1u ? 5 : 3;
     cv_line(x[modulation], 9, x[modulation], 2, route);
     cv_line(x[modulation], 2, x[2], 2, route);
@@ -4014,8 +4175,13 @@ static void draw_panel(void)
 {
     unsigned selected = (unsigned)slap_ui.track;
     if (selected >= TRACKS) return;
-    if (slap_ui.page == PATCH && (!edit_page || selected == DRUMS)) {
+    if (slap_ui.page == PATCH && (edit_page == SOUND_LAB_MAIN || !edit_page || selected == DRUMS)) {
         unsigned patch = tracks[selected].patch, group = patch_group[selected];
+        if (edit_page == SOUND_LAB_MAIN) {
+            unsigned decay = selected == DRUMS ? slap_fx_value(selected, 5, 0) : tracks[selected].envelope >> 8 & 127u;
+            group = slap_fx_value(selected, 1, 0) | slap_fx_value(selected, 1, 3) << 8 |
+                decay << 16 | slap_fx_value(selected, 8, 0) << 24;
+        }
         if (browser_valid && selected == browser_track && patch == browser_patch &&
             group == browser_group && tempo == browser_tempo && edit_page == browser_page) return;
         browser_valid = 1;
@@ -4084,9 +4250,9 @@ static void draw_panel(void)
         char level[12], other[12];
         switch (settings_section) {
         case PREF_AUDIO:
-            labels[0] = "OUTPUT"; labels[1] = "SPEAKER"; labels[2] = "AUTO LEVEL"; labels[3] = "AUTO MIX";
+            labels[0] = "OUTPUT"; labels[1] = "LISTENING"; labels[2] = "AUTO LEVEL"; labels[3] = "AUTO MIX";
             decimal(level, 100u - output_trim * 20u);
-            values[0] = level; values[1] = speaker_mode ? "OPTIMIZED" : "FLAT";
+            values[0] = level; values[1] = speaker_mode ? "FM-1 SPEAKER" : "HEADPHONES / AUDIO OUT";
             values[2] = auto_level_off ? "OFF" : "ON"; values[3] = auto_mix ? "ON" : "OFF";
             break;
         case PREF_METRO:
@@ -4181,9 +4347,6 @@ static void draw_panel(void)
         return;
     }
     if (slap_ui.page == GLOBAL || slap_ui.page == MIXER || slap_ui.page == RECORD) {
-        static const char *const mixer_labels[] = {"LEVEL", "PAN", "SOLO", "DUCK"};
-        unsigned values[] = {percent_from_byte((settings >> 16) & 255u), (settings >> 8) & 255u,
-            (mixer_solo >> selected) & 1u, selected < DRUMS ? mixer_duck[selected] : 0};
         const char *patch_name = selected == DRUMS ? drum_kit_name(tracks[selected].patch) :
             slap_patches[tracks[selected].patch].name;
         cv_begin(240, 40, background);
@@ -4410,17 +4573,19 @@ static void draw_panel(void)
         }
         cv_begin(240, 44, background);
         if (slap_ui.page == MIXER) {
-            for (unsigned k = 0; k < 4; ++k) {
-                int x = 8 + (int)k*58;
-                cv_text(x, 0, &FONT_XS, mixer_labels[k], C_WHITE);
-                if (k == 1) {
-                    int pan = pan_percent(values[k]);
-                    if (pan) {
-                        number[0] = pan < 0 ? 'L' : 'R';
-                        decimal(number + 1, (unsigned)(pan < 0 ? -pan : pan));
-                    } else decimal(number, 0);
-                } else decimal(number, values[k]);
-                cv_text(x, 16, &FONT_M, number, c);
+            unsigned solo = (mixer_solo >> selected) & 1u;
+            draw_performance_knob(0, "SOLO", solo ? "ON" : "OFF", solo ? 100 : -100, c);
+            if (selected < DRUMS) {
+                unsigned duck = mixer_duck[selected];
+                decimal(number, duck);
+                draw_performance_knob(60, "DUCK", number, (int)duck * 2 - 100, c);
+            } else cv_text(67, 9, &FONT_XS, "SOURCE", c);
+            for (unsigned k = 0; k < 2; ++k) {
+                int filter = performance_filter[k ? selected : TRACKS];
+                int x = 120 + (int)k * 60;
+                decimal(number, (unsigned)(filter < 0 ? -filter : filter));
+                draw_performance_knob(x, k ? "TRACK" : "ALL", number, filter, c);
+                cv_text(x + 6, 28, &FONT_XS, filter < 0 ? "LOW PASS" : filter > 0 ? "HI PASS" : "NEUTRAL", c);
             }
         } else if (slap_ui.page == GLOBAL) {
 #if FM1B_CPU2 && !defined(PLAT_WEB)
@@ -4530,6 +4695,28 @@ static void draw_panel(void)
     }
     if (slap_ui.page == PATCH) {
         cv_begin(240, 40, background);
+        if (edit_page == SOUND_LAB_MAIN) {
+            cv_text(8, 5, &FONT_B, selected == DRUMS ? "DRUM KIT" : slap_engine_names[patch->engine], c);
+            cv_text(8, 25, &FONT_XS, "ALGO +1 BROWSER / PRESETS PATCH", C_WHITE);
+            cv_blit(0, 80);
+            cv_begin(240, 40, background);
+            const unsigned values[] = {
+                slap_fx_value(selected, 1, 0), slap_fx_value(selected, 1, 3),
+                selected == DRUMS ? slap_fx_value(selected, 5, 0) : tracks[selected].envelope >> 8 & 127u,
+                slap_fx_value(selected, 8, 0)
+            };
+            const char *const labels[] = {"FILTER", "RES", selected == DRUMS ? "ROOM" : "DECAY", "DRIVE"};
+            for (unsigned k = 0; k < 4; ++k) {
+                decimal(number, values[k]);
+                draw_performance_knob((int)k * 60, labels[k], number, (int)(values[k] * 200u / 127u) - 100, c);
+            }
+            cv_blit(0, 120);
+            for (int y = 160; y < 240; y += 40) {
+                cv_begin(240, 40, background);
+                cv_blit(0, y);
+            }
+            return;
+        }
         if (edit_page && selected < DRUMS && (patch->engine == 0u || patch->engine == 2u)) {
             uint32_t config = track_timbre[selected];
             if (patch->engine == 0u && edit_page == 4u) {
@@ -4607,33 +4794,39 @@ static void draw_panel(void)
                 cv_text(8, 21, &FONT_XS, routing[algorithm], C_WHITE);
             } else {
                 cv_text(8, 2, &FONT_B, "WAVETABLE", c);
-                cv_text(8, 22, &FONT_XS, "K1 MORPH  K2 MOVEMENT", C_WHITE);
+                cv_text(8, 22, &FONT_XS, "ALGO PAGE / PRESETS PATCH", C_WHITE);
                 cv_blit(0, 80);
-                cv_begin(240, 40, background);
                 unsigned morph = config ? config & 127u : patch->color;
-                cv_rect(8, 16, 222, 1, track_rule[selected]);
                 unsigned movement = config ? config >> 8 & 127u : patch->motion;
                 const volatile SlapSynth *live = graph_voice(selected, 2);
-                float phase = live ? live->slow : (plat_ms() % 10000u) *
-                    ((0.19f + movement * (2.2f / 127.0f)) / 1000.0f);
-                phase -= fm_floorf(phase);
+                float phase = live ? live->slow : 0.0f;
                 float inc = live ? live->inc : 0.0f;
                 unsigned band = inc < 0.059f ? 0u : inc < 0.137f ? 1u : 2u;
                 float preview = slap_wave_scan(morph * (1.0f / 127.0f),
                     movement * (1.0f / 127.0f), phase);
-                int previous = 16;
-                for (unsigned point = 0; point <= 112u; ++point) {
-                    int y = 16 - (int)(slap_wave_preview(preview, band, point * 128u / 112u) * 14.0f);
-                    if (point) cv_line(8 + (int)(point - 1u) * 2, previous, 8 + (int)point * 2, y, c);
-                    previous = y;
+                int8_t waveform[113];
+                for (unsigned point = 0; point <= 112u; ++point)
+                    waveform[point] = (int8_t)(40 - (int)(slap_wave_preview(preview, band, point * 128u / 112u) * 34.0f));
+                for (int strip = 0; strip < 2; ++strip) {
+                    cv_begin(240, 40, background);
+                    for (int x = 8; x < 233; x += 28) cv_rect(x, 0, 1, 40, track_surface[selected]);
+                    cv_rect(8, 40 - strip * 40, 224, 1, track_rule[selected]);
+                    for (unsigned point = 1; point <= 112u; ++point)
+                        cv_line(6 + (int)point * 2, waveform[point - 1u] - strip * 40,
+                            8 + (int)point * 2, waveform[point] - strip * 40, c);
+                    if (strip) cv_rect(8, 37, (int)(preview * 74.0f), 2, c);
+                    cv_blit(0, 120 + strip * 40);
                 }
-                cv_rect(8, 37, 222, 2, track_surface[selected]);
-                cv_rect(8, 37, (int)(preview * 74.0f), 2, c);
-                cv_blit(0, 120);
                 cv_begin(240, 40, background);
-                cv_rect(8, 5, 222, 10, track_surface[selected]);
-                cv_rect(8, 5, (int)(movement * 222u / 127u), 10, c);
-                cv_text(8, 22, &FONT_XS, "SCAN MOVEMENT", C_WHITE);
+                unsigned values[] = {morph, movement, tracks[selected].envelope >> 8 & 127u,
+                    slap_fx_value(selected, 8, 0)};
+                const char *const labels[] = {"MORPH", "SCAN", "DECAY", "DRIVE"};
+                for (unsigned k = 0; k < 4; ++k) {
+                    decimal(number, values[k]);
+                    draw_performance_knob((int)k * 60, labels[k], number, (int)(values[k] * 200u / 127u) - 100, c);
+                }
+                cv_blit(0, 200);
+                return;
             }
             cv_blit(0, 160);
             cv_begin(240, 40, background);
@@ -4782,12 +4975,18 @@ static void draw_panel(void)
                 }
             }
             if (fpage == 2) {
+                unsigned state = slap_fx_slicer_state(selected);
                 for (int i = 0; i < 16; ++i) {
                     unsigned hit = slap_fx_slicer_cell(selected, (unsigned)i);
                     int y = (hit ? 17 : 75) - strip * 36;
                     cv_rect(8 + i * 14, y, 11, 13, c);
-                    if (i == (int)(play_step & 15u) && playing)
-                        cv_rect(8 + i * 14, 0, 1, 36, C_WHITE);
+                    if ((state & 16u) && i == (int)(state & 15u))
+                        cv_rect(8 + i * 14, 0, 2, 36, C_WHITE);
+                }
+                if (strip == 1) {
+                    const char *status = !(state & 16u) ? "OFF" : (state & 64u) ? "CAPTURE" :
+                        (state & 128u) ? "REPLAY" : (state & 32u) ? "GATE OPEN" : "GATE CLOSED";
+                    cv_text(8, 13, &FONT_XS, status, C_WHITE);
                 }
             } else {
                 for (unsigned i = 0; i < SLAP_FX_PLOT; ++i) {
@@ -5175,6 +5374,10 @@ int app_expect(const char *name, int *result)
             (int)(melodic_duration[slap_ui.track][slap_ui.lane][slap_ui.step] * NOTE_DURATION_UNIT * 10u / (RATE / 100u)) : 0;
     else if (name_matches(name, "level")) *result = (int)percent_from_byte((tracks[slap_ui.track].mix >> 16) & 255u);
     else if (name_matches(name, "pan_percent")) *result = pan_percent((tracks[slap_ui.track].mix >> 8) & 255u);
+    else if (name_matches(name, "all_filter")) *result = performance_filter[TRACKS];
+    else if (name_matches(name, "track_filter")) *result = performance_filter[slap_ui.track];
+    else if (name_matches(name, "solo")) *result = (mixer_solo >> slap_ui.track) & 1u;
+    else if (name_matches(name, "swing")) *result = swing;
     else if (name_matches(name, "duck")) *result = slap_ui.track < DRUMS ? mixer_duck[slap_ui.track] : 0;
     else if (name_matches(name, "auto_mix")) *result = (int)auto_mix;
     else if (name_matches(name, "visual_left")) *result = visual_rms[0] > 0.000001f;
@@ -5234,6 +5437,10 @@ int app_expect(const char *name, int *result)
     else if (name_matches(name, "step_mode")) *result =
         timing_group_get(pattern_row(slap_ui.track, slap_ui.lane), slap_ui.step) / TIMING_GROUPS;
     else if (name_matches(name, "record_track")) *result = (int)rec_track + 1;
+    else if (name_matches(name, "edit_filter")) *result = slap_fx_value(slap_ui.track, 1, 0);
+    else if (name_matches(name, "edit_res")) *result = slap_fx_value(slap_ui.track, 1, 3);
+    else if (name_matches(name, "edit_decay")) *result = tracks[slap_ui.track].envelope >> 8 & 127u;
+    else if (name_matches(name, "edit_drive")) *result = slap_fx_value(slap_ui.track, 8, 0);
     else if (name_matches(name, "fx_k1")) *result = slap_fx_value(slap_ui.track, slap_ui.fx_page, 0);
     else if (name_matches(name, "patch")) *result = (int)tracks[slap_ui.track].patch;
     else if (name_matches(name, "env_attack")) *result = tracks[slap_ui.track].envelope & 255u;
@@ -5475,6 +5682,11 @@ STUDIO_EXPORT void studio_set_mixer(uint32_t solo, uint32_t ducks, uint32_t mode
         mixer_duck[t] = (uint8_t)clamp((int)(ducks >> (t * 8u) & 255u), 0, 100);
     auto_level_off = !(modes & 1u);
     auto_mix = !!(modes & 2u);
+}
+
+STUDIO_EXPORT void studio_set_performance_filter(uint32_t track, int32_t value)
+{
+    if (track <= TRACKS) performance_filter[track] = (int8_t)clamp(value, -100, 100);
 }
 
 STUDIO_EXPORT uint32_t studio_track_energy(uint32_t track)

@@ -753,6 +753,18 @@ void slap_fx_mix_sample(float *left, float *right)
     *right += (wet - (stereo_stop ? side : 0.0f) - *right) * mix_wet;
 }
 
+unsigned slap_fx_slicer_state(unsigned track)
+{
+    if (track >= SLAP_FX_TRACKS) return 0;
+    const volatile Fx *current = &fx[track];
+    unsigned mode = current->mode;
+    unsigned step = current->gate_step & 15u;
+    unsigned open = current->pattern >> (15u - step) & 1u;
+    unsigned captured = current->capture_count;
+    return step | (mode != 0) << 4 | open << 5 |
+        (mode == 2u && open) << 6 | (mode == 2u && !open && captured >= 2u * SLICE_RAMP / 4u) << 7;
+}
+
 unsigned slap_fx_slicer_cell(unsigned track, unsigned step)
 {
     return (slicer_patterns[slap_fx_value(track, SLICER, 1)] >> (15u - (step & 15u))) & 1u;

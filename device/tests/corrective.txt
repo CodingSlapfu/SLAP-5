@@ -16,6 +16,7 @@ release EDIT
 expect page 11
 turn SELECT 1
 expect track 2
+tap HOME
 turn K1 -2
 expect level 65
 press REC
@@ -58,7 +59,7 @@ expect track 2
 expect lfo_rate 42
 tap HOME
 shot home-five-tracks.png
-turn K1 -100
+turn K3 -100
 tap HOME
 turn SELECT 3
 shot solar-system.png
