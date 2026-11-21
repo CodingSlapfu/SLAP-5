@@ -1,0 +1,56 @@
+name: Publish SLAP-5 0.1.24 hardware test
+on:
+  push:
+    branches: [slap-5-red-alert-dsp]
+    paths: ['.github/workflows/engineering-release-0124-hardware-testing.yml']
+permissions:
+  actions: read
+  contents: write
+concurrency:
+  group: slap-5-0.1.24-hardware-testing
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify exact source, package and recovery
+        run: |
+          set -eu
+          source_sha=9988b9fb647848d72931ebcc5e204a26281b942a
+          test "$(gh api repos/"$GITHUB_REPOSITORY"/actions/runs/44884481053 --jq '.head_sha + ":" + .conclusion')" = "$source_sha:success"
+          git fetch --no-tags --depth=1 origin "$source_sha"
+          git diff --exit-code "$source_sha" HEAD -- device vendor site tools
+          candidate="$RUNNER_TEMP/candidate"
+          harness="$RUNNER_TEMP/harness"
+          mkdir -p "$candidate" "$harness/tests" "$harness/protocol"
+          archive=engineering/SLAP-5-0.1.24-hardware-testing.tar.xz
+          echo "9e9ad0ed75d70fa87d2f121c5ccdc8d8bdc646f6b7bfe5ad4ef45b288ab22d77  $archive" | sha256sum -c
+          tar -xJf "$archive" -C "$candidate"
+          cp engineering/SLAP-5-0.1.24-Studio.zip "$candidate/"
+          (cd "$candidate" && sha256sum -c SHA256SUMS-0.1.24 && unzip -tq SLAP-5-0.1.24-Studio.zip)
+          cp site/flash-release.mjs site/flash-transport.mjs site/release.json "$candidate/release-testing.json" "$harness/"
+          cp site/tests/flash.mjs "$harness/tests/"
+          cp vendor/fm1-base/web/fm1ota.js vendor/fm1-base/web/fm1ports.js vendor/fm1-base/web/fm1pkg.js "$harness/protocol/"
+          printf '{"type":"module"}\n' > "$harness/package.json"
+          node "$harness/tests/flash.mjs" "$candidate/SLAP-5-0.1.24.fwsc" 0.1.24
+          tools/verify-rollback.sh "$candidate/SLAP-5-0.1.24.fwsc"
+      - name: Publish and verify experimental assets
+        run: |
+          set -eu
+          tag=v0.1.24-hardware-testing
+          candidate="$RUNNER_TEMP/candidate"
+          verify="$RUNNER_TEMP/verify"
+          mkdir "$verify"
+          gh release create "$tag" --target "$GITHUB_SHA" --draft --prerelease --latest=false \
+            --title 'SLAP-5 0.1.24 Experimental Hardware Testing' \
+            --notes-file evidence/release-0.1.24-hardware-testing.md \
+            "$candidate/SLAP-5-0.1.24.fwsc" "$candidate/SLAP-5-0.1.24-Studio.zip" "$candidate/SHA256SUMS-0.1.24"
+          gh release download "$tag" --dir "$verify"
+          cmp "$candidate/SHA256SUMS-0.1.24" "$verify/SHA256SUMS-0.1.24"
+          (cd "$verify" && sha256sum -c SHA256SUMS-0.1.24)
+          gh release edit "$tag" --draft=false --prerelease --latest=false
