@@ -2854,13 +2854,13 @@ void app_input_only(void)
     if ((slap_ui.page != RECORD && slap_ui.page != HOME) || recording ||
         (clear_mode && plat_ms() - clear_armed_at > 2200u)) clear_mode = 0;
     if (slap_ui.page == SEQ && (buttons & (1u << B_SEL))) {
-        if (slap_ui.track == DRUMS && (pressed & (1u << B_ARP))) {
+        if (slap_ui.track == DRUMS && (pressed & (1u << B_GLO))) {
             unsigned at = (unsigned)slap_ui.step;
             if (at < LIVE_LOOP_MAX && !recording && !rec_running) {
                 drum_step_locks[slap_ui.lane][at / 32u] ^= 1u << (at & 31u);
                 ++pattern_revision[DRUMS];
             }
-            pressed &= ~(1u << B_ARP);
+            pressed &= ~(1u << B_GLO);
         }
         unsigned edit = pressed & ((1u << B_EDIT) | (1u << B_LFO) |
             (1u << B_ENV) | (1u << B_OCTDN) | (1u << B_OCTUP));
@@ -3983,7 +3983,7 @@ static void draw_panel(void)
     const felucca_font_t *name_font = drum_sequence || text_w(&FONT_M, name) > 150 ? &FONT_B : &FONT_M;
     cv_text(8, 1, name_font, name, C_WHITE);
     if (drum_sequence) cv_text(8, 17, &FONT_XS, drum_step_locked(slap_ui.lane, slap_ui.step) ?
-        "LOCKED / SEL+ARP" : "SEL+ARP LOCK / SEQ GEN", c);
+        "LOCKED / SEL+GLO" : "SEL+GLO LOCK / SEQ GEN", c);
     decimal(number, position / 16u % 999u + 1u);
     cv_text(163, 5, &FONT_XS, "BAR", c);
     cv_text(190, 5, &FONT_XS, number, C_WHITE);

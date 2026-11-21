@@ -71,3 +71,27 @@ tap OCT-
 release REC
 wait 400
 expect playing 1
+tap PLAY
+tap SEQ
+turn SELECT 1
+press SEL
+turn SELECT 14
+release SEL
+key w0 down
+key w0 up
+expect pitch 51
+press SEL
+tap GLO
+release SEL
+tap SEQ
+tap PLAY
+tap SEL
+tap SEL
+wait 2300
+expect gen_count 4
+expect playing 1
+tap SEQ
+press SEL
+turn SELECT 14
+release SEL
+expect pitch 51
