@@ -87,3 +87,7 @@ Hold GLO for five seconds for callback and worker diagnostics. Move K3 on the di
 The native rebuild reproduced the archived package byte for byte. The loader simulator tested interrupted v0.1.26 → v0.1.29 and rollback v0.1.29 → v0.1.26, including app write limits, boot area, and song/settings preservation. The dedicated update-record sector remains available for interrupted recovery. The browser harness passed staging, disconnect, wrong-loader, wrong-final-identity, package corruption and incompatible package checks. The deployed manifest pins the package and accepts only running FM-1_75000126. The deterministic dual-core fixtures passed, including fallback and recovery. Physical Core 1 status, XRUNs and LCD timing remain owner test items.
 
 [On-device checklist](https://codingslapfu.github.io/SLAP-5/hardware-test-0.1.29.html) · [0.1.26 rollback package](https://codingslapfu.github.io/SLAP-5/SLAP-5-0.1.26.fwsc) · [Pages publication source](https://github.com/CodingSlapfu/SLAP-5/commit/1f515532aec24d466a980850c31a6ef771e03239)
+
+## Owner-tested v0.1.29 and the v0.1.30 follow-up
+
+The owner installed v0.1.29 and reported it is working well overall. The [v0.1.30 Nexus supplement](qualification-0.1.30.md) records the typography and layout changes, Sound Lab access, transport-driven Dancer, tape-effect fixes, host timing, verified rollback and the remaining FM-1 checks. The earlier 28 items remain the historical acceptance baseline.
