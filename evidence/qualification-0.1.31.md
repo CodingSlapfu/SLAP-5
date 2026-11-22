@@ -30,7 +30,7 @@ Candidate FM-1_75000131. Package SHA-256 `36676ae153435f065c99c2106bdccf43917f7c
 | 24 | Resources and timing | PARTIAL | Native uses 555,204/581,564 app bytes, 87,864/98,304 static RAM and 335,568/344,064 pool bytes, leaving 8,496 free. Host regressions passed. Native Core 1, XRUNs, LCD transfer time and latency remain unmeasured. |
 | 25 | Website and Studio | COMPLETE | Versioned WASM, fonts, instructions and 240×240 captures. Hosted Chromium run 44974277439 passed at the exact source. |
 | 26 | Backup and rollback | COMPLETE | Engineering ZIP checked and saved. Interrupted upgrade and rollback simulations retained protected regions and songs/settings byte-for-byte. |
-| 27 | Publication | PARTIAL | Versioned Pages source staged and promoted after the native, host, package, loader, browser and Studio gates passed. GitHub prerelease verifies downloaded assets before promotion. |
+| 27 | Publication | COMPLETE | Live experimental installer and manifest verified. The live package matches the audited SHA-256. GitHub prerelease published against the exact source checkpoint. |
 
 ## Graph acceptance
 
@@ -53,3 +53,5 @@ The original acceptance matrix remains in owner-master-acceptance.md. Host tests
 - Engineering archive: SLAP-5_0.1.31_Engineering.zip
 
 32 host fixtures passed. Separate EDIT entry/exit runs produced matching PCM at 112, 137 and 160 BPM on three tracks per tempo. The browser harness verified manifest identity and digest, rejected modified packages and wrong target identities, and simulated reconnect, lost USB and incorrect post-reboot identity. The native loader audit enforced application writes within `[0x4000, 0x93000)`, with the dedicated update-record sector available for recovery. It refused corrupted input and preserved the boot head and song/settings data.
+
+The live Pages package matched the audit byte-for-byte. The v0.1.30 rollback package matched its recorded digest. The [GitHub prerelease](https://github.com/CodingSlapfu/SLAP-5/releases/tag/v0.1.31-hardware-testing) is published with the same target identity and package digest. [Engineering backup](https://chatgpt.com/library?file_id=libfile_b3f05424ee148191bf51d4c3d2427501&account_id=personal).
