@@ -1,0 +1,37 @@
+wait 6100
+tap GLO
+turn ALGO 8
+turn K1 1
+turn SELECT 1
+turn K1 1
+turn ALGO 1
+turn K1 1
+turn SELECT 2
+turn K1 1
+midi FA 00 00
+wait 20
+midi-clock-burst 1
+expect step 0
+wait 117
+midi-clock-burst 6
+expect step 1
+expect midi_clock 1
+expect tempo >115
+expect tempo <125
+wait 117
+midi-clock-burst 6
+expect step 2
+wait 242
+midi-clock-burst 12
+wait 20
+expect step 4
+expect tempo >115
+expect tempo <125
+midi-clock-burst 30
+wait 35
+expect step 8
+expect midi_drops >0
+midi FC 00 00
+wait 12
+expect playing 0
+expect clocks_out 0

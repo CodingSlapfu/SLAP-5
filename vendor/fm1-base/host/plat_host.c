@@ -1514,6 +1514,18 @@ int main(int argc, char **argv)
             int room = atoi(a);
             usb_midi_room = room < 0 ? 0u : room > 64 ? 64u : (unsigned)room;
             run_ms(10);
+        } else if (!strcmp(cmd, "midi-clock-burst")) {
+            unsigned count = (unsigned)atoi(a);
+            if (count > MQ - (mi_w - mi_r)) {
+                fprintf(stderr, "line %d: MIDI clock burst exceeds fixture queue room\n", lineno);
+                ++fails;
+            } else {
+                for (unsigned i = 0; i < count; ++i) {
+                    min_q[mi_w % MQ] = 0xf80fu;
+                    min_port[mi_w++ % MQ] = PORT_USB;
+                }
+                run_ms(8);
+            }
         } else if (!strcmp(cmd, "midi")) {
             int dev = !strcmp(a, "BLE-DEV"), p = dev ? PORT_BLE : find_name(PORT_N, NPORTS, a);
             min_q[mi_w % MQ] = p < 0 ? mk_pkt(a, b, c) : mk_pkt(b, c, d) | (dev ? 0x10u : 0u);   /* cable 1 */

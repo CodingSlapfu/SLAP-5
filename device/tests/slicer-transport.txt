@@ -1,0 +1,46 @@
+wait 6100
+tap FX
+turn ALGO 2
+expect fx_page 3
+expect playing 0
+expect slicer_enabled 0
+turn K1 2
+turn K3 2
+wait 40
+expect slicer_enabled 1
+expect slicer_signal 0
+shot slicer-stopped.png
+tap PLAY
+expect playing 1
+key w0 down
+wait 250
+expect slicer_capture >0
+expect slicer_signal >0
+shot slicer-playing.png
+turn SELECT 1
+expect slicer_enabled 0
+expect slicer_capture 0
+turn SELECT -1
+expect slicer_enabled 1
+key w0 up
+tap PLAY
+expect playing 0
+tap HOME
+turn ALGO 25
+expect tempo 137
+tap PLAY
+expect playing 1
+tap FX
+expect fx_page 3
+expect slicer_enabled 1
+key w0 down
+wait 300
+expect slicer_capture >0
+shot slicer-restart.png
+key w0 up
+tap PLAY
+expect playing 0
+turn K1 -2
+wait 20
+expect slicer_enabled 0
+expect slicer_capture 0

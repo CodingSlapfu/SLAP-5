@@ -127,7 +127,8 @@ enum {
 static volatile uint32_t midi_options;
 static unsigned midi_rx_count, midi_tx_count, midi_drops;
 static unsigned midi_ext_step, midi_phase, midi_clock_seen, midi_clock_port;
-static uint32_t midi_last_clock, midi_clock_period, midi_clock_accum;
+static uint32_t midi_last_clock, midi_clock_period, midi_clock_accum, midi_clock_window;
+static unsigned midi_clock_intervals;
 static unsigned midi_sent_run, midi_tx_epoch, midi_link, midi_pending, midi_usb_ready;
 enum { MIDI_USB_VOICE = 2u, MIDI_PEDAL_HELD = 4u, MIDI_OWNER_MASK = 3u };
 static uint8_t midi_sustain[2][TRACKS];
@@ -144,7 +145,7 @@ static struct {
     uint16_t *duration;
     uint32_t start, step_ticks, word;
     uint16_t cell;
-    uint8_t pitch;
+    uint8_t pitch, owner;
 } held_record[VOICES];
 static uint8_t monitored_next_step[TRACKS];
 static volatile uint32_t metronome;
@@ -466,6 +467,7 @@ void app_init(void)
     uint32_t options = setting_bytes >= 16 && settings[0] == SETTINGS_TAG ? settings[3] : 0u;
     uint32_t duck = setting_bytes == 20 && settings[0] == SETTINGS_TAG ? settings[4] : 0u;
     midi_options = options >> 9;
+    midi_clock_window = midi_clock_intervals = 0;
     midi_pending = midi_phase = midi_ext_step = midi_clock_seen = midi_clock_period = 0;
     midi_last_clock = midi_clock_accum = midi_sent_run = midi_tx_epoch = midi_link = midi_usb_ready = 0;
     midi_rx_count = midi_tx_count = midi_drops = 0;
@@ -847,7 +849,7 @@ static void trigger_voice(unsigned track, unsigned pitch, unsigned velocity, uin
     if (spike_enabled) spike_current[SPIKE_NOTE_ON] += plat_ticks24() - started;
 }
 
-static void record_input_origin(unsigned track, unsigned pitch, unsigned velocity, unsigned origin, int finish_previous);
+static void record_input_origin(unsigned track, unsigned pitch, unsigned velocity, unsigned origin, int finish_previous, unsigned owner);
 
 static void trigger_delayed(unsigned track, unsigned pitch, unsigned velocity, uint32_t duration,
                             int manual, unsigned offset, int split_key)
@@ -862,7 +864,7 @@ static void trigger_delayed(unsigned track, unsigned pitch, unsigned velocity, u
         correct = 0;
     }
     if (track == DRUMS || (!correct && !chord)) {
-        if (split_key >= 0) record_input_origin(track, pitch, velocity, pitch, 1);
+        if (split_key >= 0) record_input_origin(track, pitch, velocity, pitch, 1, 1u);
         trigger_voice(track, pitch, velocity, duration, manual, pitch, offset);
         return;
     }
@@ -886,7 +888,7 @@ static void trigger_delayed(unsigned track, unsigned pitch, unsigned velocity, u
         if (pitches[i] == previous) continue;
         unsigned delay = strum && count > 1 ? RATE * (99u + strum) / 1000u * i / (count - 1u) : 0u;
         unsigned note_velocity = velocity * (i ? 75u : 100u) / 100u;
-        if (split_key >= 0) record_input_origin(track, pitches[i], note_velocity, pitch, i == 0);
+        if (split_key >= 0) record_input_origin(track, pitches[i], note_velocity, pitch, i == 0, 1u);
         trigger_voice(track, pitches[i], note_velocity, duration, manual, pitch, offset + delay);
         previous = pitches[i];
     }
@@ -979,38 +981,37 @@ static void midi_sequence_note(unsigned track, unsigned word, unsigned delay, un
     ++midi_drops;
 }
 
-static void midi_sequence_flush(uint32_t now)
+static void midi_sequence_flush(uint32_t now, unsigned pass)
 {
     uint32_t options = midi_options;
     unsigned link = plat_midi_out_link();
     unsigned changed = link != midi_link || !midi_usb_ready;
     unsigned flush = changed || midi_tx_epoch != sequence_epoch || !playing ||
         (options & (MIDI_CUSTOM | MIDI_TX)) != (MIDI_CUSTOM | MIDI_TX);
-    for (unsigned pass = 0; pass < 2u; ++pass)
-        for (unsigned i = 0; i < sizeof midi_notes / sizeof midi_notes[0]; ++i) {
-            MidiNote *note = &midi_notes[i];
-            if (!note->state) continue;
-            unsigned muted = flush || (tracks[note->track].mix & (1u << 24)) ||
-                (mixer_solo && !(mixer_solo & (1u << note->track))) ||
-                !(options & (1u << (MIDI_TRACK_SHIFT + note->track))) ||
-                note->channel != midi_base_channel(options) + note->track;
-            unsigned address = (uint32_t)note->channel << 8 | (uint32_t)note->pitch << 16;
-            if (!pass && note->state == 2u && (muted || (int32_t)(now - note->off) >= 0)) {
-                // Retry pending offs under backpressure. On a new link, flush old channels first.
-                if (midi_has_output_owner(note->channel, note->pitch, note, NKEYS) ||
-                    midi_send_checked(0x8008u | address)) { note->state = 0; --midi_pending; }
-            } else if (!pass && note->state == 1u && muted) { note->state = 0; --midi_pending; }
-            else if (pass && note->state == 1u && (int32_t)(now - note->on) >= 0) {
-                if (midi_has_output_owner(note->channel, note->pitch, note, NKEYS) ||
-                    midi_send_checked(0x9009u | address | (uint32_t)note->velocity << 24))
-                    note->state = 2;
-                else {
-                    ++midi_drops;
-                    note->state = 0;
-                    --midi_pending;
-                }
+    for (unsigned i = 0; i < sizeof midi_notes / sizeof midi_notes[0]; ++i) {
+        MidiNote *note = &midi_notes[i];
+        if (!note->state) continue;
+        unsigned muted = flush || (tracks[note->track].mix & (1u << 24)) ||
+            (mixer_solo && !(mixer_solo & (1u << note->track))) ||
+            !(options & (1u << (MIDI_TRACK_SHIFT + note->track))) ||
+            note->channel != midi_base_channel(options) + note->track;
+        unsigned address = (uint32_t)note->channel << 8 | (uint32_t)note->pitch << 16;
+        if (!pass && note->state == 2u && (muted || (int32_t)(now - note->off) >= 0)) {
+            // Retry pending offs under backpressure. On a new link, flush old channels first.
+            if (midi_has_output_owner(note->channel, note->pitch, note, NKEYS) ||
+                midi_send_checked(0x8008u | address)) { note->state = 0; --midi_pending; }
+        } else if (!pass && note->state == 1u && muted) { note->state = 0; --midi_pending; }
+        else if (pass && note->state == 1u && (int32_t)(now - note->on) >= 0) {
+            if (midi_has_output_owner(note->channel, note->pitch, note, NKEYS) ||
+                midi_send_checked(0x9009u | address | (uint32_t)note->velocity << 24))
+                note->state = 2;
+            else {
+                ++midi_drops;
+                note->state = 0;
+                --midi_pending;
             }
         }
+    }
     midi_link = link;
     midi_tx_epoch = sequence_epoch;
 }
@@ -1383,16 +1384,17 @@ static void begin_recording(void)
     quick_wait_note = 0;
 }
 
-static void record_note_off(unsigned track, unsigned pitch)
+static void record_note_off(unsigned track, unsigned pitch, unsigned owner)
 {
     if (!rec_running || track != rec_track) return;
     for (unsigned slot = 0; slot < VOICES; ++slot)
-        if (held_record[slot].cell && held_record[slot].pitch == pitch)
+        if (held_record[slot].cell && held_record[slot].owner == owner &&
+            (pitch >= 128u || held_record[slot].pitch == pitch))
             finish_record_note(slot, record_clock);
 }
 
 /* Single audio-thread writer for live input. A filled two-note step is left intact. */
-static void record_input_origin(unsigned track, unsigned pitch, unsigned velocity, unsigned source_pitch, int finish_previous)
+static void record_input_origin(unsigned track, unsigned pitch, unsigned velocity, unsigned source_pitch, int finish_previous, unsigned owner)
 {
     if (!recording || track != rec_track) return;
     if (!playing) {
@@ -1454,7 +1456,7 @@ static void record_input_origin(unsigned track, unsigned pitch, unsigned velocit
     }
     if (rec_loop && (event_get(track, step, lane) & ACTIVE)) return;
     unsigned cell = 1u + (track * (DRUM_LANES + 1u) + lane) * STEPS + step;
-    if (finish_previous) record_note_off(track, source_pitch);
+    if (finish_previous) record_note_off(track, source_pitch, owner);
     unsigned available = VOICES;
     for (unsigned slot = 0; slot < VOICES; ++slot) {
         if (held_record[slot].cell == cell) {
@@ -1478,6 +1480,7 @@ static void record_input_origin(unsigned track, unsigned pitch, unsigned velocit
     held_record[available].step_ticks = step_duration && until_step ? step_duration : RATE * 15u / tempo;
     held_record[available].word = word;
     held_record[available].pitch = source_pitch;
+    held_record[available].owner = (uint8_t)owner;
     /* The live input has already sounded. Skip its first sequencer pass only. */
     if (position == step_number) monitored_next_step[track] |= 1u << lane;
     ++recorded_events;
@@ -1491,7 +1494,7 @@ static unsigned studio_notes_read, studio_notes_write;
 
 static void record_input(unsigned track, unsigned pitch, unsigned velocity)
 {
-    record_input_origin(track, pitch, velocity, pitch, 1);
+    record_input_origin(track, pitch, velocity, pitch, 1, 1u);
 }
 
 static unsigned midi_external(void)
@@ -1502,11 +1505,11 @@ static unsigned midi_external(void)
 static void midi_note_off(unsigned source, unsigned track, unsigned pitch, unsigned immediate)
 {
     unsigned owner = MIDI_USB_VOICE + source;
+    record_note_off(track, pitch, owner);
     for (unsigned i = 0; i < VOICES; ++i) {
         Voice *v = &voices[i];
         if (!v->age || (v->manual & MIDI_OWNER_MASK) != owner || v->track != track ||
             (pitch < 128u && v->origin != pitch)) continue;
-        record_note_off(track, v->origin);
         if (immediate) v->age = 0;
         else if (track != DRUMS || v->kit < DRUM_LEGACY_KITS) {
             if (midi_sustain[source][track]) v->manual |= MIDI_PEDAL_HELD;
@@ -1565,18 +1568,11 @@ static void midi_realtime(unsigned status, unsigned source)
     uint32_t now = plat_ms();
     if (midi_clock_seen && source != midi_clock_port) return;
     if (status == 0xf8u) {
-        if (midi_clock_seen) {
-            unsigned elapsed = now - midi_last_clock;
-            if (elapsed >= 9u && elapsed <= 65u) {
-                unsigned sample = elapsed << 8;
-                midi_clock_period = midi_clock_period ? (7u * midi_clock_period + sample) / 8u : sample;
-            }
-        }
+        if (!midi_clock_intervals) midi_clock_window = now;
+        ++midi_clock_intervals;
         midi_clock_port = source;
         midi_clock_seen = 1;
         midi_last_clock = now;
-        if (midi_clock_period)
-            tempo = (unsigned)clamp((int)((640000u + midi_clock_period / 2u) / midi_clock_period), 40, 240);
         if (playing && ++midi_phase >= 6u) {
             midi_phase = 0;
             if (midi_ext_step < 4u) ++midi_ext_step;
@@ -1604,6 +1600,25 @@ static void midi_realtime(unsigned status, unsigned source)
                 if (!voices[i].manual) voices[i].releasing = 1;
         }
     }
+}
+
+static void midi_measure_clock(void)
+{
+    /* Measure once after draining input. A USB burst contributes all of its
+     * pulses to the interval, including packets with the same timestamp. */
+    if (midi_clock_intervals < (midi_clock_period ? 25u : 7u)) return;
+    unsigned intervals = midi_clock_intervals - 1u;
+    unsigned elapsed = midi_last_clock - midi_clock_window;
+    if (elapsed < intervals * 10u) {
+        // A burst at initial lock has no usable preceding timestamp.
+        if (elapsed) return;
+    } else if (elapsed <= intervals * 63u) {
+        unsigned sample = (elapsed * 256u + intervals / 2u) / intervals;
+        midi_clock_period = midi_clock_period ? (3u * midi_clock_period + sample) / 4u : sample;
+        tempo = (unsigned)clamp((int)((640000u + midi_clock_period / 2u) / midi_clock_period), 40, 240);
+    }
+    midi_clock_window = midi_last_clock;
+    midi_clock_intervals = 1;
 }
 
 static void midi_transport_out(unsigned frames)
@@ -1636,7 +1651,7 @@ static void read_notes(void)
             record_input(rec_track, pitch, velocity);
             trigger(rec_track, pitch, velocity, 0, 1);
         } else {
-            record_note_off(rec_track, pitch);
+            record_note_off(rec_track, pitch, 1u);
             release_note(rec_track, pitch);
         }
     }
@@ -1681,7 +1696,7 @@ static void read_notes(void)
                         midi_key_pitch[k] = (uint8_t)pitch;
                     }
             } else {
-                record_note_off(key_tracks[k], key_pitches[k]);
+                record_note_off(key_tracks[k], key_pitches[k], 1u);
                 release_note(key_tracks[k], key_pitches[k]);
                 midi_key_release(k);
             }
@@ -1704,15 +1719,15 @@ static void read_notes(void)
     if (usb_changed && !ready) midi_sent_run = 0;
     if (usb_changed && !ready && midi_clock_seen && midi_clock_port == 0u) {
         playing = recording = 0;
-        midi_clock_seen = midi_clock_period = midi_ext_step = midi_phase = 0;
+        midi_clock_seen = midi_clock_period = midi_ext_step = midi_phase = midi_clock_intervals = 0;
         for (unsigned i = 0; i < VOICES; ++i)
             if (!voices[i].manual) voices[i].releasing = 1;
     }
-    if (!midi_external()) midi_clock_seen = midi_clock_period = midi_ext_step = midi_phase = 0;
+    if (!midi_external()) midi_clock_seen = midi_clock_period = midi_ext_step = midi_phase = midi_clock_intervals = 0;
     else if (midi_clock_seen && plat_ms() - midi_last_clock > 500u) {
         playing = recording = 0;
         for (unsigned track = 0; track < TRACKS; ++track) midi_release_input(midi_clock_port, track);
-        midi_clock_seen = midi_clock_period = midi_ext_step = midi_phase = 0;
+        midi_clock_seen = midi_clock_period = midi_ext_step = midi_phase = midi_clock_intervals = 0;
         for (unsigned i = 0; i < VOICES; ++i)
             if (!voices[i].manual) voices[i].releasing = 1;
     }
@@ -1750,7 +1765,7 @@ static void read_notes(void)
             midi_sustain[source][track] = 0;
             midi_note_off(source, track, pitch, 0);
             midi_sustain[source][track] = (uint8_t)sustain;
-            record_input(track, pitch, velocity);
+            record_input_origin(track, pitch, velocity, pitch, 0, MIDI_USB_VOICE + source);
             trigger(track, pitch, velocity, 0, MIDI_USB_VOICE + source);
         } else if ((status & 0xf0u) == 0x80u || (status & 0xf0u) == 0x90u) {
             midi_note_off(source, track, pitch, 0);
@@ -1770,6 +1785,7 @@ static void read_notes(void)
             }
         }
     }
+    midi_measure_clock();
 }
 
 static void arp_render_clock(unsigned track, uint32_t config)
@@ -2699,7 +2715,7 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
         begin_recording();
     read_notes();
     if (midi_tx_epoch != sequence_epoch || midi_link != plat_midi_out_link())
-        midi_sequence_flush(record_clock);
+        midi_sequence_flush(record_clock, 0);
     audition_selected_step();
     // The UI publishes these settings; the callback consumes one snapshot.
     const unsigned arp_track = input_track;
@@ -2922,8 +2938,10 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
         if (profile) serial[PROFILE_OUTPUT] += plat_ticks24() - section;
     }
     record_clock += frames;
+    // Release expired gates before clock and transport consume USB room.
+    if (midi_pending) midi_sequence_flush(record_clock, 0);
     if ((midi_options & MIDI_CUSTOM) || midi_sent_run) midi_transport_out(frames);
-    if (midi_pending) midi_sequence_flush(record_clock);
+    if (midi_pending) midi_sequence_flush(record_clock, 1);
     else {
         midi_link = plat_midi_out_link();
         midi_tx_epoch = sequence_epoch;
@@ -6184,6 +6202,12 @@ int app_expect(const char *name, int *result)
     else if (name_matches(name, "battery_status")) *result = battery_status;
     else if (name_matches(name, "low_battery")) *result = (int)low_battery;
     else if (name_matches(name, "speaker_mode")) *result = (int)speaker_mode;
+    else if (name_matches(name, "record_usb_held") || name_matches(name, "record_trs_held")) {
+        unsigned owner = name_matches(name, "record_usb_held") ? MIDI_USB_VOICE : MIDI_USB_VOICE + 1u;
+        *result = 0;
+        for (unsigned i = 0; i < VOICES; ++i)
+            if (held_record[i].cell && held_record[i].owner == owner) ++*result;
+    }
     else if (name_matches(name, "midi_pending")) *result = (int)midi_pending;
     else if (name_matches(name, "midi_usb")) *result = (int)midi_usb_ready;
     else if (name_matches(name, "midi_drops")) *result = (int)midi_drops;
@@ -6245,6 +6269,17 @@ int app_expect(const char *name, int *result)
     else if (name_matches(name, "edit_res")) *result = slap_fx_value(slap_ui.track, 1, 3);
     else if (name_matches(name, "edit_decay")) *result = tracks[slap_ui.track].envelope >> 8 & 127u;
     else if (name_matches(name, "edit_drive")) *result = slap_fx_value(slap_ui.track, 8, 0);
+    else if (name_matches(name, "slicer_enabled")) *result = !!(slap_fx_slicer_state(slap_ui.track) & 16u);
+    else if (name_matches(name, "slicer_capture") || name_matches(name, "slicer_signal")) {
+        SlapSlicePreview preview;
+        slap_fx_slicer_preview(slap_ui.track, &preview);
+        *result = (int)preview.captured;
+        if (name_matches(name, "slicer_signal")) {
+            *result = 0;
+            for (unsigned i = 0; i < SLAP_SLICE_PREVIEW; ++i)
+                if (preview.wave[i]) ++*result;
+        }
+    }
     else if (name_matches(name, "fx_k1")) *result = slap_fx_value(slap_ui.track, slap_ui.fx_page, 0);
     else if (name_matches(name, "patch")) *result = (int)tracks[slap_ui.track].patch;
     else if (name_matches(name, "env_attack")) *result = tracks[slap_ui.track].envelope & 255u;
