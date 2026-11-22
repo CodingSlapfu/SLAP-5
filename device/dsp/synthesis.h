@@ -32,6 +32,8 @@ float slap_synth_sample(SlapSynth *synth);
 
 /* An unset timbre uses the factory program. */
 void slap_synth_timbre(SlapSynth *synth, uint32_t settings);
+/* The unused algorithm code stores an explicit all-zero operator edit. */
+#define SLAP_FM_ZERO_CONFIG (3u << 30)
 enum { SLAP_FM_ENV_DIVIDER = 8, SLAP_FM_ENV_DEFAULT = 0x14561u };
 static inline unsigned slap_fm_env_period(unsigned stage, unsigned value)
 {

@@ -1,0 +1,101 @@
+wait 6100
+tap GLO
+turn ALGO 8
+expect settings_section 8
+turn K1 1
+turn SELECT 1
+turn K1 1
+turn SELECT 1
+turn K1 1
+turn SELECT 1
+turn K1 1
+turn ALGO 1
+turn K1 1
+turn SELECT 2
+turn K1 1
+turn ALGO 1
+turn K1 3
+shot midi-route.png
+midi 90 3C 64
+midi 80 3C 00
+midi 93 40 64
+wait 20
+midi 83 40 00
+midi B3 4A 50
+wait 20
+expect edit_filter 80
+expect midi_out 0
+midi FA 00 00
+wait 20
+expect playing 1
+midi F8 00 00
+wait 20
+expect step 0
+midi F8 00 00
+wait 20
+midi F8 00 00
+wait 20
+midi F8 00 00
+wait 20
+midi F8 00 00
+wait 20
+midi F8 00 00
+wait 20
+midi F8 00 00
+wait 20
+expect step 1
+expect midi_clock 1
+expect clocks_out 0
+midi FC 00 00
+wait 20
+expect playing 0
+midi F2 04 00
+wait 20
+expect step 4
+midi FB 00 00
+wait 20
+midi F8 00 00
+wait 20
+expect playing 1
+expect step 4
+wait 550
+expect playing 0
+expect midi_clock 0
+turn ALGO -1
+turn K1 -1
+turn SELECT 1
+turn K1 1
+turn SELECT 2
+turn K1 1
+tap HOME
+tap PLAY
+wait 850
+expect clocks_out >20
+expect midi_out >20
+tap PLAY
+wait 40
+out
+tap GLO
+turn ALGO 10
+turn SELECT 1
+turn K1 1
+tap HOME
+tap SEQ
+key w0 down
+wait 40
+key w0 up
+turn K4 8
+tap HOME
+tap PLAY
+wait 30
+expect midi_pending >0
+midi-room 0
+tap PLAY
+expect midi_pending >0
+midi-usb 0
+expect midi_usb 0
+midi-usb 1
+expect midi_usb 1
+midi-room 64
+expect midi_pending 0
+out

@@ -263,7 +263,8 @@ SLAP_SYNTH_SRAM float slap_synth_sample(SlapSynth *s)
             /* The first three phases use the common oscillator state. This
              * engine owns the remaining phase fields and feedback history. */
             uint32_t config = s->timbre;
-            unsigned algorithm = config ? config >> 30 : m < 0.34f ? 0u : m < 0.68f ? 1u : 2u;
+            unsigned algorithm = config == SLAP_FM_ZERO_CONFIG ? 0u :
+                config ? config >> 30 : m < 0.34f ? 0u : m < 0.68f ? 1u : 2u;
             if (s->operator_mask && !(s->operator_tick++ & (SLAP_FM_ENV_DIVIDER - 1u))) {
                 for (unsigned op = 0; op < 6u; ++op) {
                     unsigned bit = 1u << op;

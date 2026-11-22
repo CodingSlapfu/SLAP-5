@@ -253,11 +253,14 @@ static uint32_t ble_listening(void)            /* the Bluetooth links listening,
     return (ble_conn ? TO_BLE_HOST : 0u) | (bdev_state == BLE_DEV_READY ? TO_BLE_DEV : 0u);
 }
 /* the host's MIDI out is logged at once and never fills: the device's whole ring free, for whoever listens */
+static unsigned usb_midi_listening = 1, usb_midi_room = 64;
 uint32_t plat_midi_out_room(uint32_t to)
 {
-    return to & (TO_USB | ble_listening()) ? 64u : 0u;
+    if (to & TO_USB && usb_midi_listening) return usb_midi_room;
+    return to & ble_listening() ? 64u : 0u;
 }
 static uint32_t usb_links;                      /* plat_midi_out_link: one USB connection, all run long */
+int plat_midi_usb_ready(void) { return usb_midi_listening; }
 uint32_t plat_midi_out_link(void) { return usb_links; }
 uint32_t plat_midi_ago(int port, int out)
 {
@@ -283,7 +286,7 @@ int plat_midi_in(uint32_t *pkt, int *port)       /* the script's "midi" (BLE-DEV
 }
 void plat_midi_send(uint32_t pkt, uint32_t to)
 {
-    to &= TO_USB | ble_listening();               /* as the device: nothing queues for a link not there */
+    to &= (usb_midi_listening ? TO_USB : 0u) | ble_listening();               /* as the device: nothing queues for a link not there */
     if (!to)
         return;
     if (to & TO_USB)
@@ -1498,6 +1501,15 @@ int main(int argc, char **argv)
         } else if (!strcmp(cmd, "master")) {
             master = (uint32_t)atoi(a);
             run_ms(40);                         /* as the device's smoothing settles */
+        } else if (!strcmp(cmd, "midi-usb")) {
+            unsigned ready = atoi(a) != 0;
+            if (ready && !usb_midi_listening) ++usb_links;
+            usb_midi_listening = ready;
+            run_ms(10);
+        } else if (!strcmp(cmd, "midi-room")) {
+            int room = atoi(a);
+            usb_midi_room = room < 0 ? 0u : room > 64 ? 64u : (unsigned)room;
+            run_ms(10);
         } else if (!strcmp(cmd, "midi")) {
             int dev = !strcmp(a, "BLE-DEV"), p = dev ? PORT_BLE : find_name(PORT_N, NPORTS, a);
             min_q[mi_w % MQ] = p < 0 ? mk_pkt(a, b, c) : mk_pkt(b, c, d) | (dev ? 0x10u : 0u);   /* cable 1 */

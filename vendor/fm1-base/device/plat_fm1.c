@@ -276,6 +276,7 @@ uint32_t plat_midi_out_room(uint32_t to)
         room = r;
     return room == 0xFFFFFFFFu ? 0u : room;
 }
+int plat_midi_usb_ready(void) { return usb_midi_out_ready(); }
 uint32_t plat_midi_out_link(void) { return midi_out_link(); }
 static uint32_t midi_in_from;                     /* plat_midi_in_from: the last one's link, as an out */
 uint32_t plat_midi_in_from(void) { return midi_in_from; }

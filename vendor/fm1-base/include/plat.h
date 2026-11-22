@@ -71,6 +71,7 @@ uint32_t plat_midi_out_room(uint32_t to);   /* the free slots in the out queues 
                                         * has its own): the fewest among the ones someone listens on; 0 when nobody
                                         * does. A sequencer keeps room for the note-offs it owes before it sends a
                                         * note-on */
+int plat_midi_usb_ready(void); /* USB transport configured, independent of queue capacity */
 uint32_t plat_midi_out_link(void);     /* a number that changes at each new USB connection (a host to tell its
                                         * sounds again: programs, volumes) */
 /* USB MIDI host (fm1.toml usb_host = true: FM1B_USB_HOST 1; felucca-bsp docs/USB_HOST.md): the USB port plays host to

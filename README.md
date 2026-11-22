@@ -73,3 +73,24 @@ Tap EDIT for the selected track. Turn ALGORITHM one detent right for the engine 
 With a Wavetable patch selected, K1 Morph and K2 Scan change the active waveform. The two reference traces show neighboring frames on the modern engine. The lower bars show the first eight harmonics of the displayed wave. Tap FX and turn ALGORITHM to FILTER for the response plot or SLICER for the current pattern, captured buffer and replay position.
 
 Under SETTINGS, use ALGORITHM to reach LEDS. SELECT the ACTIVE LIGHTS row and use K1 to choose HIGH or MEDIUM. This changes illuminated button and active key intensity, while IDLE BUTTONS and NORMAL KEYS control their respective idle states. Existing settings default to HIGH for active lights.
+
+### Engineering MIDI controls and PocketTracker
+
+The consolidated development branch adds MIDI pages under SETTINGS (tap GLO, then turn ALGORITHM). Use SELECT for the row and K1 to edit. **LEGACY** is the migration default and preserves USB/TRS note receive and local-key USB transmit on channels 1–5. **OFF** disables musical MIDI while retaining the USB updater. **CUSTOM** opts into the individual controls.
+
+| Page | Controls |
+|---|---|
+| MIDI | Mode, input, output, and CC receive |
+| MIDI SYNC | Internal/external clock, clock send, transport receive, transport send |
+| MIDI ROUTE | First channel for the five consecutive track channels, all-track/melody/drum send |
+| MIDI TRACKS | Individual melodic track transmit switches |
+| MIDI MONITOR | USB endpoint readiness, clock reception, RX/TX counts, output and clock-step drops |
+
+Track 5 uses the drum kit's existing note map. Enable a transmit track for its keys and sequenced notes. Notes and clock received from the other device are never echoed. CC 7 controls level, 10 pan, 74 track filter low-pass amount, and 71 resonance. CC 120 and 123 release notes from the sender. This build has no CC transmit, MIDI sustain or pitch bend mapping.
+
+For a wired validation, use the Anbernic RG35XX Pro's host/data port with a data cable to the FM-1, which stays a USB MIDI device. Confirm that muOS exposes the FM-1 as an ALSA raw MIDI port before configuring the tracker. PocketTracker's current Linux/PortMaster source uses `libasound.so.2` to enumerate and open raw MIDI endpoints. A missing port points to the USB role, cable, kernel driver or ALSA layer. Little Piggy Tracker is a separate application and its target build needs its own capability check. Wired bidirectional MIDI and clock on the specific RG35XX Pro have yet to be tested physically.
+
+- **Tracker leads:** Select the FM-1 MIDI output in PocketTracker, route an EXTERNAL instrument to the matching channel, and enable clock and transport send. Select CUSTOM, NOTE INPUT on, EXTERNAL and PLAY RECEIVE on in SLAP-5. Run only one clock master.
+- **SLAP-5 leads:** Select CUSTOM, NOTE OUTPUT on, INTERNAL, CLOCK SEND and PLAY SEND on. Select the FM-1 input on the tracker and enable clock/transport follow. Turn on the track transmit switches if the tracker should receive notes as well.
+- **Transport:** Six MIDI clock pulses advance one sixteenth. Start resets the sequence, Continue resumes, and Stop releases scheduled playback. USB Song Position Pointer is accepted while stopped in external transport mode, in standard sixteenth-note units. A 500 ms clock timeout stops external playback. The monitor reports USB endpoint readiness, which does not establish tracker routing.
+- **Recovery:** FM-1 USB descriptors and updater entry are unchanged. TRS remains input-only. BLE MIDI and USB host on the FM-1 are disabled for this build.
