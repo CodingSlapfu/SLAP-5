@@ -227,6 +227,24 @@ float slap_wave_preview(float scan, unsigned band, unsigned point)
     return first + (next - first) * (scan - frame);
 }
 
+static inline SLAP_SYNTH_INLINE float legacy_wave(float morph, float phase)
+{
+    float a = slap_oscillator(phase), b = 0.62f * a + 0.28f * slap_oscillator(3*phase) + 0.10f * slap_oscillator(5*phase);
+    if (morph < 0.5f) return a + (b-a)*morph*2.0f;
+    float z = 0.40f * a + 0.38f * slap_oscillator(2*phase) + 0.22f * slap_oscillator(7*phase);
+    return b + (z-b)*(2.0f*morph-1.0f);
+}
+
+float slap_legacy_wave_scan(float color, float movement, float phase)
+{
+    return color * 0.76f + movement * (0.12f + 0.12f * slap_oscillator(phase));
+}
+
+float slap_legacy_wave_preview(float morph, unsigned point)
+{
+    return legacy_wave(morph, (float)point * (1.0f / 128.0f));
+}
+
 SLAP_SYNTH_SRAM float slap_synth_sample(SlapSynth *s)
 {
     const float p = s->phase, d = s->inc, c = s->color, m = s->motion;
@@ -349,13 +367,7 @@ SLAP_SYNTH_SRAM float slap_synth_sample(SlapSynth *s)
             break;
         }
         float morph = c * 0.76f + m * (0.12f + 0.12f*sine(t));
-        float a = sine(p), b = 0.62f * a + 0.28f * sine(3*p) + 0.10f * sine(5*p);
-        if (morph < 0.5f) {
-            out = a + (b-a)*morph*2.0f;
-        } else {
-            float z = 0.40f * a + 0.38f * sine(2*p) + 0.22f * sine(7*p);
-            out = b + (z-b)*(2.0f*morph-1.0f);
-        }
+        out = legacy_wave(morph, p);
         break;
     }
     case 3: {

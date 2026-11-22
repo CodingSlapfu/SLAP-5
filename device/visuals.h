@@ -8,15 +8,15 @@ static void slap_wordmark(int center, int y)
 }
 
 static const uint16_t track_color[] = {
-    RGB(0,255,255), RGB(141,0,255), RGB(255,0,148), RGB(255,167,0), RGB(0,255,46)
+    RGB(0,180,255), RGB(155,48,255), RGB(255,100,0), RGB(255,220,0), RGB(0,255,46)
 };
 
 static const uint16_t track_surface[] = {
-    RGB(0,47,67), RGB(45,20,79), RGB(73,15,51), RGB(67,42,10), RGB(10,54,30)
+    RGB(0,35,73), RGB(45,20,79), RGB(77,27,5), RGB(65,53,4), RGB(10,54,30)
 };
 
 static const uint16_t track_rule[] = {
-    RGB(0,107,138), RGB(94,45,155), RGB(145,27,99), RGB(141,85,17), RGB(17,112,53)
+    RGB(0,86,161), RGB(94,45,155), RGB(156,56,8), RGB(140,115,6), RGB(17,112,53)
 };
 
 static int visual_wave(unsigned phase, int amplitude)

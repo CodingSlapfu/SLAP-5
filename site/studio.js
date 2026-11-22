@@ -3,7 +3,7 @@
 import { advancedSynth, decodeNote, drumNotes, encodeNote, eventLanes, fxLimit, fxPanels, legacyDrumKits, modernSynth, patternLength, validateProject, withPatternLength, within } from './project.mjs';
 
 const $ = id => document.getElementById(id);
-const colors = ['#00e1ff', '#9d3eff', '#ff259e', '#ffaf10', '#15ff66'];
+const colors = ['#00b4ff', '#9b30ff', '#ff6400', '#ffdc00', '#00ff2e'];
 const ctx2d = $('roll').getContext('2d');
 const piano = ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'];
 const drums = ['Kick', 'Snare', 'Closed Hat', 'Rim', 'Clap', 'Crash', 'Sub Kick', 'Alt Snare', 'Open Hat', 'Pedal Hat', 'Low Tom', 'Mid Tom', 'High Tom', 'Ride', 'Shaker', 'Perc FX'];

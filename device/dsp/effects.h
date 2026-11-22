@@ -32,6 +32,12 @@ void slap_fx_mix_sample(float *left, float *right);
 int slap_fx_response(unsigned track, unsigned point);
 int slap_fx_trace(unsigned track, unsigned point);
 unsigned slap_fx_slicer_state(unsigned track);
+enum { SLAP_SLICE_PREVIEW = 56 };
+typedef struct {
+    unsigned captured, replay, slice_position;
+    int8_t wave[SLAP_SLICE_PREVIEW];
+} SlapSlicePreview;
+void slap_fx_slicer_preview(unsigned track, SlapSlicePreview *preview);
 unsigned slap_fx_slicer_cell(unsigned track, unsigned step);
 
 #if !defined(PLAT_WEB)

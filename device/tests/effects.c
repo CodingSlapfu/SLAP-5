@@ -166,6 +166,26 @@ static void test_slicer_boundaries(void)
     slap_fx_restore(0, 2, 1u << 16 | 127u << 24);
 }
 
+static void test_slicer_preview(void)
+{
+    slap_fx_init();
+    slap_fx_restore(0, 2, 2u | 1u << 8 | 3u << 16 | 127u << 24);
+    slap_fx_begin(112);
+    slap_fx_transport_step(0, 5904, 5904);
+    assert(slap_fx_slicer_state(0) & 64u);
+    for (unsigned i = 0; i < 1476; ++i)
+        slap_fx_sample(0, 0.25f);
+    assert(slap_fx_slicer_state(0) & 128u);
+    SlapSlicePreview preview;
+    slap_fx_slicer_preview(0, &preview);
+    assert(preview.captured > 0 && preview.wave[0] > 0);
+    unsigned initial_replay = preview.replay;
+    for (unsigned i = 0; i < 200; ++i)
+        slap_fx_sample(0, 0.0f);
+    slap_fx_slicer_preview(0, &preview);
+    assert(preview.replay > initial_replay && preview.slice_position > 0);
+}
+
 int main(void)
 {
     slap_fx_init();
@@ -202,5 +222,6 @@ int main(void)
         assert(change > 10.0f);
     }
     assert(slap_fx_response(0, 0) != slap_fx_response(0, SLAP_FX_PLOT - 1u));
+    test_slicer_preview();
     puts("Five simultaneous effect chains remained bounded across all seven inserts.");
 }

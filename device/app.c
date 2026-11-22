@@ -4043,7 +4043,7 @@ static void draw_home_sequences(void)
             active[count++] = voices[v].sequence_note;
     char number[12];
     if (redraw_header) {
-    cv_begin(240, 33, C_BLACK);
+    cv_begin(240, 23, C_BLACK);
     decimal(number, bpm);
     cv_text(5, 0, &FONT_M, number, C_WHITE);
     cv_text(48, 5, &FONT_B, "BPM", C_WHITE);
@@ -4090,14 +4090,14 @@ static void draw_home_sequences(void)
             last_lane[t].focused == focused && last_lane[t].pulse == pulse && last_lane[t].active == sounding) continue;
         last_lane[t] = (__typeof__(last_lane[t])){cursor, first, patch, mix, revision,
             (unsigned)meter, peak, focused, pulse, sounding};
-        cv_begin(240, 33, C_BLACK);
+        cv_begin(240, 35, C_BLACK);
         if (focused) {
             uint16_t outline = pulse ? color : track_rule[t];
-            cv_rect(5, 0, 231, 32, outline);
-            cv_rect(28, 1, 207, 30, track_surface[t]);
+            cv_rect(5, 0, 231, 34, outline);
+            cv_rect(28, 1, 207, 32, track_surface[t]);
         }
-        cv_rect(5, 0, 24, 32, focused && pulse ? color : track_rule[t]);
-        if (focused) cv_rect(5, 0, 2, 32, color);
+        cv_rect(5, 0, 24, 34, focused && pulse ? color : track_rule[t]);
+        if (focused) cv_rect(5, 0, 2, 34, color);
         decimal(number, t + 1u);
         cv_text(12, 9, &FONT_B, number, focused && pulse ? C_BLACK : C_WHITE);
         cv_text(34, 0, text_w(&FONT_B, name) <= 148 ? &FONT_B : &FONT_S, name, C_WHITE);
@@ -4115,9 +4115,9 @@ static void draw_home_sequences(void)
             if (++grid_index == length) grid_index = 0;
             int x = origin + col * 12;
             int start = clamp(x, 34, 226), end = clamp(x + 11, 34, 226);
-            if (end > start) cv_rect(start, 17, end - start, 15, track_surface[t]);
+            if (end > start) cv_rect(start, 17, end - start, 17, track_surface[t]);
             if (!(index & 3u) && x >= 34 && x < 225)
-                cv_rect(x, 17, (index & 15u) ? 1 : 2, 15, track_rule[t]);
+                cv_rect(x, 17, (index & 15u) ? 1 : 2, 17, track_rule[t]);
         }
         unsigned base = RATE * 15u / bpm;
         unsigned swing_samples = base * swing / 200u;
@@ -4133,7 +4133,7 @@ static void draw_home_sequences(void)
                 unsigned span = index & 1u ? base - swing_samples : base + swing_samples;
                 unsigned gate = duration ? duration * NOTE_DURATION_UNIT : span * ((word >> 16) & 255u) / 192u;
                 int x = origin + col * 12 + (int)(timing * 12u / 16u);
-                int y = 29 - (int)((word & NOTES) % 12u);
+                int y = 31 - (int)((word & NOTES) % 12u);
                 int width = held_note_width(gate, index, base, span * timing / 16u) * 12 / 14;
                 uint16_t ink = color;
                 unsigned id = 1u + row * STEPS + index;
@@ -4144,8 +4144,8 @@ static void draw_home_sequences(void)
             }
             if (++index == length) index = 0;
         }
-        if (run) cv_rect(playhead, 17, 1, 15, C_WHITE);
-        cv_blit(0, 33 + (int)t * 33);
+        if (run) cv_rect(playhead, 17, 1, 17, C_WHITE);
+        cv_blit(0, 23 + (int)t * 35);
     }
     if (redraw_footer) {
     cv_begin(240, 42, C_BLACK);
@@ -4237,6 +4237,58 @@ static void draw_fm_routing(unsigned track, unsigned algorithm, uint32_t config,
         if (cy >= -1 && cy < 50)
             cv_text(cx - 4, cy - 10, &FONT_B, label, carrier ? accent : C_WHITE);
     }
+}
+
+static const uint8_t *graph_filter_curve(unsigned track)
+{
+    static uint32_t cached = UINT32_MAX;
+    static uint8_t curve[SLAP_FX_PLOT];
+    uint32_t config = slap_fx_config(track, 1);
+    if (cached != config) {
+        cached = config;
+        for (unsigned point = 0; point < SLAP_FX_PLOT; ++point)
+            curve[point] = (uint8_t)slap_fx_response(track, point);
+    }
+    return curve;
+}
+
+static void draw_synth_activity(const SlapPatch *patch, unsigned track, uint16_t color)
+{
+    const volatile SlapSynth *live = graph_voice(track, patch->engine);
+    const char *first = "OSC PHASE";
+    const char *second = "TRACK ENERGY";
+    float position = live ? live->phase : 0.0f;
+    float activity = track_energy[track] * (1.0f / 160.0f);
+    switch (patch->engine) {
+    case 3: case 10:
+        first = patch->engine == 3u ? "WARP KNEE" : "FOLD DRIVE";
+        position = patch->engine == 3u ? 0.49f - 0.38f * patch->color / 127.0f :
+            (0.27f + 0.85f * patch->color / 127.0f) / 1.12f;
+        break;
+    case 7: case 17:
+        first = "PARTIAL MIX";
+        position = patch->color / 127.0f;
+        break;
+    case 8: case 9: case 11:
+        second = patch->engine == 8u ? "MOD PHASE" : patch->engine == 9u ? "RING PHASE" : "SYNC PHASE";
+        activity = live ? live->second : 0.0f;
+        break;
+    case 18: case 21: case 23: case 24:
+        second = patch->engine == 18u ? "VOWEL SCAN" : patch->engine == 21u ? "VIBRATO PHASE" :
+            patch->engine == 23u ? "GRAIN PHASE" : "OVERTONE LFO";
+        activity = live ? live->slow : 0.0f;
+        break;
+    case 19: case 20:
+        second = patch->engine == 19u ? "BRASS BODY" : "REED BORE";
+        activity = live ? fm_maxf(live->pole, -live->pole) : 0.0f;
+        break;
+    }
+    cv_text(8, 0, &FONT_XS, first, C_WHITE);
+    cv_text(124, 0, &FONT_XS, second, C_WHITE);
+    cv_rect(8, 17, 110, 10, track_surface[track]);
+    cv_rect(124, 17, 108, 10, track_surface[track]);
+    cv_rect(8 + (int)(fm_clampf(position, 0.0f, 1.0f) * 106.0f), 16, 4, 12, color);
+    cv_rect(124, 17, (int)(fm_clampf(activity, 0.0f, 1.0f) * 108.0f), 10, color);
 }
 
 static void draw_sound_controls(unsigned selected, uint16_t color)
@@ -4809,24 +4861,34 @@ static void draw_panel(void)
         if (edit_page && selected < DRUMS && (patch->engine == 0u || patch->engine == 2u)) {
             uint32_t config = track_timbre[selected];
             if (patch->engine == 0u && edit_page == 4u) {
-                cv_text(8, 5, &FONT_M, "5 FEEDBACK", c);
+                cv_text(8, 3, &FONT_M, "FM6 FEEDBACK", c);
                 cv_text(8, 27, &FONT_XS, "K1 FEEDBACK / ALGO PAGE", C_WHITE);
                 cv_blit(0, 80);
-                cv_begin(240, 40, background);
-                unsigned feedback = track_fm_envelopes[selected][6];
-                if (feedback) decimal(number, feedback - 1u);
-                cv_text(8, 2, &FONT_L, feedback ? number : "AUTO", C_WHITE);
-                cv_rect(8, 35, 14 * (int)feedback, 3, c);
-                cv_blit(0, 120);
-                for (int y = 160; y < 240; y += 40) {
-                    cv_begin(240, 40, background);
+                unsigned setting = track_fm_envelopes[selected][6];
+                float amount = setting ? 0.47f * (setting - 1u) / 15.0f :
+                    0.022f + 0.11f * patch->color / 127.0f;
+                const volatile SlapSynth *live = graph_voice(selected, 0);
+                float signal = live && live->modern >= 2u ? live->feedback : 0.0f;
+                for (int y = 120; y < 208; y += 44) {
+                    cv_begin(240, 44, background);
+                    draw_fm_routing(selected, graph_fm_algorithm(patch, config), config, c, y - 120);
                     cv_blit(0, y);
                 }
+                cv_begin(240, 32, background);
+                decimal(number, (unsigned)(amount * 100.0f + 0.5f));
+                cv_text(8, 1, &FONT_B, "OP 6 LOOP", c);
+                cv_text(87, 1, &FONT_B, number, C_WHITE);
+                cv_text(115, 3, &FONT_T, setting ? "% MANUAL" : "% AUTO", C_WHITE);
+                cv_rect(8, 22, 224, 4, track_surface[selected]);
+                cv_rect(119, 20, 2, 8, track_rule[selected]);
+                int modulation = (int)(signal * amount * 220.0f);
+                cv_rect(120 + (modulation < 0 ? modulation : 0), 22,
+                    modulation < 0 ? -modulation : modulation, 4, c);
+                cv_blit(0, 208);
                 return;
             }
             if (patch->engine == 0u && edit_page == 3u) {
                 unsigned settings = track_fm_envelopes[selected][timbre_operator];
-                unsigned feedback = track_fm_envelopes[selected][6];
                 if (!settings) settings = 0x14561u;
                 cv_text(8, 2, &FONT_B, "OP ENVELOPE", c);
                 decimal(number, timbre_operator + 1u);
@@ -4845,9 +4907,14 @@ static void draw_panel(void)
                 cv_line(release, sustain, 225, 40, c);
                 cv_blit(0, 120);
                 cv_begin(240, 32, background);
-                cv_text(8, 4, &FONT_B, "FEEDBACK", c);
-                if (feedback) decimal(number, feedback - 1u);
-                cv_text(139, 4, &FONT_B, feedback ? number : "AUTO", C_WHITE);
+                const volatile SlapSynth *live = graph_voice(selected, 0);
+                unsigned mask = 1u << timbre_operator;
+                float gain = live ? (live->operator_mask & mask ? live->operators[timbre_operator].gain : 1.0f) : 0.0f;
+                cv_text(8, 3, &FONT_B, "LIVE GAIN", c);
+                decimal(number, (unsigned)(gain * 100.0f + 0.5f));
+                cv_text(95, 3, &FONT_B, number, C_WHITE);
+                cv_rect(8, 24, 224, 4, track_surface[selected]);
+                cv_rect(8, 24, (int)fm_clampf(gain * 224.0f, 0.0f, 224.0f), 4, c);
                 cv_blit(0, 168);
                 cv_begin(240, 40, background);
                 cv_text(8, 2, &FONT_XS, "OCT+ / K4 FEEDBACK", C_WHITE);
@@ -4892,30 +4959,50 @@ static void draw_panel(void)
                 float phase = live ? live->slow : 0.0f;
                 float inc = live ? live->inc : 0.0f;
                 unsigned band = inc < 0.059f ? 0u : inc < 0.137f ? 1u : 2u;
-                float preview = slap_wave_scan(morph * (1.0f / 127.0f),
-                    movement * (1.0f / 127.0f), phase);
+                unsigned legacy = live ? live->modern < 2u : !(tracks[selected].mix & ADVANCED_SYNTH);
+                float color = morph * (1.0f / 127.0f), motion = movement * (1.0f / 127.0f);
+                float preview = legacy ? slap_legacy_wave_scan(color, motion, phase) : slap_wave_scan(color, motion, phase);
                 int8_t waveform[3][113];
                 float frame = (float)(unsigned)preview;
-                const float scan[] = {frame, fm_minf(frame + 1.0f, 2.999f), preview};
+                const float scan[] = {legacy ? 0.0f : frame,
+                    legacy ? 1.0f : fm_minf(frame + 1.0f, 2.999f), preview};
                 for (unsigned line = 0; line < 3u; ++line)
-                    for (unsigned point = 0; point <= 112u; ++point)
-                        waveform[line][point] = (int8_t)(47 -
-                            (int)(slap_wave_preview(scan[line], band, point * 128u / 112u) * 38.0f));
+                    for (unsigned point = 0; point <= 112u; ++point) {
+                        unsigned sample = point * 128u / 112u;
+                        float amplitude = legacy ? slap_legacy_wave_preview(scan[line], sample) :
+                            slap_wave_preview(scan[line], band, sample);
+                        waveform[line][point] = (int8_t)(32 - amplitude * 30.0f);
+                    }
                 for (int strip = 0; strip < 2; ++strip) {
                     int offset = strip * 48;
                     cv_begin(240, 48, background);
-                    for (int x = 8; x <= 232; x += 28) cv_rect(x, 0, 1, 48, track_surface[selected]);
-                    for (int y = 11; y <= 83; y += 12)
-                        cv_rect(8, y - offset, 224, 1, y == 47 ? track_rule[selected] : track_surface[selected]);
+                    for (int x = 8; x <= 232; x += 28) cv_rect(x, -offset, 1, 64, track_surface[selected]);
+                    for (int y = 8; y <= 56; y += 12)
+                        cv_rect(8, y - offset, 224, 1, y == 32 ? track_rule[selected] : track_surface[selected]);
                     for (unsigned line = 0; line < 3u; ++line)
                         for (unsigned point = 1; point <= 112u; ++point)
                             cv_line(6 + (int)point * 2, waveform[line][point - 1u] - offset,
                                 8 + (int)point * 2, waveform[line][point] - offset,
                                 line == 2u ? c : line == 1u ? track_rule[(selected + 1u) % TRACKS] : track_rule[selected]);
                     if (strip) {
-                        cv_rect(8, 44, 224, 2, track_rule[selected]);
-                        for (int i = 0; i < 4; ++i) cv_rect(8 + i * 74, 42, 2, 6, C_WHITE);
-                        cv_rect(8 + (int)(preview * 74.0f), 41, 3, 7, c);
+                        cv_rect(8, 20, 224, 2, track_rule[selected]);
+                        int marker = (int)(preview * (legacy ? 222.0f : 74.0f));
+                        cv_rect(8 + marker, 17, 3, 7, c);
+                        cv_text(8, 31, &FONT_T, "HARMONICS", C_WHITE);
+                        for (unsigned harmonic = 1; harmonic <= 8u; ++harmonic) {
+                            int real = 0, imaginary = 0;
+                            for (unsigned n = 0; n < 32u; ++n) {
+                                int sample = 32 - waveform[2][n * 112u / 32u];
+                                unsigned angle = n * harmonic * 32u;
+                                real += sample * visual_wave(angle + 256u, 64);
+                                imaginary += sample * visual_wave(angle, 64);
+                            }
+                            float power = (float)real * real + (float)imaginary * imaginary;
+                            int height = clamp((int)(fm_sqrtf(power) / 1900.0f), 0, 17);
+                            int x = 82 + (int)(harmonic - 1u) * 19;
+                            cv_rect(x, 43 - height, 13, height, c);
+                            cv_rect(x, 43, 13, 1, track_rule[selected]);
+                        }
                     }
                     cv_blit(0, 104 + offset);
                 }
@@ -4957,23 +5044,17 @@ static void draw_panel(void)
                 cv_line(180, 9 + sustain / 2, 232, 34, c);
                 break;
             }
-            case 1: case 12: case 13: case 14:
+            case 1: case 12: case 13: case 14: {
+                const uint8_t *curve = graph_filter_curve(selected);
                 cv_text(8, 0, &FONT_T, "TRACK FILTER RESPONSE", C_WHITE);
                 for (unsigned point = 1; point < SLAP_FX_PLOT; ++point)
-                    cv_line(5 + (int)point * 3, 12 + slap_fx_response(selected, point - 1u) / 4,
-                        8 + (int)point * 3, 12 + slap_fx_response(selected, point) / 4, c);
-                break;
-            default: {
-                const volatile SlapSynth *voice = graph_voice(selected, patch->engine);
-                cv_text(8, 0, &FONT_T, "VOICE MODULATION", C_WHITE);
-                cv_rect(8, 19, 224, 8, track_surface[selected]);
-                if (voice) {
-                    float phase = voice->slow;
-                    phase -= fm_floorf(phase);
-                    cv_rect(8 + (int)(phase * 220.0f), 18, 3, 10, c);
-                }
+                    cv_line(5 + (int)point * 3, 12 + curve[point - 1u] / 4,
+                        8 + (int)point * 3, 12 + curve[point] / 4, c);
                 break;
             }
+            default:
+                draw_synth_activity(patch, selected, c);
+                break;
             }
             cv_blit(0, 160);
             cv_begin(240, 40, background);
@@ -5084,16 +5165,15 @@ static void draw_panel(void)
     unsigned draw_graph = !graph_valid || !had_graph ||
         __builtin_memcmp(&graph, &previous_graph, sizeof graph);
     if (graph_valid) previous_graph = graph;
-    static uint32_t filter_signature = UINT32_MAX;
-    static uint8_t filter_curve[SLAP_FX_PLOT];
-    if (slap_ui.page == FX && slap_ui.fx_page == 1) {
-        uint32_t signature = slap_fx_config(selected, 1);
-        if (filter_signature != signature) {
-            filter_signature = signature;
-            for (unsigned i = 0; i < SLAP_FX_PLOT; ++i)
-                filter_curve[i] = (uint8_t)slap_fx_response(selected, i);
-        }
+    const uint8_t *filter_curve = 0;
+    unsigned slice_state = 0;
+    SlapSlicePreview slice;
+    if (slap_ui.page == FX && slap_ui.fx_page == 2) {
+        slice_state = slap_fx_slicer_state(selected);
+        slap_fx_slicer_preview(selected, &slice);
     }
+    if (slap_ui.page == FX && slap_ui.fx_page == 1)
+        filter_curve = graph_filter_curve(selected);
     for (int strip = 0; draw_graph && strip < 3; ++strip) {
         cv_begin(240, 36, background);
         if (slap_ui.page == FX) {
@@ -5101,33 +5181,34 @@ static void draw_panel(void)
             for (int line = 17; line < 108; line += 18)
                 cv_rect(8, line - strip * 36, 224, 1, line == 53 ? track_rule[selected] : track_surface[selected]);
             if (fpage == 1) {
-                for (unsigned octave = 0; octave < 8u; ++octave)
-                    cv_rect(8 + (int)octave * 28, 0, 1, 36, track_surface[selected]);
-                if (strip == 2) {
-                    cv_text(9, 24, &FONT_T, "LOW", C_WHITE);
-                    cv_text(98, 24, &FONT_T, "FREQUENCY", C_WHITE);
-                    cv_text(207, 24, &FONT_T, "HIGH", C_WHITE);
-                }
+                static const uint8_t ticks[] = {8, 51, 106, 168, 224};
+                for (unsigned i = 0; i < sizeof ticks / sizeof ticks[0]; ++i)
+                    cv_rect(ticks[i], 0, 1, 36, track_rule[selected]);
+                cv_rect(8, 61 - strip * 36, 224, 1, track_rule[selected]);
             }
             if (fpage == 2) {
-                unsigned state = slap_fx_slicer_state(selected);
+                int offset = strip * 36;
                 for (int i = 0; i < 16; ++i) {
                     unsigned hit = slap_fx_slicer_cell(selected, (unsigned)i);
-                    int y = (hit ? 17 : 75) - strip * 36;
-                    cv_rect(8 + i * 14, y, 11, 13, c);
-                    if ((state & 16u) && i == (int)(state & 15u))
-                        cv_rect(8 + i * 14, 0, 2, 36, C_WHITE);
+                    cv_rect(8 + i * 14, 14 - offset, 12, 17, hit ? c : track_surface[selected]);
                 }
-                if (strip == 2) {
-                    for (unsigned point = 1; point < SLAP_FX_PLOT; ++point)
-                        cv_line(5 + (int)point * 3, 20 - slap_fx_trace(selected, point - 1u) / 4,
-                            8 + (int)point * 3, 20 - slap_fx_trace(selected, point) / 4, c);
-                }
+                if (slice_state & 16u)
+                    cv_rect(8 + (int)(slice_state & 15u) * 14 + (int)slice.slice_position,
+                        7 - offset, 2, 26, C_WHITE);
+                if (strip == 0) cv_text(8, 0, &FONT_T, "PATTERN / PLAYHEAD", C_WHITE);
                 if (strip == 1) {
-                    const char *status = !(state & 16u) ? "OFF" : (state & 64u) ? "CAPTURE" :
-                        (state & 128u) ? "REPLAY" : (state & 32u) ? "GATE OPEN" : "GATE CLOSED";
-                    cv_text(8, 13, &FONT_XS, status, C_WHITE);
+                    const char *status = !(slice_state & 16u) ? "OFF" : (slice_state & 64u) ? "CAPTURE" :
+                        (slice_state & 128u) ? "REPLAY" : (slice_state & 32u) ? "GATE OPEN" : "GATE CLOSED";
+                    cv_text(8, 0, &FONT_B, status, C_WHITE);
+                    cv_text(138, 3, &FONT_T, "CAPTURE BUFFER", C_WHITE);
                 }
+                cv_rect(8, 85 - offset, 224, 1, track_rule[selected]);
+                cv_rect(8, 103 - offset, (int)slice.captured * 4, 3, c);
+                for (unsigned point = 1; point < SLAP_SLICE_PREVIEW; ++point)
+                    cv_line(4 + (int)point * 4, 85 - offset - slice.wave[point - 1u] / 7,
+                        8 + (int)point * 4, 85 - offset - slice.wave[point] / 7, c);
+                if (slice_state & 128u)
+                    cv_rect(8 + (int)slice.replay * 4, 67 - offset, 1, 37, C_WHITE);
             } else {
                 for (unsigned i = 0; i < SLAP_FX_PLOT; ++i) {
                     int y = fpage == 1 ? filter_curve[i] : 53 + slap_fx_trace(selected, i);
@@ -5140,6 +5221,18 @@ static void draw_panel(void)
                         cv_rect(x, low - strip * 36, 3, high - low, track_surface[selected]);
                     }
                     cv_line(x, y - strip * 36, x + 3, next - strip * 36, c);
+                }
+            }
+            if (fpage == 1) {
+                if (strip == 0) cv_text(10, 6, &FONT_T, "+25 dB", C_WHITE);
+                if (strip == 1) cv_text(10, 15, &FONT_T, "0 dB", C_WHITE);
+                if (strip == 2) {
+                    cv_rect(0, 25, 240, 11, C_BLACK);
+                    cv_text(8, 25, &FONT_T, "28Hz", C_WHITE);
+                    cv_text(51, 25, &FONT_T, "100", C_WHITE);
+                    cv_text(106, 25, &FONT_T, "500", C_WHITE);
+                    cv_text(168, 25, &FONT_T, "3k", C_WHITE);
+                    cv_text(220, 25, &FONT_T, "17k", C_WHITE);
                 }
             }
         } else if (slap_ui.page == ARP) {

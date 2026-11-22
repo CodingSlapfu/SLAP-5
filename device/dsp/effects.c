@@ -789,6 +789,29 @@ unsigned slap_fx_slicer_state(unsigned track)
         (mode == 2u && open) << 6 | (mode == 2u && !open && captured >= 2u * SLICE_RAMP / 4u) << 7;
 }
 
+void slap_fx_slicer_preview(unsigned track, SlapSlicePreview *preview)
+{
+    const volatile Fx *current = &fx[track];
+    unsigned head = current->capture_head;
+    unsigned count = current->mode == 2u ? current->capture_count : 0;
+    unsigned phase = current->repeat_phase;
+    unsigned sample = current->gate_sample;
+    unsigned boundary = current->gate_boundary;
+    unsigned clock = current->clock_step;
+    unsigned remaining = boundary >= sample ? boundary - sample : clock;
+    preview->slice_position = clock && remaining <= clock ? (clock - remaining) * 13u / clock : 0;
+    preview->captured = count * SLAP_SLICE_PREVIEW / SLICE_CAPTURE;
+    preview->replay = count > 1u ? (phase / 4u % count) * SLAP_SLICE_PREVIEW / SLICE_CAPTURE : 0;
+    const volatile int16_t *ring = slice_line[track];
+    unsigned start = head + SLICE_CAPTURE - count;
+    for (unsigned point = 0; point < SLAP_SLICE_PREVIEW; ++point) {
+        unsigned offset = point * SLICE_CAPTURE / SLAP_SLICE_PREVIEW;
+        unsigned index = start + offset;
+        if (index >= SLICE_CAPTURE) index -= SLICE_CAPTURE;
+        preview->wave[point] = offset < count ? (int8_t)(ring[index] / 256) : 0;
+    }
+}
+
 unsigned slap_fx_slicer_cell(unsigned track, unsigned step)
 {
     return (slicer_patterns[slap_fx_value(track, SLICER, 1)] >> (15u - (step & 15u))) & 1u;

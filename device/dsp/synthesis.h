@@ -34,4 +34,6 @@ float slap_synth_sample(SlapSynth *synth);
 void slap_synth_timbre(SlapSynth *synth, uint32_t settings);
 void slap_synth_fm_envelopes(SlapSynth *synth, const uint32_t *operators, unsigned feedback);
 float slap_wave_scan(float morph, float movement, float phase);
+float slap_legacy_wave_scan(float color, float movement, float phase);
+float slap_legacy_wave_preview(float morph, unsigned point);
 float slap_wave_preview(float scan, unsigned band, unsigned point);
