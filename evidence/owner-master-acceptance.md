@@ -1,6 +1,6 @@
 # SLAP-5 v0.1.29 owner acceptance
 
-Engineering candidate. [Exact source 2df799c](https://github.com/CodingSlapfu/SLAP-5/commit/2df799cfa0320bf3c6de97777b41b7b86fe642c3), tree `1cc1dc97dae771f1ec8f49e5f10b372e098f8249`. The [v0.1.28 evidence](qualification-0.1.28.md) and candidate backup are retained. The public installer still serves the established release.
+Controlled experimental FM-1 hardware-testing release. [Exact source 2df799c](https://github.com/CodingSlapfu/SLAP-5/commit/2df799cfa0320bf3c6de97777b41b7b86fe642c3), tree `1cc1dc97dae771f1ec8f49e5f10b372e098f8249`. The [v0.1.28 evidence](qualification-0.1.28.md) and candidate backup are retained. The primary installer still serves the established release. The separate [v0.1.29 experimental installer](https://codingslapfu.github.io/SLAP-5/flash-testing-0.1.29.html) is live.
 
 | # | Owner requirement | Status | Evidence and remaining work |
 | --- | --- | --- | --- |
@@ -31,7 +31,7 @@ Engineering candidate. [Exact source 2df799c](https://github.com/CodingSlapfu/SL
 | 25 | Earlier owner items | PARTIAL | See the [active issues](https://github.com/CodingSlapfu/SLAP-5/issues) and linked 0.1.27 evidence for remaining LED levels, DSP/worker regressions, visual review, patch/kit listening and Studio/installer acceptance. |
 | 26 | Compatibility and recovery | PARTIAL | Package boundary/hash audit, bad/foreign-package rejection and interrupted install/rollback simulation passed. Physical USB update and rollback remain open. |
 | 27 | Source backup | COMPLETE | Exact candidate tree verified by a fresh GitHub fetch. The backup ZIP contains the source, staged site/Studio, candidate package, captures, evidence and SHA-256 manifest. |
-| 28 | Experimental release and installer | BLOCKED | Native identity `FM-1_75000129`. Real-time timing remains unresolved. The archive is an engineering checkpoint and the public installer continues serving the prior release. |
+| 28 | Experimental release and installer | SOFTWARE GATE PASSED | Native identity `FM-1_75000129`. Published separately for controlled testing. Physical timing and acceptance remain open. |
 
 ## Timing and rendering findings
 
@@ -74,10 +74,16 @@ Three alternating runs per tempo and mode with active filtering and the visualiz
 - Identity `FM-1_75000129`, package 611,488 bytes, SHA-256 `52aa1473d14caea60f0f83245f612579bdb6f05085bb68aea1e39f785c24d745`. Pinned SDK and native package audit passed, as did simulated interruption, app-only bounds and rollback with project/settings preservation.
 - Application 564,400 / 581,564 bytes, +352 bytes from v0.1.28. Static RAM 87,752 / 98,304 bytes and pool 328,648 / 344,064 bytes are unchanged. Flash optimization headroom is 17,164 bytes.
 - [Hosted Chromium passed](https://github.com/CodingSlapfu/SLAP-5/actions/runs/44964343882) on exact source. Focused host tests covered ARP, pages, transport and mixer persistence, graphics, held-recording, wrapped holds, six dense filter PCM comparisons and nine EDIT transitions. All seven visualizers retained identical frames across four master levels, with silence at zero. Five concurrent effects remained bounded through all seven inserts in the DSP fixture. Ten 240×240 captures exercise the new FX and ARP controls. The font-width test covers name fit in both tile and scrolling layouts.
-- Gate A packaging and simulated flashing checks passed. The real-time qualification decision remains open because host job retirement obscures the worker comparison and the original tail regression has not been attributed on FM-1. Gate B remains open for actual audio, timing and LCD acceptance.
+- Gate A packaging and simulated flashing checks passed. The candidate qualifies for controlled experimental testing under the owner-approved gate. Host job retirement obscures the worker comparison and the original tail regression has not been attributed on FM-1. Gate B remains open for actual audio, timing and LCD acceptance.
 
 ## Device verification still required
 
 Use the same saved dense song at 112, 137 and 160 BPM with the same input order. For each tempo, repeat with both filters neutral, active per-track and mix filters, and rapid sweeps through neutral. Include overdubs, EDIT entry/exit, HOME scrolling and all seven visualizers.
 
 Hold GLO for five seconds for callback and worker diagnostics. Move K3 on the diagnostics page to reset the counters before each matched trial. Capture P95, P99, peak, deadline misses, XRUNs, Core 1 work/wait/late/recovery and DMA trace with the same reset window on the previous qualified build and the candidate. The native callback interval is 256 frames at 44,100 Hz, about 5,805 µs. LCD scan timing and encoder-to-visible latency require the physical panel or bench instrumentation. Check USB versus battery indicators, headphone/speaker profiles, LED levels, and app-only browser rollback independently of the musical tests.
+
+## Controlled release verification
+
+The native rebuild reproduced the archived package byte for byte. The loader simulator tested interrupted v0.1.26 → v0.1.29 and rollback v0.1.29 → v0.1.26, including app write limits, boot area, and song/settings preservation. The dedicated update-record sector remains available for interrupted recovery. The browser harness passed staging, disconnect, wrong-loader, wrong-final-identity, package corruption and incompatible package checks. The deployed manifest pins the package and accepts only running FM-1_75000126. The deterministic dual-core fixtures passed, including fallback and recovery. Physical Core 1 status, XRUNs and LCD timing remain owner test items.
+
+[On-device checklist](https://codingslapfu.github.io/SLAP-5/hardware-test-0.1.29.html) · [0.1.26 rollback package](https://codingslapfu.github.io/SLAP-5/SLAP-5-0.1.26.fwsc) · [Pages publication source](https://github.com/CodingSlapfu/SLAP-5/commit/1f515532aec24d466a980850c31a6ef771e03239)
