@@ -28,9 +28,9 @@ Candidate FM-1_75000131. Package SHA-256 `36676ae153435f065c99c2106bdccf43917f7c
 | 22 | Expressive patches | PARTIAL | Prior lead glide and flute vibrato retained. No new voice/DSP changes in this candidate. |
 | 23 | Shorter names | PARTIAL | Short names and factory IDs retained. Current name-width checks pass. Additional renaming remains open. |
 | 24 | Resources and timing | PARTIAL | Native uses 555,204/581,564 app bytes, 87,864/98,304 static RAM and 335,568/344,064 pool bytes, leaving 8,496 free. Host regressions passed. Native Core 1, XRUNs, LCD transfer time and latency remain unmeasured. |
-| 25 | Website and Studio | PARTIAL | Candidate WASM, fonts, instructions and real 240×240 captures staged for separate experimental pages. |
-| 26 | Backup and rollback | PARTIAL | Verified 0.1.30 engineering backup. Interrupted upgrade and rollback simulations retained protected regions and songs/settings byte-for-byte. |
-| 27 | Publication | PARTIAL | Candidate package audit and update simulations completed locally. Public release and installer verification are separate gates. |
+| 25 | Website and Studio | COMPLETE | Versioned WASM, fonts, instructions and 240×240 captures. Hosted Chromium run 44974277439 passed at the exact source. |
+| 26 | Backup and rollback | COMPLETE | Engineering ZIP checked and saved. Interrupted upgrade and rollback simulations retained protected regions and songs/settings byte-for-byte. |
+| 27 | Publication | PARTIAL | Versioned Pages source staged and promoted after the native, host, package, loader, browser and Studio gates passed. GitHub prerelease verifies downloaded assets before promotion. |
 
 ## Graph acceptance
 
@@ -42,3 +42,14 @@ Candidate FM-1_75000131. Package SHA-256 `36676ae153435f065c99c2106bdccf43917f7c
 | Filter and Slicer | FX, then ALGORITHM to Filter or Slicer | DSP curve and Slicer grid captured | Open |
 
 The original acceptance matrix remains in owner-master-acceptance.md. Host tests execute the software path and do not establish FM-1 Core 1 timing.
+
+## Exact release inputs
+
+- [Source checkpoint](https://github.com/CodingSlapfu/SLAP-5/tree/500285e559f83b5059762110096b39ad770bc8c0)
+- [Hosted Chromium qualification](https://github.com/CodingSlapfu/SLAP-5/actions/runs/44974277439)
+- [Experimental installer](https://codingslapfu.github.io/SLAP-5/flash-testing-0.1.31.html)
+- [On-device test and screenshots](https://codingslapfu.github.io/SLAP-5/hardware-test-0.1.31.html)
+- [Verified v0.1.30 rollback package](https://codingslapfu.github.io/SLAP-5/SLAP-5-0.1.30.fwsc)
+- Engineering archive: SLAP-5_0.1.31_Engineering.zip
+
+32 host fixtures passed. Separate EDIT entry/exit runs produced matching PCM at 112, 137 and 160 BPM on three tracks per tempo. The browser harness verified manifest identity and digest, rejected modified packages and wrong target identities, and simulated reconnect, lost USB and incorrect post-reboot identity. The native loader audit enforced application writes within `[0x4000, 0x93000)`, with the dedicated update-record sector available for recovery. It refused corrupted input and preserved the boot head and song/settings data.

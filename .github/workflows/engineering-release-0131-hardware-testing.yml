@@ -1,0 +1,40 @@
+name: Publish SLAP-5 0.1.31 experimental hardware test
+on:
+  push:
+    branches: [slap-5-red-alert-dsp]
+    paths: ['.github/workflows/engineering-release-0131-hardware-testing.yml']
+permissions:
+  actions: read
+  contents: write
+concurrency:
+  group: slap-5-0.1.31-hardware-testing
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify exact package and publish prerelease
+        run: |
+          set -euo pipefail
+          source=500285e559f83b5059762110096b39ad770bc8c0
+          pages=38c2bcc37bf51125ce423bd9aaf20f5974e15302
+          test "$(gh api repos/"$GITHUB_REPOSITORY"/actions/runs/44974277439 --jq '.head_sha + ":" + .conclusion')" = "$source:success"
+          git fetch --no-tags origin "$source" "$pages"
+          git diff --exit-code "$source" HEAD -- device vendor tools
+          stage="$RUNNER_TEMP/slap31"
+          mkdir "$stage"
+          for f in SLAP-5-0.1.31.fwsc SHA256SUMS-0.1.31 release-testing-0.1.31.json; do
+            git show "$pages:$f" > "$stage/$f"
+          done
+          echo "36676ae153435f065c99c2106bdccf43917f7cd57f65fb702e0144d0055ef8be  $stage/SLAP-5-0.1.31.fwsc" | sha256sum -c
+          tag=v0.1.31-hardware-testing
+          gh release create "$tag" --target "$source" --draft --prerelease --latest=false \
+            --title 'SLAP-5 v0.1.31 — Sound Lab Experimental FM-1 Testing' \
+            --notes-file evidence/qualification-0.1.31.md "$stage/"*
+          mkdir "$stage/verify"
+          gh release download "$tag" --dir "$stage/verify"
+          cmp "$stage/SLAP-5-0.1.31.fwsc" "$stage/verify/SLAP-5-0.1.31.fwsc"
+          cmp "$stage/release-testing-0.1.31.json" "$stage/verify/release-testing-0.1.31.json"
+          gh release edit "$tag" --draft=false --prerelease --latest=false
