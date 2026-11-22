@@ -1,0 +1,62 @@
+wait 6100
+tap GLO
+turn ALGO 8
+turn K1 1
+turn SELECT 1
+turn K1 1
+turn SELECT 2
+turn K1 1
+tap HOME
+midi USB 90 3C 70
+midi TRS 90 3C 40
+wait 40
+expect midi_usb_held 1
+expect midi_trs_held 1
+midi B0 40 7F
+midi 80 3C 00
+wait 40
+expect midi_pedal_held 1
+expect midi_trs_held 1
+midi E0 7F 7F
+wait 20
+expect midi_bend_up 1
+midi B0 40 00
+wait 20
+expect midi_usb_held 0
+expect midi_trs_held 1
+midi TRS B0 78 00
+wait 40
+expect midi_trs_held 0
+midi 90 3C 60
+midi 90 40 55
+midi 91 43 55
+midi 92 45 55
+midi 93 47 55
+midi 94 24 55
+wait 20
+expect midi_usb_held 6
+midi B0 40 7F
+midi B0 7B 00
+wait 20
+expect midi_pedal_held 2
+midi B0 78 00
+wait 20
+expect midi_pedal_held 0
+expect midi_usb_held 4
+midi-usb 0
+expect midi_usb_held 0
+midi-usb 1
+tap GLO
+turn SELECT 1
+turn K1 1
+expect speaker_mode 1
+wait 800
+reboot
+wait 6100
+expect speaker_mode 1
+midi 90 3C 60
+wait 20
+expect midi_usb_held 1
+midi 90 3C 00
+wait 20
+expect midi_usb_held 0

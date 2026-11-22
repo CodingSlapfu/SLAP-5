@@ -184,6 +184,26 @@ static void test_slicer_preview(void)
         slap_fx_sample(0, 0.0f);
     slap_fx_slicer_preview(0, &preview);
     assert(preview.replay > initial_replay && preview.slice_position > 0);
+    assert(!(slap_fx_slicer_state(1) & (16u | 64u | 128u)));
+    slap_fx_restore(1, 2, 1u | 3u << 8 | 1u << 16 | 127u << 24);
+    slap_fx_begin(137);
+    slap_fx_transport_step(5, 4828, 4828);
+    assert((slap_fx_slicer_state(0) & 15u) == 4u);
+    assert((slap_fx_slicer_state(1) & 15u) == 5u);
+    slap_fx_slicer_preview(1, &preview);
+    assert(preview.captured == 0 && preview.replay == 0 && preview.slice_position == 0);
+    slap_fx_transport_step(0, 4828, 4828);
+    for (unsigned track = 0; track < 2; ++track) {
+        assert((slap_fx_slicer_state(track) & 15u) == 0u);
+        slap_fx_slicer_preview(track, &preview);
+        assert(preview.captured == 0 && preview.slice_position == 0);
+    }
+    slap_fx_restore(0, 2, 0);
+    slap_fx_begin(160);
+    assert(!(slap_fx_slicer_state(0) & (16u | 64u | 128u)));
+    slap_fx_slicer_preview(0, &preview);
+    assert(preview.captured == 0 && preview.replay == 0);
+
 }
 
 int main(void)

@@ -129,7 +129,10 @@ static unsigned midi_rx_count, midi_tx_count, midi_drops;
 static unsigned midi_ext_step, midi_phase, midi_clock_seen, midi_clock_port;
 static uint32_t midi_last_clock, midi_clock_period, midi_clock_accum;
 static unsigned midi_sent_run, midi_tx_epoch, midi_link, midi_pending, midi_usb_ready;
-static uint32_t midi_held[2][TRACKS][4];
+enum { MIDI_USB_VOICE = 2u, MIDI_PEDAL_HELD = 4u, MIDI_OWNER_MASK = 3u };
+static uint8_t midi_sustain[2][TRACKS];
+static int16_t midi_bend[2][DRUMS];
+static unsigned midi_rx_channel, midi_rx_base;
 typedef struct {
     uint32_t on, off;
     uint8_t channel, track, pitch, velocity, state;
@@ -467,7 +470,9 @@ void app_init(void)
     midi_last_clock = midi_clock_accum = midi_sent_run = midi_tx_epoch = midi_link = midi_usb_ready = 0;
     midi_rx_count = midi_tx_count = midi_drops = 0;
     __builtin_memset(midi_notes, 0, sizeof midi_notes);
-    __builtin_memset(midi_held, 0, sizeof midi_held);
+    __builtin_memset(midi_sustain, 0, sizeof midi_sustain);
+    __builtin_memset(midi_bend, 0, sizeof midi_bend);
+    midi_rx_channel = midi_rx_base = 0;
     __builtin_memset(midi_key_chan, 0, sizeof midi_key_chan);
     auto_mix = options & 1u;
     dancer_pattern = (unsigned)clamp((options >> 1) & 3u, 0, 2);
@@ -696,7 +701,7 @@ static void trigger_voice(unsigned track, unsigned pitch, unsigned velocity, uin
             unsigned held = 0;
             for (unsigned i = 0; i < VOICES; ++i) {
                 const Voice *prior = &voices[i];
-                if (!prior->age || prior->track != track || !prior->manual ||
+                if (!prior->age || prior->track != track || (prior->manual & MIDI_OWNER_MASK) != (unsigned)manual ||
                     prior->releasing || prior->delay || prior->pitch == pitch) continue;
                 if (++held > 1u) { glide_start = 0.0f; break; }
                 glide_start = prior->glide_inc > 0.0f ? prior->glide_inc : prior->inc;
@@ -784,6 +789,10 @@ static void trigger_voice(unsigned track, unsigned pitch, unsigned velocity, uin
                 slap_synth_fm_envelopes(&synths[slot], track_fm_envelopes[track], track_fm_envelopes[track][6]);
         }
         voice->inc = synths[slot].inc;
+        if (manual >= MIDI_USB_VOICE && patch->engine != 4u && patch->engine != 6u) {
+            voice->bend = fm_exp2f((float)midi_bend[manual - MIDI_USB_VOICE][track] / 49152.0f);
+            synths[slot].inc = voice->inc * voice->bend;
+        }
         voice->glide_inc = glide_start;
     } else if (tracks[DRUMS].patch >= DRUM_LEGACY_KITS) {
         voice->kit = (uint8_t)tracks[DRUMS].patch;
@@ -953,7 +962,7 @@ static void midi_sequence_flush(uint32_t now)
 {
     uint32_t options = midi_options;
     unsigned link = plat_midi_out_link();
-    unsigned changed = link != midi_link;
+    unsigned changed = link != midi_link || !midi_usb_ready;
     unsigned flush = changed || midi_tx_epoch != sequence_epoch || !playing ||
         (options & (MIDI_CUSTOM | MIDI_TX)) != (MIDI_CUSTOM | MIDI_TX);
     for (unsigned pass = 0; pass < 2u; ++pass)
@@ -1037,7 +1046,7 @@ static void schedule_event(unsigned track, unsigned row, unsigned step, uint32_t
 static void release_note(unsigned track, unsigned pitch)
 {
     for (unsigned i = 0; i < VOICES; ++i)
-        if (voices[i].manual && voices[i].origin == pitch && voices[i].track == track &&
+        if (voices[i].manual == 1u && voices[i].origin == pitch && voices[i].track == track &&
             (track != DRUMS || voices[i].kit < DRUM_LEGACY_KITS))
             voices[i].releasing = 1;
 }
@@ -1475,21 +1484,63 @@ static unsigned midi_external(void)
     return (midi_options & (MIDI_CUSTOM | MIDI_RX | MIDI_EXT)) == (MIDI_CUSTOM | MIDI_RX | MIDI_EXT);
 }
 
+static void midi_note_off(unsigned source, unsigned track, unsigned pitch, unsigned immediate)
+{
+    unsigned owner = MIDI_USB_VOICE + source;
+    for (unsigned i = 0; i < VOICES; ++i) {
+        Voice *v = &voices[i];
+        if (!v->age || (v->manual & MIDI_OWNER_MASK) != owner || v->track != track ||
+            (pitch < 128u && v->origin != pitch)) continue;
+        record_note_off(track, v->origin);
+        if (immediate) v->age = 0;
+        else if (track != DRUMS || v->kit < DRUM_LEGACY_KITS) {
+            if (midi_sustain[source][track]) v->manual |= MIDI_PEDAL_HELD;
+            else {
+                v->manual = (uint8_t)owner;
+                v->releasing = 1;
+            }
+        }
+    }
+}
+
 static void midi_release_input(unsigned source, unsigned track)
 {
-    for (unsigned w = 0; w < 4u; ++w) {
-        uint32_t mask = midi_held[source][track][w];
-        while (mask) {
-            unsigned bit = (unsigned)__builtin_ctz(mask);
-            unsigned pitch = 32u * w + bit;
-            unsigned other = source ^ 1u;
-            if (!(midi_held[other][track][w] & (1u << bit))) {
-                record_note_off(track, pitch);
-                release_note(track, pitch);
-            }
-            mask &= mask - 1u;
+    midi_sustain[source][track] = 0;
+    if (track < DRUMS) midi_bend[source][track] = 0;
+    midi_note_off(source, track, 128u, 0);
+    if (track == DRUMS)
+        for (unsigned i = 0; i < VOICES; ++i)
+            if (voices[i].track == DRUMS && (voices[i].manual & MIDI_OWNER_MASK) == MIDI_USB_VOICE + source)
+                voices[i].releasing = 1;
+}
+
+static void midi_set_sustain(unsigned source, unsigned track, unsigned on)
+{
+    unsigned previous = midi_sustain[source][track];
+    midi_sustain[source][track] = (uint8_t)on;
+    if (!previous || on) return;
+    unsigned owner = MIDI_USB_VOICE + source;
+    for (unsigned i = 0; i < VOICES; ++i) {
+        Voice *v = &voices[i];
+        if (v->age && v->manual == (owner | MIDI_PEDAL_HELD) && v->track == track) {
+            v->manual = (uint8_t)owner;
+            v->releasing = 1;
         }
-        midi_held[source][track][w] = 0;
+    }
+}
+
+static void midi_set_bend(unsigned source, unsigned track, int value)
+{
+    if (track >= DRUMS) return;
+    midi_bend[source][track] = (int16_t)value;
+    float bend = fm_exp2f((float)value / 49152.0f); /* +/- two semitones */
+    for (unsigned i = 0; i < VOICES; ++i) {
+        Voice *v = &voices[i];
+        if (v->age && v->track == track && (v->manual & MIDI_OWNER_MASK) == MIDI_USB_VOICE + source &&
+            synths[i].engine != 4u && synths[i].engine != 6u) {
+            v->bend = bend;
+            synths[i].inc = v->inc * bend;
+        }
     }
 }
 
@@ -1513,8 +1564,8 @@ static void midi_realtime(unsigned status, unsigned source)
             tempo = (unsigned)clamp((int)((640000u + midi_clock_period / 2u) / midi_clock_period), 40, 240);
         if (playing && ++midi_phase >= 6u) {
             midi_phase = 0;
-            if (midi_ext_step) ++midi_drops;
-            midi_ext_step = 1;
+            if (midi_ext_step < 4u) ++midi_ext_step;
+            else ++midi_drops;
         }
     } else if ((midi_options & MIDI_RUN_RX) && (status == 0xfau || status == 0xfbu || status == 0xfcu)) {
         midi_clock_port = source;
@@ -1604,7 +1655,7 @@ static void read_notes(void)
                         trigger(track, pitch, 100, 0, 1);
                 }
                 uint32_t options = midi_options;
-                unsigned channel = midi_base_channel(options) + track;
+                unsigned channel = (options & MIDI_CUSTOM ? midi_base_channel(options) : 0u) + track;
                 if (midi_key_chan[k] && midi_send_checked(0x8008u | (midi_key_chan[k] - 1u) << 8 |
                     (uint32_t)midi_key_pitch[k] << 16)) midi_key_chan[k] = 0;
                 if (!midi_key_chan[k] && !(options & MIDI_SILENT) && (!(options & MIDI_CUSTOM) ||
@@ -1625,12 +1676,15 @@ static void read_notes(void)
     old_keys = keys;
     uint32_t options = midi_options;
     unsigned ready = plat_midi_usb_ready();
+    unsigned base = options & MIDI_CUSTOM ? midi_base_channel(options) : 0u;
+    unsigned route_changed = base != midi_rx_base;
+    midi_rx_base = base;
     unsigned input_off = (options & MIDI_SILENT) || (options & (MIDI_CUSTOM | MIDI_RX)) == MIDI_CUSTOM;
     unsigned usb_changed = ready != midi_usb_ready || plat_midi_out_link() != midi_link;
     midi_usb_ready = ready;
-    if (input_off || usb_changed) {
+    if (input_off || usb_changed || route_changed) {
         for (unsigned t = 0; t < TRACKS; ++t) midi_release_input(0, t);
-        if (input_off)
+        if (input_off || route_changed)
             for (unsigned t = 0; t < TRACKS; ++t) midi_release_input(1, t);
     }
     if (usb_changed && !ready) midi_sent_run = 0;
@@ -1673,26 +1727,28 @@ static void read_notes(void)
             }
             continue;
         }
-        unsigned track = (status & 15u) - midi_base_channel(options);
+        unsigned track = (status & 15u) - base;
         unsigned pitch = (packet >> 16) & 127u, velocity = (packet >> 24) & 127u;
         if (track >= TRACKS) continue;
-        uint32_t bit = 1u << (pitch & 31u);
-        uint32_t *held = &midi_held[source][track][pitch >> 5];
+        midi_rx_channel = (status & 15u) + 1u;
         if ((status & 0xf0u) == 0x90u && velocity) {
-            *held |= bit;
-            release_note(track, pitch);
+            // Repeated notes retrigger only this input's voice. Other ports
+            // and panel keys can own the same pitch independently.
+            unsigned sustain = midi_sustain[source][track];
+            midi_sustain[source][track] = 0;
+            midi_note_off(source, track, pitch, 0);
+            midi_sustain[source][track] = (uint8_t)sustain;
             record_input(track, pitch, velocity);
-            trigger(track, pitch, velocity, 0, 1);
+            trigger(track, pitch, velocity, 0, MIDI_USB_VOICE + source);
         } else if ((status & 0xf0u) == 0x80u || (status & 0xf0u) == 0x90u) {
-            *held &= ~bit;
-            if (!(midi_held[source ^ 1u][track][pitch >> 5] & bit)) {
-                record_note_off(track, pitch);
-                release_note(track, pitch);
-            }
+            midi_note_off(source, track, pitch, 0);
         } else if ((status & 0xf0u) == 0xb0u && (pitch == 120u || pitch == 123u)) {
-            midi_release_input(source, track);
+            midi_note_off(source, track, 128u, pitch == 120u);
+        } else if ((status & 0xf0u) == 0xe0u && (options & MIDI_CUSTOM)) {
+            midi_set_bend(source, track, (int)(pitch | velocity << 7) - 8192);
         } else if ((status & 0xf0u) == 0xb0u && (options & (MIDI_CUSTOM | MIDI_CC_RX)) == (MIDI_CUSTOM | MIDI_CC_RX)) {
-            if (pitch == 7u || pitch == 10u) {
+            if (pitch == 64u) midi_set_sustain(source, track, velocity >= 64u);
+            else if (pitch == 7u || pitch == 10u) {
                 unsigned shift = pitch == 7u ? 16u : 8u;
                 unsigned value = pitch == 10u && velocity == 64u ? 128u : (velocity * 255u + 63u) / 127u;
                 tracks[track].mix = (tracks[track].mix & ~(255u << shift)) | value << shift;
@@ -1842,7 +1898,7 @@ static inline __attribute__((always_inline)) float render_voice_signal(Voice *v,
                 v->glide_inc = 0.0f;
                 pitch_inc = v->inc;
             } else v->glide_inc = pitch_inc;
-            s->inc = pitch_inc;
+            s->inc = pitch_inc * v->bend;
         }
         if (v->lfo_wave) {
             v->lfo_gain = fm_minf(1.0f, v->lfo_gain + v->lfo_fade);
@@ -1853,7 +1909,7 @@ static inline __attribute__((always_inline)) float render_voice_signal(Voice *v,
                     v->lfo_hold = (int16_t)(random_word() & 65535u) * (1.0f / 32768.0f);
             }
             float value = lfo_shape(v->lfo_wave, v->lfo_phase, v->lfo_hold);
-            s->inc = pitch_inc * (1.0f + v->lfo_depth * fm_maxf(0.0f, v->lfo_gain) * value);
+            s->inc = pitch_inc * v->bend * (1.0f + v->lfo_depth * fm_maxf(0.0f, v->lfo_gain) * value);
         }
         s->operator_release = v->releasing;
         return slap_synth_sample(s) * v->env * v->velocity * 0.18f;
@@ -2673,9 +2729,9 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
     unsigned external_clock = midi_external();
     for (uint32_t i = 0; i < frames; ++i) {
         uint32_t section = profile ? plat_ticks24() : 0;
-        if ((playing || home_count_in) && (external_clock && !home_count_in ? midi_ext_step : until_step == 0)) {
+        if ((playing || home_count_in) && (external_clock && !home_count_in ? i == 0 && midi_ext_step : until_step == 0)) {
             midi_sample = i;
-            midi_ext_step = 0;
+            if (midi_ext_step) --midi_ext_step;
             if (recording && !rec_running && rec_start_mode) {
                 if (step_number < 4) {
                     click_remaining = CLICK_SAMPLES;
@@ -4805,12 +4861,17 @@ static void draw_panel(void)
         }
         case PREF_MIDI_MON:
             labels[0] = "USB MIDI"; values[0] = midi_usb_ready ? "READY" : "NO HOST";
-            labels[1] = "CLOCK"; values[1] = !midi_external() ? "LOCAL" :
-                midi_clock_period ? "RECEIVED" : "WAITING";
+            labels[1] = midi_external() ? "EXT CLOCK" : "INT CLOCK";
+            if (midi_external() && midi_clock_period) {
+                decimal(number, tempo);
+                values[1] = number;
+            } else values[1] = midi_external() ? "WAITING" : "LOCAL";
             labels[2] = "RX / TX"; decimal(level, midi_rx_count % 10000u);
             unsigned end = 0; while (level[end]) ++end;
             level[end++] = '/'; decimal(level + end, midi_tx_count % 10000u); values[2] = level;
-            labels[3] = "TX / STEP DROPS"; decimal(other, midi_drops % 10000u); values[3] = other;
+            labels[3] = "DROPS / RX CH"; decimal(other, midi_drops % 10000u);
+            end = 0; while (other[end]) ++end;
+            other[end++] = '/'; decimal(other + end, midi_rx_channel); values[3] = other;
             break;
         case PREF_DIAG:
             labels[0] = "DIAGNOSTICS"; values[0] = "PRESS SEL"; break;
@@ -6092,6 +6153,25 @@ int app_expect(const char *name, int *result)
     else if (name_matches(name, "chord_mode")) *result = (int)((tracks[slap_ui.track].harmony >> 16) & 255u);
     else if (name_matches(name, "midi_rx")) *result = (int)midi_rx_count;
     else if (name_matches(name, "midi_tx")) *result = (int)midi_tx_count;
+    else if (name_matches(name, "midi_usb_held") || name_matches(name, "midi_trs_held") ||
+             name_matches(name, "midi_panel_held") || name_matches(name, "midi_pedal_held")) {
+        unsigned owner = name[5] == 'u' ? 2u : name[5] == 't' ? 3u : 1u;
+        unsigned pedal = name_matches(name, "midi_pedal_held");
+        *result = 0;
+        for (unsigned i = 0; i < VOICES; ++i)
+            if (voices[i].age && !voices[i].releasing &&
+                (pedal ? !!(voices[i].manual & MIDI_PEDAL_HELD) : (voices[i].manual & MIDI_OWNER_MASK) == owner))
+                ++*result;
+    }
+    else if (name_matches(name, "midi_bend_up")) {
+        *result = 0;
+        for (unsigned i = 0; i < VOICES; ++i)
+            if (voices[i].age && !voices[i].releasing && (voices[i].manual & MIDI_OWNER_MASK) == 2u &&
+                voices[i].track < DRUMS && synths[i].inc > voices[i].inc * 1.10f) ++*result;
+    }
+    else if (name_matches(name, "battery_status")) *result = battery_status;
+    else if (name_matches(name, "low_battery")) *result = (int)low_battery;
+    else if (name_matches(name, "speaker_mode")) *result = (int)speaker_mode;
     else if (name_matches(name, "midi_pending")) *result = (int)midi_pending;
     else if (name_matches(name, "midi_usb")) *result = (int)midi_usb_ready;
     else if (name_matches(name, "midi_drops")) *result = (int)midi_drops;

@@ -1,0 +1,19 @@
+wait 6100
+expect battery_status 3
+expect low_battery 0
+battery 0
+wait 520
+expect battery_status 0
+expect low_battery 0
+wait 3050
+expect low_battery 1
+shot home-low-battery.png
+battery 4
+wait 540
+expect battery_status 4
+expect low_battery 0
+shot home-usb.png
+battery -1
+wait 550
+expect battery_status -1
+expect low_battery 0
