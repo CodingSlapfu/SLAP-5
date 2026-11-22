@@ -180,8 +180,10 @@ static void visualizer_draw(unsigned kind, unsigned time, unsigned intro)
         case 1:
             for (int x = 0; x < 240; x += 4) {
                 unsigned t = (unsigned)x / 48u;
-                int field = visual_wave((unsigned)x * 13u + time * 6u, 14 + energy[t] / 2);
+                int field = visual_wave((unsigned)x * 13u + time * 6u, 14 + energy[t] / 2 + (int)(levels[0] * 17));
                 int peak = 143 + visual_wave(x * 25u - time * 3u, 12 + energy[t] + (int)(levels[t] * 21)) + field;
+                int spike = visual_wave((unsigned)x * 49u + time * 9u, (int)note_activity[t] / 4);
+                peak = clamp(peak - (spike > 0 ? spike : 0), 39, 196);
                 int mirror = 173 - field / 2;
                 cv_rect(x, peak - sy, 4, mirror - peak > 0 ? mirror - peak : 1, track_surface[t]);
                 cv_rect(x, peak - sy, 4, 2, track_color[t]);
@@ -189,7 +191,10 @@ static void visualizer_draw(unsigned kind, unsigned time, unsigned intro)
                 if (field < -8) cv_rect(x + 1, peak - sy - 2, 1, 1, C_WHITE);
             }
             break;
-        case 2:
+        case 2: {
+            unsigned tilt_phase = (time % 1920000u) * tempo / 1875u;
+            int tilt = visual_wave(tilt_phase, 23);
+            int opening = 46 + visual_wave(tilt_phase + 256u, 14);
             for (unsigned t = 0; t < TRACKS; ++t) {
                 int radius = 24 + (int)t*17 + energy[t]/5;
                 int depth = 14 + (int)(levels[0] * 13);
@@ -198,7 +203,7 @@ static void visualizer_draw(unsigned kind, unsigned time, unsigned intro)
                     int wave_radius = clamp(radius + 13 - (int)activity / 5, 12, 116);
                     for (unsigned angle = 0; angle < 1024u; angle += 64u) {
                         int x = 120 + visual_wave(angle + 256u, wave_radius);
-                        int y = 130 + visual_wave(angle, wave_radius / 2);
+                        int y = 130 + visual_wave(angle, wave_radius * opening / 100) + (x - 120) * tilt / 100;
                         cv_rect(x, y - sy, 2, 2, track_color[t]);
                     }
                 }
@@ -206,7 +211,8 @@ static void visualizer_draw(unsigned kind, unsigned time, unsigned intro)
                     unsigned phase = k + time*(3u+t);
                     if (playing) phase += (positions & 63u) * 16u + step_progress;
                     int x = 120 + visual_wave(phase+256, radius);
-                    int y = 130 + visual_wave(phase, radius/2) + visual_wave(2*phase+t*80u,depth);
+                    int y = 130 + visual_wave(phase, radius * opening / 100)
+                        + (x - 120) * tilt / 100 + visual_wave(2*phase+t*80u,depth);
                     if (y + 4 < sy || y - 4 >= sy + 40) continue;
                     visual_disc(x, y, 4, sy, track_surface[t]);
                     visual_disc(x, y, 2 + (int)(t == 4), sy, track_color[t]);
@@ -214,8 +220,9 @@ static void visualizer_draw(unsigned kind, unsigned time, unsigned intro)
                 }
             }
             break;
+        }
         case 3: {
-            static const uint8_t sizes[] = {2,4,5,3,12,9,6,6};
+            static const uint8_t sizes[] = {5,7,8,6,13,9,6,6};
             static const uint16_t planet[] = { RGB(160,151,137), RGB(229,185,109),
                 RGB(51,151,224), RGB(210,78,44), RGB(218,158,113), RGB(222,188,116),
                 RGB(116,216,221), RGB(46,80,222) };
@@ -242,9 +249,18 @@ static void visualizer_draw(unsigned kind, unsigned time, unsigned intro)
                 unsigned phase = (orbit_phase[i] >> 12) + i * 113u;
                 int x = 120+visual_wave(phase+256,r), y = 128+visual_wave(phase,r*3/4);
                 if (i == 5) cv_line(x-13,y+4-sy,x+13,y-4-sy,RGB(237,202,142));
-                if (i < TRACKS && energy[i] > 8)
-                    visual_disc(x, y, sizes[i] + 2 + energy[i] / 13, sy, track_surface[i]);
-                int size = sizes[i] + (i == 1 ? energy[1] / 8 : 0);
+                int size = sizes[i];
+                if (i < TRACKS) {
+                    size += clamp(energy[i] / 7, 0, 7);
+                    if (energy[i] > 8) {
+                        visual_disc(x, y, size + 3, sy, track_rule[i]);
+                        for (unsigned tail = 1; tail <= 4; ++tail) {
+                            unsigned trail = phase - tail * 27u;
+                            visual_disc(120 + visual_wave(trail + 256u, r),
+                                128 + visual_wave(trail, r * 3 / 4), 5 - (int)tail, sy, track_rule[i]);
+                        }
+                    }
+                }
                 uint16_t body = i < TRACKS ? track_color[i] : planet[i];
                 if (i == 2 && energy[2] < 6) body = track_rule[2];
                 if (i == 4 && note_activity[4] > 12u)
@@ -260,10 +276,14 @@ static void visualizer_draw(unsigned kind, unsigned time, unsigned intro)
         }
         case 5: {
             if (sy == 40) {
-                unsigned step = (positions & 15u) + 1u;
-                char value[] = {(char)('0' + step / 10u), (char)('0' + step % 10u), 0};
-                cv_text(42, 1, &FONT_M, "STEP", track_color[0]);
-                cv_text(134, 0, &FONT_L, value, C_WHITE);
+                unsigned position = positions;
+                char bar[12];
+                decimal(bar, (position >> 4) + 1u);
+                char beat[] = {(char)('1' + ((position >> 2) & 3u)), 0};
+                cv_text(8, 5, &FONT_B, "BAR", track_color[0]);
+                cv_text(45, 1, &FONT_M, bar, C_WHITE);
+                cv_text(145, 5, &FONT_B, "BEAT", track_color[0]);
+                cv_text(205, 1, &FONT_M, beat, C_WHITE);
             }
             for (unsigned track = 0; track < TRACKS; ++track) {
                 int y = 77 + (int)track * 29;

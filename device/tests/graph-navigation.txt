@@ -1,0 +1,62 @@
+wait 6100
+shot home.png
+turn SELECT 1
+tap EDIT
+expect page 3
+shot sound.png
+turn ALGO 1
+wait 48
+shot fm6-idle.png
+key w0 down
+wait 230
+shot fm6-active.png
+turn K4 1
+wait 100
+shot fm6-branch.png
+turn ALGO 1
+shot fm6-operators.png
+turn ALGO 1
+shot fm6-envelope.png
+turn ALGO 1
+shot fm6-feedback.png
+key w0 up
+tap HOME
+expect page 0
+turn SELECT 2
+turn PRESET -25
+expect patch 12
+tap EDIT
+turn ALGO 1
+wait 100
+shot wavetable-idle.png
+turn K1 28
+turn K2 30
+key w2 down
+wait 300
+shot wavetable-active.png
+wait 600
+shot wavetable-scan.png
+key w2 up
+tap FX
+turn ALGO 1
+shot filter.png
+turn ALGO 1
+shot slicer.png
+tap HOME
+tap HOME
+expect page 6
+expect tempo 112
+turn ALGO 12
+expect tempo 112
+turn SELECT 2
+wait 100
+shot gravity-rings.png
+turn SELECT 1
+wait 100
+shot solar-system.png
+turn SELECT 1
+wait 100
+shot digital-vu.png
+tap HOME
+turn ALGO 1
+expect tempo 113

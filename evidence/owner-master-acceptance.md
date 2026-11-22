@@ -91,3 +91,5 @@ The native rebuild reproduced the archived package byte for byte. The loader sim
 ## Owner-tested v0.1.29 and the v0.1.30 follow-up
 
 The owner installed v0.1.29 and reported it is working well overall. The [v0.1.30 Nexus supplement](qualification-0.1.30.md) records the typography and layout changes, Sound Lab access, transport-driven Dancer, tape-effect fixes, host timing, verified rollback and the remaining FM-1 checks. The earlier 28 items remain the historical acceptance baseline.
+
+The [v0.1.31 graph and hardware feedback qualification](qualification-0.1.31.md) records the separate graph acceptance matrix and open physical checks.

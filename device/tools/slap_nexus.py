@@ -53,7 +53,7 @@ def outline(text, weight, tabular):
 
 def build(directory):
     directory.mkdir(parents=True, exist_ok=True)
-    for style, weight, base in (("Regular", 52, "Medium"), ("Bold", 84, "Bold")):
+    for style, weight, base in (("Regular", 67, "Medium"), ("Bold", 104, "Bold")):
         font = TTFont(BASE / f"BarlowSemiCondensed-{base}.ttf", recalcTimestamp=False)
         cmap = font.getBestCmap()
         for letter, design in STROKES.items():
