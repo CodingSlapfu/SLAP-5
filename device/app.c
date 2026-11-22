@@ -4239,7 +4239,7 @@ static void draw_fm_routing(unsigned track, unsigned algorithm, uint32_t config,
         return;
     }
     static const uint8_t x[] = {183, 120, 57, 57, 120, 183};
-    static const uint8_t y[] = {70, 70, 70, 24, 24, 24};
+    static const uint8_t y[] = {67, 67, 67, 24, 24, 24};
     static const uint8_t sources[] = {5, 4, 3, 2, 1, 4};
     static const uint8_t targets[] = {4, 3, 2, 1, 0, 0};
     const volatile SlapSynth *live = graph_voice(track, 0);
@@ -5018,32 +5018,29 @@ static void draw_panel(void)
                 return;
             }
             if (patch->engine == 0u) {
-                unsigned factory = !config;
                 unsigned algorithm = graph_fm_algorithm(patch, config);
                 cv_text(8, 1, &FONT_M, edit_page == 1u ? "FM6 ROUTING" : "FM6 OPERATORS", c);
-                cv_text(8, 25, &FONT_XS, "K1 OP  K2 RATIO  K3 LEVEL  K4 ALG", C_WHITE);
+                cv_text(8, 25, &FONT_T, "SELECT OP / SEL+SELECT TRACK", C_WHITE);
                 cv_blit(0, 80);
-                for (int y = 120; y < 208; y += 44) {
-                    cv_begin(240, 44, background);
+                for (int y = 120; y < 200; y += 40) {
+                    cv_begin(240, 40, background);
                     draw_fm_routing(selected, algorithm, config, c, y - 120);
                     cv_blit(0, y);
                 }
-                cv_begin(240, 32, background);
+                cv_begin(240, 40, background);
+                decimal(number, timbre_operator + 1u);
+                draw_performance_knob(0, "OP", number, (int)timbre_operator * 40 - 100, c);
                 unsigned ratio = (config >> (timbre_operator * 3u) & 7u) + 1u;
-                decimal(number, ratio / 2u);
-                unsigned end = 0;
-                while (number[end]) ++end;
-                number[end++] = '.';
-                number[end++] = ratio & 1u ? '5' : '0';
-                number[end] = 0;
-                cv_text(8, 2, &FONT_XS, "RATIO", c);
-                cv_text(55, 2, &FONT_XS, factory ? "AUTO" : number, C_WHITE);
-                cv_text(99, 2, &FONT_XS, "LEVEL", c);
-                decimal(number, factory ? 3u : config >> (18u + timbre_operator * 2u) & 3u);
-                cv_text(145, 2, &FONT_XS, number, C_WHITE);
-                static const char *const routing[] = {"SERIAL", "BRANCH", "LAYER", "SERIAL"};
-                cv_text(8, 17, &FONT_XS, routing[algorithm], C_WHITE);
-                cv_text(76, 17, &FONT_T, "SEL+SELECT TRACK", C_WHITE);
+                char ratio_value[] = {(char)('0' + ratio / 2u), '.', ratio & 1u ? '5' : '0', 0};
+                draw_performance_knob(60, "RATIO", config ? ratio_value : "AUTO",
+                    config ? (int)(ratio - 1u) * 200 / 7 - 100 : 0, c);
+                unsigned level = config ? config >> (18u + timbre_operator * 2u) & 3u : 3u;
+                decimal(number, level);
+                draw_performance_knob(120, "LEVEL", number, (int)level * 200 / 3 - 100, c);
+                static const char *const routing[] = {"SER", "BR", "LAY"};
+                draw_performance_knob(180, "ALG", routing[algorithm], (int)algorithm * 100 - 100, c);
+                cv_blit(0, 200);
+                return;
             } else {
                 cv_text(8, 2, &FONT_B, "WAVETABLE", c);
                 cv_text(153, 4, &FONT_T, "FRAME SCAN", C_WHITE);
@@ -5112,8 +5109,6 @@ static void draw_panel(void)
                 cv_blit(0, 200);
                 return;
             }
-            cv_blit(0, 208);
-            return;
         }
         if (edit_page && selected < DRUMS) {
             cv_text(8, 2, &FONT_B, slap_engine_names[patch->engine], c);
