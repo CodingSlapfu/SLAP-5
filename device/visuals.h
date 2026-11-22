@@ -8,7 +8,7 @@ static void slap_wordmark(int center, int y)
 }
 
 static const uint16_t track_color[] = {
-    RGB(0,225,255), RGB(157,62,255), RGB(255,37,158), RGB(255,175,16), RGB(21,255,102)
+    RGB(0,255,255), RGB(141,0,255), RGB(255,0,148), RGB(255,167,0), RGB(0,255,46)
 };
 
 static const uint16_t track_surface[] = {
@@ -63,12 +63,14 @@ static void dancer_draw(unsigned time)
     unsigned energy = 0;
     for (unsigned track = 0; track < TRACKS; ++track)
         energy += track_energy[track] + note_activity[track] * 2u;
-    unsigned active = dancer_reactivity && energy > 12u;
-    unsigned cycle = active ? ((positions & 31u) * 15u + step_progress) / 16u : (time / 190u) % 4u;
-    if (active && !playing) cycle = time / 19u;
-    unsigned pose = active ? (cycle + dancer_pattern * 10u) % 30u : (cycle + 6u * dancer_pattern) % 30u;
+    unsigned active = playing;
+    unsigned accent = playing && dancer_reactivity && energy > 12u;
+    unsigned cycle = ((positions & 31u) * 15u + step_progress) / 16u;
+    unsigned recovery = time / 260u % 10u;
+    unsigned pose = active ? (cycle + dancer_pattern * 8u) % 24u :
+        24u + (recovery <= 5u ? recovery : 10u - recovery);
     unsigned light_track = ((positions >> 2) + dancer_pattern) % TRACKS;
-    int sway = active ? 0 : visual_wave(time * 2u, 2);
+    int sway = active ? 0 : visual_wave(time * 2u, 1);
     const uint8_t *span = dancer_frames[pose];
     enum { DANCER_LIFT = 14 };
     int source_row = 0;
@@ -83,7 +85,7 @@ static void dancer_draw(unsigned time)
     }
     for (int sy = 0; sy < 240; sy += 40) {
         cv_begin(240, 40, C_BLACK);
-        if (active && dancer_lighting) {
+        if (accent && dancer_lighting) {
             int spread = 16 + (int)(active ? note_activity[DRUMS] / 2u : 3u);
             cv_line(38, 9 - sy, 120 - spread, 218 - sy, track_rule[light_track]);
             cv_line(201, 9 - sy, 120 + spread, 218 - sy, track_rule[(light_track + 2u) % TRACKS]);

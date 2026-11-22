@@ -4,7 +4,7 @@
 #include "fastmath.h"
 #include "plat.h"
 
-enum { TRACK_DELAY = 12288, MIX_DELAY = 3072, CHORUS = 1024, ROOM = 2048, SLICE_CAPTURE = 640, SLICE_RAMP = 128 };
+enum { TRACK_DELAY = 12288, MIX_DELAY = 4800, CHORUS = 1024, ROOM = 2048, SLICE_CAPTURE = 640, SLICE_RAMP = 128 };
 enum { MAIN_FX, FILTER, SLICER, INSERT, DISPLAY, REVERB, DELAY, CHORUS_FX, DRIVE };
 
 const char *const slap_fx_pages[SLAP_FX_PAGES] = {
@@ -44,7 +44,7 @@ typedef struct {
     unsigned gate_step, slice_rate, nominal_clock;
     uint32_t delay_pos, chorus_pos, room_pos, delay_div, crush_count;
     uint32_t revision, bpm, room_short, room_long, live, assigned;
-    unsigned tape_mode;
+    unsigned tape_mode, tape_length;
     uint32_t tape_controls;
     float tape_age, tape_phase, tape_wet, tape_tone;
     float previous_sample, transition;
@@ -332,10 +332,16 @@ void slap_fx_begin_assigned(unsigned bpm, uint32_t live, uint32_t assignments)
         uint32_t mix = master ? 127 : settings[t][DISPLAY];
         uint32_t drive = master ? 0 : settings[t][DRIVE];
         unsigned mode = action & 15u;
-        if (mode == 10u || mode == 11u) {
+        if (mode == 3u || mode == 10u || mode == 11u) {
             if (f->tape_mode != mode || (previous_action & 15u) != mode) {
                 f->tape_mode = mode;
                 f->tape_age = f->tape_phase = 0.0f;
+                unsigned capacity = master ? MIX_DELAY : TRACK_DELAY;
+                unsigned step = 44100u * 15u / (4u * bpm);
+                f->tape_length = mode == 3u ? step : step / 2u;
+                if (f->tape_length > capacity / 2u - 8u && mode == 11u)
+                    f->tape_length = capacity / 2u - 8u;
+                if (f->tape_length > capacity - 8u) f->tape_length = capacity - 8u;
             }
             f->tape_controls = (action & 15u) | (controls & 63u) << 4 |
                 (controls >> 8 & 63u) << 10 | (controls >> 16 & 63u) << 16 |
@@ -349,7 +355,7 @@ void slap_fx_begin_assigned(unsigned bpm, uint32_t live, uint32_t assignments)
             switch (mode) {
             case 1: slice = fx_word(1, 1, speed >> 5, amount); break;
             case 2: slice = fx_word(2, 1, speed >> 5, amount); break;
-            case 3: slice = fx_word(2, 4, speed >> 5, amount); break;
+            case 3: break; // Beat Repeat owns its capture independently of the slicer.
             case 4: filter = fx_word(5 + tone / 2, amount, speed / 3, space); break;
             case 5: delay = fx_word(amount, 1 + speed / 32, space / 2, tone); break;
             case 6:
@@ -524,11 +530,12 @@ static inline __attribute__((always_inline)) float tape_sample(Fx *f, int16_t *e
     float amount = (f->tape_controls >> 4 & 63u) * (1.0f / 63.0f);
     float rate = (f->tape_controls >> 10 & 63u) * (1.0f / 63.0f);
     float tone = (f->tape_controls >> 16 & 63u) * (1.0f / 63.0f);
-    float space = (f->tape_controls >> 22 & 63u) * (1.0f / 63.0f);
-    f->tape_wet += ((held ? (mode == 10u ? 1.0f : amount) : 0.0f) - f->tape_wet) * 0.009f;
+    int captured = f->tape_age >= (float)f->tape_length;
+    int engage = held && (mode != 3u || captured);
+    f->tape_wet += ((engage ? (mode == 10u ? 1.0f : amount) : 0.0f) - f->tape_wet) * 0.009f;
     unsigned pos = f->delay_pos;
     unsigned write_phase = f->delay_div++ & 3u;
-    if (write_phase == 0u) {
+    if (write_phase == 0u && (f->tape_mode != 3u || !captured)) {
         echo[pos] = pack(dry);
         if (side && f->tape_mode == 10u) mix_side[pos] = pack(*side);
         if (++pos == capacity) pos = 0;
@@ -539,7 +546,7 @@ static inline __attribute__((always_inline)) float tape_sample(Fx *f, int16_t *e
         // The read head starts at normal speed and coasts to zero.
         // Its maximum drift fits inside the shortest tape ring.
         if (held && f->tape_age < 1.0f) {
-            f->tape_age = fm_minf(1.0f, f->tape_age + (0.000058f + 0.000067f * rate));
+            f->tape_age = fm_minf(1.0f, f->tape_age + (0.000045f + 0.000018f * rate));
             float progress = f->tape_age;
             f->tape_phase += 0.25f * progress * (2.0f - progress);
         }
@@ -551,21 +558,38 @@ static inline __attribute__((always_inline)) float tape_sample(Fx *f, int16_t *e
             float side_wet = gain > 0.0f ? tape_read(mix_side, capacity, pos, delay) * gain : 0.0f;
             *side += (side_wet - *side) * f->tape_wet;
         }
+    } else if (f->tape_mode == 3u) {
+        if (f->tape_age < (float)f->tape_length) {
+            f->tape_age += 0.25f;
+            wet = dry;
+        } else {
+            float length = (float)f->tape_length;
+            float phase = f->tape_phase;
+            f->tape_phase += 0.25f;
+            if (f->tape_phase >= length) f->tape_phase -= length;
+            float sample = tape_read(echo, capacity, pos, fm_maxf(1.0f, length - phase));
+            float window = fm_minf(1.0f, fm_minf(phase, length - phase) * (1.0f / 20.0f));
+            wet = dry + (sample - dry) * window;
+        }
     } else {
-        float length = 192.0f + 640.0f * space;
-        if (f->tape_age < 2048.0f) f->tape_age += 0.25f;
-        if (f->tape_age < 2.0f * length + 4.0f) {
+        float length = (float)f->tape_length;
+        float ready = 2.0f * length + 4.0f;
+        if (f->tape_age < ready) f->tape_age += 0.25f;
+        if (f->tape_age < ready) {
             wet = dry;
         } else {
             float phase = f->tape_phase;
-            f->tape_phase += 0.25f + rate * 0.125f;
-            if (f->tape_phase >= length) f->tape_phase = 0.0f;
+            // The write head advances by 1/4 ring sample per output sample.
+            // Increasing the delay by twice that advances the read head backwards at unit speed.
+            f->tape_phase += 0.25f;
+            if (f->tape_phase >= length) f->tape_phase -= length;
             float window = fm_minf(1.0f, fm_minf(phase, length - phase) * (1.0f / 32.0f));
-            float reverse = tape_read(echo, capacity, pos, 2.0f + 2.0f * phase);
+            float reverse = tape_read(echo, capacity, pos, 2.0f + 2.0f * phase - 0.25f * write_phase);
             wet = dry + (reverse - dry) * window;
         }
     }
-    if (f->tape_mode == 11u && f->tape_age < 2.0f * (192.0f + 640.0f * space) + 4.0f)
+    if ((f->tape_mode == 11u && f->tape_age < 2.0f * (float)f->tape_length + 4.0f) ||
+        (f->tape_mode == 3u && !captured))
         f->tape_tone = dry;
     else f->tape_tone += (wet - f->tape_tone) * (0.05f + 0.80f * tone);
     if (!held && f->tape_wet < 0.00005f) f->tape_mode = 0;

@@ -11,24 +11,59 @@ static void test_live_tape(unsigned mode)
     float previous = 0.0f, tail_peak = 0.0f, largest_step = 0.0f;
     float effect_difference = 0.0f;
     uint32_t saved = slap_fx_config(target, 6);
-    for (unsigned i = 0; i < 24000; ++i) {
+    for (unsigned i = 0; i < 34000; ++i) {
         if (i == 0) slap_fx_begin_live(112, target | mode << 3 | 63u << 7 | 33u << 13 | 47u << 19);
-        if (i == 18000) slap_fx_begin_live(112, 0);
+        if (i == 28000) slap_fx_begin_live(112, 0);
         float dry = 0.16f * sinf(i * 0.083f);
         float sample = slap_fx_sample(target, dry);
         assert(isfinite(sample) && fabsf(sample) < 0.18f);
-        if (i >= 12000 && i < 18000) {
+        if (i >= 24000 && i < 28000) {
             effect_difference += fabsf(sample - dry);
             tail_peak = fmaxf(tail_peak, fabsf(sample));
         }
         if (i) largest_step = fmaxf(largest_step, fabsf(sample - previous));
-        if (i > 21000) assert(fabsf(sample - dry) < 0.0001f);
+        if (i > 31000) assert(fabsf(sample - dry) < 0.0001f);
         previous = sample;
     }
     assert(largest_step < 0.035f);
     if (mode == 10) assert(tail_peak < 0.001f);
     else assert(effect_difference > 10.0f);
     assert(slap_fx_config(target, 6) == saved);
+}
+
+static void test_repeat_and_reverse_direction(void)
+{
+    const unsigned step = 44100u * 15u / 112u / 4u * 4u;
+    for (unsigned target = 0; target <= SLAP_FX_TRACKS; target += SLAP_FX_TRACKS) {
+        slap_fx_init();
+        slap_fx_begin_live(112, target | 3u << 3 | 63u << 7 | 63u << 19);
+        float first = 0.0f, second = 0.0f;
+        for (unsigned i = 0; i < 3u * step; ++i) {
+            float x = i < step ? 0.18f : 0.0f;
+            if (target < SLAP_FX_TRACKS) x = slap_fx_sample(target, x);
+            else { float right = x; slap_fx_mix_sample(&x, &right); }
+            if (i == step + step / 2u) first = x;
+            if (i == 2u * step + step / 2u) second = x;
+        }
+        assert(first > 0.15f && second > 0.15f);
+        slap_fx_begin_live(112, 0);
+        for (unsigned i = 0; i < 4096u; ++i) {
+            if (target < SLAP_FX_TRACKS) slap_fx_sample(target, 0.0f);
+            else { float left = 0.0f, right = 0.0f; slap_fx_mix_sample(&left, &right); }
+        }
+    }
+    slap_fx_init();
+    slap_fx_begin_live(112, 2u | 11u << 3 | 63u << 7 | 63u << 19);
+    float earlier = 0.0f, later = 0.0f;
+    for (unsigned i = 0; i < 7400u; ++i) {
+        float x = slap_fx_sample(2, i * 0.000028f);
+        if (i == 6400u) earlier = x;
+        if (i == 7300u) later = x;
+    }
+    assert(earlier - later > 0.020f);
+    slap_fx_begin_live(112, 0);
+    for (unsigned i = 0; i < 4096u; ++i) slap_fx_sample(2, 0.0f);
+    puts("Beat Repeat recaptures on track and mix; Rewind reverses a rising ramp.");
 }
 
 static void test_full_mix(void)
@@ -66,7 +101,7 @@ static void test_stereo_brake_pitch(void)
     unsigned crossings[3] = {0}, stereo_frames = 0;
     float previous = 0.0f;
     slap_fx_begin_live(112, SLAP_FX_TRACKS | 10u << 3 | 63u << 7 | 63u << 19);
-    for (unsigned i = 0; i < 19000u; ++i) {
+    for (unsigned i = 0; i < 26000u; ++i) {
         float left = 0.18f * sinf(i * 0.09f), right = -left;
         slap_fx_mix_sample(&left, &right);
         if (i > 300u && i < 10000u) {
@@ -75,7 +110,7 @@ static void test_stereo_brake_pitch(void)
         }
         if (i >= 2000u && i < 11000u && previous < 0.0f && left >= 0.0f)
             ++crossings[(i - 2000u) / 3000u];
-        if (i > 17700u) assert(fabsf(left) < 0.001f && fabsf(right) < 0.001f);
+        if (i > 24000u) assert(fabsf(left) < 0.001f && fabsf(right) < 0.001f);
         previous = left;
     }
     assert(stereo_frames > 4000u);
@@ -136,6 +171,8 @@ int main(void)
     slap_fx_init();
     test_live_tape(10);
     test_live_tape(11);
+    test_live_tape(3);
+    test_repeat_and_reverse_direction();
     test_full_mix();
     test_stereo_brake_pitch();
     test_assignable_dsp();

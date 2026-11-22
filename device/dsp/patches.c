@@ -123,7 +123,7 @@ const SlapPatch slap_patches[SLAP_PATCHES] = {
     {"GONG MALLET", 22, 118, 85, 6, 86, 57, 91},
     {"GRAIN VEIL", 23, 41, 36, 75, 85, 105, 108},
     {"ICE DUST", 23, 102, 100, 37, 62, 101, 70},
-    {"TIDE CLUSTER", 23, 72, 58, 68, 80, 95, 95},
+    {"TIDE CHORD", 23, 72, 58, 68, 80, 95, 95},
     {"GRAIN CHORD", 23, 51, 83, 52, 71, 113, 87},
     {"GRAIN DRFT", 23, 25, 10, 100, 90, 109, 115},
     {"GRAIN BLOOM", 24, 53, 42, 41, 70, 91, 69},

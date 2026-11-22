@@ -6,7 +6,7 @@
   --accent: #00e1ff;
   --line: #262d3d;
 }
-h1, h2, header .brand { font-family: "SLAP Block", system-ui, sans-serif; }
+h1, h2, header .brand { font-family: "SLAP Nexus", system-ui, sans-serif; }
 * { box-sizing: border-box; }
 body { margin: 0; }
 header, .toolbar, .editor-head, .settings, .inspector, nav {

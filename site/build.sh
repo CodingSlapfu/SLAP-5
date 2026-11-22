@@ -6,12 +6,13 @@ python3 vendor/fm1-base/tools/build.py device --web --release "${SLAP_WEB_RELEAS
 out="${1:-device/build/studio}"
 mkdir -p "$out/emulator" "$out/protocol" "$out/screens"
 mkdir -p "$out/fonts"
-cp device/build/gen/fonts/SLAPBlock-*.ttf site/slap-block.css "$out/fonts/"
+cp device/build/gen/fonts/SLAPNexus-*.ttf site/slap-block.css "$out/fonts/"
+python3 device/tools/sound_names.py "$out/sound-names.json"
 cp vendor/fm1-base/assets/fonts/Barlow-OFL.txt "$out/fonts/OFL.txt"
 cp site/index.html site/flash.html site/flash-testing.html site/flash.js site/flash-release.mjs site/flash-transport.mjs site/studio.html site/studio.css site/studio.js site/project.mjs "$out/"
 cp device/build/emu/index.html device/build/emu/app.wasm device/build/emu/worklet.js device/build/emu/app_worklet.js "$out/emulator/"
 sed -i -e '/<\/head>/i\  <link rel="stylesheet" href="../fonts/slap-block.css">' \
-  -e 's/Barlow Semi Condensed/SLAP Block/g' -e 's/"Barlow"/"SLAP Block"/g' "$out/emulator/index.html"
+  -e 's/Barlow Semi Condensed/SLAP Nexus/g' -e 's/"Barlow"/"SLAP Nexus"/g' "$out/emulator/index.html"
 cp vendor/fm1-base/web/fm1ota.js vendor/fm1-base/web/fm1ports.js vendor/fm1-base/web/fm1pkg.js "$out/protocol/"
 cp site/release.json "$out/"
 release_dir=$(mktemp -d)

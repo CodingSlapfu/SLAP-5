@@ -510,7 +510,7 @@ function draw() {
   $('gate').disabled = !word || !!note.duration;
   $('clear').disabled = !word;
   const g = ctx2d;
-  g.font = '12px "SLAP Block", system-ui';
+  g.font = '12px "SLAP Nexus", system-ui';
   g.textBaseline = 'middle';
   for (let r = 0; r < rows; r++) {
     const pitch = pitchAt(r), y = top + height * r;

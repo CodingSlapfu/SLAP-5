@@ -283,7 +283,7 @@ def generate():
     font_env = {}
     if CONF.get("font_set") == "slapblock":
         font_dir = GEN / "fonts"
-        subprocess.run([sys.executable, str(APP / "tools/slap_block.py"), str(font_dir)], check=True)
+        subprocess.run([sys.executable, str(APP / "tools/slap_nexus.py"), str(font_dir)], check=True)
         font_env = {"X0X_FONTSET": "slapblock", "X0X_FONT_DIRS": str(font_dir)}
     for c in [[tools / "gen_font.py", GEN / "felucca_font.h"],
               [tools / "gen_words.py", APP / CONF.get("words", "words.tsv"), APP / "web" / "words", GEN / "ann_words.h"]]:
