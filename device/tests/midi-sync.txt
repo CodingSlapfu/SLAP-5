@@ -99,3 +99,13 @@ expect midi_usb 1
 midi-room 64
 expect midi_pending 0
 out
+tap PLAY
+wait 30
+expect midi_pending >0
+key w0 down
+wait 20
+tap PLAY
+expect midi_pending 0
+key w0 up
+wait 20
+out

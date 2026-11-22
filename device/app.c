@@ -938,6 +938,27 @@ static int midi_send_checked(uint32_t packet)
     return 1;
 }
 
+static int midi_has_output_owner(unsigned channel, unsigned pitch, const MidiNote *except, unsigned key)
+{
+    for (unsigned i = 0; i < NKEYS; ++i)
+        if (i != key && midi_key_chan[i] == channel + 1u && midi_key_pitch[i] == pitch) return 1;
+    for (unsigned i = 0; i < sizeof midi_notes / sizeof midi_notes[0]; ++i) {
+        const MidiNote *other = &midi_notes[i];
+        if (other != except && other->state == 2u && other->channel == channel && other->pitch == pitch)
+            return 1;
+    }
+    return 0;
+}
+
+static void midi_key_release(unsigned key)
+{
+    if (!midi_key_chan[key]) return;
+    unsigned channel = midi_key_chan[key] - 1u, pitch = midi_key_pitch[key];
+    if (midi_has_output_owner(channel, pitch, 0, key) ||
+        midi_send_checked(0x8008u | channel << 8 | pitch << 16))
+        midi_key_chan[key] = 0;
+}
+
 static unsigned midi_sample;
 
 static void midi_sequence_note(unsigned track, unsigned word, unsigned delay, unsigned gate)
@@ -976,18 +997,12 @@ static void midi_sequence_flush(uint32_t now)
             unsigned address = (uint32_t)note->channel << 8 | (uint32_t)note->pitch << 16;
             if (!pass && note->state == 2u && (muted || (int32_t)(now - note->off) >= 0)) {
                 // Retry pending offs under backpressure. On a new link, flush old channels first.
-                if (midi_send_checked(0x8008u | address)) { note->state = 0; --midi_pending; }
+                if (midi_has_output_owner(note->channel, note->pitch, note, NKEYS) ||
+                    midi_send_checked(0x8008u | address)) { note->state = 0; --midi_pending; }
             } else if (!pass && note->state == 1u && muted) { note->state = 0; --midi_pending; }
             else if (pass && note->state == 1u && (int32_t)(now - note->on) >= 0) {
-                // Retriggers close the preceding gate before the new note.
-                unsigned blocked = 0;
-                for (unsigned j = 0; j < sizeof midi_notes / sizeof midi_notes[0]; ++j)
-                    if (midi_notes[j].state == 2u && midi_notes[j].channel == note->channel &&
-                        midi_notes[j].pitch == note->pitch) {
-                        if (midi_send_checked(0x8008u | address)) { midi_notes[j].state = 0; --midi_pending; }
-                        else blocked = 1;
-                    }
-                if (!blocked && midi_send_checked(0x9009u | address | (uint32_t)note->velocity << 24))
+                if (midi_has_output_owner(note->channel, note->pitch, note, NKEYS) ||
+                    midi_send_checked(0x9009u | address | (uint32_t)note->velocity << 24))
                     note->state = 2;
                 else {
                     ++midi_drops;
@@ -1656,20 +1671,19 @@ static void read_notes(void)
                 }
                 uint32_t options = midi_options;
                 unsigned channel = (options & MIDI_CUSTOM ? midi_base_channel(options) : 0u) + track;
-                if (midi_key_chan[k] && midi_send_checked(0x8008u | (midi_key_chan[k] - 1u) << 8 |
-                    (uint32_t)midi_key_pitch[k] << 16)) midi_key_chan[k] = 0;
+                midi_key_release(k);
                 if (!midi_key_chan[k] && !(options & MIDI_SILENT) && (!(options & MIDI_CUSTOM) ||
                     (options & (MIDI_TX | (1u << (MIDI_TRACK_SHIFT + track)))) ==
                     (MIDI_TX | (1u << (MIDI_TRACK_SHIFT + track)))))
-                    if (midi_send_checked(0x9009u | channel << 8 | pitch << 16 | 100u << 24)) {
+                    if (midi_has_output_owner(channel, pitch, 0, k) ||
+                        midi_send_checked(0x9009u | channel << 8 | pitch << 16 | 100u << 24)) {
                         midi_key_chan[k] = (uint8_t)(channel + 1u);
                         midi_key_pitch[k] = (uint8_t)pitch;
                     }
             } else {
                 record_note_off(key_tracks[k], key_pitches[k]);
                 release_note(key_tracks[k], key_pitches[k]);
-                if (midi_key_chan[k] && midi_send_checked(0x8008u | (midi_key_chan[k] - 1u) << 8 |
-                    (uint32_t)midi_key_pitch[k] << 16)) midi_key_chan[k] = 0;
+                midi_key_release(k);
             }
         }
     }
@@ -1703,9 +1717,7 @@ static void read_notes(void)
             if (!voices[i].manual) voices[i].releasing = 1;
     }
     for (unsigned k = 0; k < NKEYS; ++k)
-        if (!(keys & (1u << k)) && midi_key_chan[k] &&
-            midi_send_checked(0x8008u | (midi_key_chan[k] - 1u) << 8 | (uint32_t)midi_key_pitch[k] << 16))
-            midi_key_chan[k] = 0;
+        if (!(keys & (1u << k))) midi_key_release(k);
     uint32_t packet;
     int port;
     for (unsigned count = 0; count < 32 && plat_midi_in(&packet, &port); ++count) {
