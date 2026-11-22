@@ -43,8 +43,34 @@ static void check_patches(int modern)
     puts("Every patch produced finite audio, measurable energy, and a distinct sample signature.");
 }
 
+static void check_fm_envelope(void)
+{
+    SlapSynth synth;
+    int16_t buffer[SLAP_STRING_CAPACITY];
+    const uint32_t settings[] = {SLAP_FM_ENV_DEFAULT, 0, 0, 0, 0, 0};
+    for (unsigned mode = 0; mode <= 2; ++mode) {
+        slap_synth_start(&synth, buffer, 0, 60, 64, 64, 1u, mode);
+        slap_synth_fm_envelopes(&synth, settings, 16);
+        assert(synth.operator_mask == (mode == 2u ? 1u : 0u));
+        if (mode < 2u) continue;
+        assert(fabsf(synth.operator_feedback - 0.47f) < 0.00001f);
+        assert(fabsf(synth.operators[0].attack - 1.0f / 9.0f) < 0.00001f);
+        assert(fabsf(synth.operators[0].decay - 1.0f / 543.0f) < 0.00001f);
+        assert(fabsf(synth.operators[0].sustain - 5.0f / 15.0f) < 0.00001f);
+        assert(fabsf(synth.operators[0].release - 1.0f / 178.0f) < 0.00001f);
+        slap_synth_sample(&synth);
+        float gain = synth.operators[0].gain;
+        for (unsigned step = 1; step < SLAP_FM_ENV_DIVIDER; ++step)
+            slap_synth_sample(&synth);
+        assert(synth.operators[0].gain == gain);
+        slap_synth_sample(&synth);
+        assert(synth.operators[0].gain > gain);
+    }
+}
+
 int main(void)
 {
+    check_fm_envelope();
     check_patches(0);
     check_patches(1);
     return 0;

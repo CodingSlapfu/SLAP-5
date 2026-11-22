@@ -157,6 +157,8 @@ void plat_lights_mid(uint32_t buttons, uint32_t keys)   /* felucca-bsp's steady 
         if (q != 0xFF && (i < NB ? (buttons >> i) & 1u : (keys >> (i - NB)) & 1u))
             ml[q >> 3] |= (uint8_t)(1u << (q & 7u));
     }
+    if (buttons & LED_PLAY_GREEN)
+        ml[8] |= 1u << 1;
     for (c = 0; c < FM1_NCOL; c++)
         fm1_led_mid[c] = (uint8_t)(ml[c] & ~fm1_led[c]);
 }

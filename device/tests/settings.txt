@@ -46,3 +46,20 @@ wait 400
 expect page 2
 release GLO
 expect page 2
+tap HOME
+tap GLO
+turn ALGO 7
+expect settings_section 7
+expect led_active_soft 0
+turn SELECT 2
+turn K1 1
+expect led_active_soft 1
+wait 700
+reboot
+wait 6100
+expect led_active_soft 1
+tap GLO
+turn ALGO 7
+turn SELECT 2
+turn K1 -1
+expect led_active_soft 0

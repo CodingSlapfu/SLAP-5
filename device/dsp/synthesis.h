@@ -32,6 +32,13 @@ float slap_synth_sample(SlapSynth *synth);
 
 /* An unset timbre uses the factory program. */
 void slap_synth_timbre(SlapSynth *synth, uint32_t settings);
+enum { SLAP_FM_ENV_DIVIDER = 8, SLAP_FM_ENV_DEFAULT = 0x14561u };
+static inline unsigned slap_fm_env_period(unsigned stage, unsigned value)
+{
+    unsigned squared = value * value;
+    return stage == 0 ? 1u + 8u * squared : stage == 1 ? 3u + 15u * squared : 2u + 11u * squared;
+}
+
 void slap_synth_fm_envelopes(SlapSynth *synth, const uint32_t *operators, unsigned feedback);
 float slap_wave_scan(float morph, float movement, float phase);
 float slap_legacy_wave_scan(float color, float movement, float phase);

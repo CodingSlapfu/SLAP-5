@@ -419,12 +419,12 @@ static void load_patch(unsigned track, unsigned number)
 
 enum { PREF_AUDIO, PREF_METRO, PREF_RECORD, PREF_TRANSPORT, PREF_KEYS, PREF_DISPLAY, PREF_DIAG, PREF_LEDS, PREF_SECTIONS };
 static unsigned settings_section, settings_item;
-static const uint8_t settings_count[PREF_SECTIONS] = {4, 3, 4, 1, 1, 2, 1, 2};
+static const uint8_t settings_count[PREF_SECTIONS] = {4, 3, 4, 1, 1, 2, 1, 3};
 static const char *const settings_names[] = {
     "AUDIO", "METRONOME", "RECORDING", "TRANSPORT", "KEYBOARD", "DISPLAY", "SYSTEM", "LEDS"
 };
 static volatile uint32_t output_trim, speaker_mode, click_trim, resume_playback, auto_level_off, auto_mix;
-static unsigned visual_quality, led_style, led_keys_on_hit;
+static unsigned visual_quality, led_style, led_keys_on_hit, led_active_soft;
 static volatile unsigned split_keys;
 
 void app_init(void)
@@ -479,6 +479,7 @@ void app_init(void)
     split_keys = saved_preferences >> 26 & 15u;
     led_style = saved_preferences >> 30;
     led_keys_on_hit = !!(options & 64u) || (!(options & 128u) && led_style == 3u);
+    led_active_soft = !!(options & 256u);
     slap_ui.visual = select_visual(saved_preferences >> 22 & 7u, 0);
     startup_sample = 0;
     startup_phase = 0.0f;
@@ -3548,6 +3549,7 @@ void app_input_only(void)
         case PREF_LEDS:
             if (knob[0]) led_style = (unsigned)clamp((int)led_style + knob[0], 0, 2);
             if (knob[1]) led_keys_on_hit = knob[1] > 0;
+            if (knob[2]) led_active_soft = knob[2] > 0;
             break;
         case PREF_DISPLAY:
             slap_ui.visual = select_visual(slap_ui.visual, knob[0]);
@@ -3610,7 +3612,7 @@ void app_input_only(void)
                 track_fm_envelopes[t][6] = (unsigned)clamp((int)track_fm_envelopes[t][6] + knob[0], 0, 16);
             } else if (program->engine == 0u && edit_page == 3u) {
                 uint32_t config = track_fm_envelopes[t][timbre_operator];
-                if (!config) config = 0x14561u;
+                if (!config) config = SLAP_FM_ENV_DEFAULT;
                 if ((buttons & (1u << B_OCTUP)) && knob[3]) {
                     track_fm_envelopes[t][6] = (unsigned)clamp((int)track_fm_envelopes[t][6] + knob[3], 0, 16);
                 } else {
@@ -3623,13 +3625,16 @@ void app_input_only(void)
                 }
             } else if (program->engine == 0u) {
                 timbre_operator = (unsigned)clamp((int)timbre_operator + knob[0], 0, 5);
-                if (!value) value = 0x3ffda249u;
-                unsigned rs = timbre_operator * 3u, ls = 18u + timbre_operator * 2u;
-                unsigned ratio = (unsigned)clamp((int)(value >> rs & 7u) + knob[1], 0, 7);
-                unsigned level = (unsigned)clamp((int)(value >> ls & 3u) + knob[2], 0, 3);
-                unsigned algorithm = (unsigned)clamp((int)(value >> 30) + knob[3], 0, 2);
-                track_timbre[t] = (value & ~((7u << rs) | (3u << ls) | (3u << 30))) |
-                    ratio << rs | level << ls | algorithm << 30;
+                if (knob[1] || knob[2] || knob[3]) {
+                    if (!value) value = 0x3ffda249u;
+                    unsigned rs = timbre_operator * 3u, ls = 18u + timbre_operator * 2u;
+                    unsigned ratio = (unsigned)clamp((int)(value >> rs & 7u) + knob[1], 0, 7);
+                    unsigned level = (unsigned)clamp((int)(value >> ls & 3u) + knob[2], 0, 3);
+                    unsigned algorithm = (unsigned)clamp((int)(value >> 30) + knob[3], 0, 2);
+                    track_timbre[t] = (value & ~((7u << rs) | (3u << ls) | (3u << 30))) |
+                        ratio << rs | level << ls | algorithm << 30;
+                    tracks[t].mix |= ADVANCED_SYNTH;
+                }
             } else {
                 int morph = value ? value & 127u : program->color;
                 int motion = value ? value >> 8 & 127u : program->motion;
@@ -3643,7 +3648,7 @@ void app_input_only(void)
                 }
                 slap_fx_change(t, 8, 0, knob[3]);
             }
-            tracks[t].mix |= ADVANCED_SYNTH;
+            if (program->engine != 0u || edit_page >= 3u) tracks[t].mix |= ADVANCED_SYNTH;
         } else if (program) {
             slap_fx_change(t, 1, 0, knob[0]);
             slap_fx_change(t, 1, 3, knob[1]);
@@ -3830,15 +3835,17 @@ void app_input_only(void)
     uint32_t dim_buttons = ((1u << NB) - 1u) & ~bright_buttons;
     uint32_t normal_keys = ((1u << NKEYS) - 1u) & ~key_lights;
     if (slap_ui.page == MIXER || led_keys_on_hit) normal_keys = 0;
-    plat_lights(bright_buttons, key_lights, dim_buttons, 0, led_style == 2u ? 2 : led_style == 1u ? 0 : 1);
-    plat_lights_mid(0, normal_keys);
+    plat_lights(led_active_soft ? 0u : bright_buttons, led_active_soft ? 0u : key_lights,
+        dim_buttons, 0, led_style == 2u ? 2 : led_style == 1u ? 0 : 1);
+    plat_lights_mid(led_active_soft ? bright_buttons : 0u,
+        normal_keys | (led_active_soft ? key_lights : 0u));
     uint32_t preferences = metronome | (perfect_note_off & 15u) << 2 |
         rec_bars << 6 | rec_count_in << 9 | rec_replace << 10 | rec_quantize << 11 |
         output_trim << 15 | speaker_mode << 17 | click_trim << 18 |
         resume_playback << 20 | visual_quality << 21 | (unsigned)slap_ui.visual << 22 | auto_level_off << 25 | split_keys << 26 | led_style << 30;
     uint32_t options = auto_mix | dancer_pattern << 1 | (unsigned)!dancer_outline << 3 |
         (unsigned)!dancer_lighting << 4 | (unsigned)!dancer_reactivity << 5 |
-        led_keys_on_hit << 6 | 128u;
+        led_keys_on_hit << 6 | 128u | led_active_soft << 8;
     uint32_t duck = 0;
     for (unsigned t = 0; t < DRUMS; ++t) duck |= (uint32_t)mixer_duck[t] << (8u * t);
     uint32_t now = plat_ms();
@@ -4189,9 +4196,48 @@ static unsigned graph_fm_algorithm(const SlapPatch *patch, uint32_t config)
     return algorithm <= 2u ? algorithm : 2u;
 }
 
+static unsigned graph_fm_mode(unsigned track)
+{
+    unsigned mix = tracks[track].mix;
+    return mix & ADVANCED_SYNTH ? 2u : !!(mix & MODERN_SYNTH);
+}
+
+static void draw_legacy_fm(unsigned track, unsigned mode, uint16_t color, int strip)
+{
+    static const uint8_t x[] = {188, 135, 82, 29, 82, 188};
+    static const uint8_t y[] = {31, 31, 31, 31, 72, 72};
+    static const uint8_t from[] = {3, 2, 1, 3, 3, 4};
+    static const uint8_t to[] = {2, 1, 0, 0, 4, 5};
+    unsigned count = mode ? 6u : 4u;
+    uint16_t ink = track_energy[track] ? color : track_rule[track];
+    for (unsigned i = 0; i < count; ++i) {
+        unsigned a = from[i], b = to[i];
+        int rise = i == 3u ? 12 : 0;
+        cv_line(x[a], y[a] - strip, x[a], y[a] - strip - rise, ink);
+        cv_line(x[a], y[a] - strip - rise, x[b], y[b] - strip - rise, ink);
+        cv_line(x[b], y[b] - strip - rise, x[b], y[b] - strip, ink);
+    }
+    cv_rect(8, 7 - strip, 21, 1, ink);
+    cv_rect(8, 7 - strip, 1, 24, ink);
+    cv_rect(8, 30 - strip, 21, 1, ink);
+    for (unsigned op = 0; op < count; ++op) {
+        int cx = x[op], cy = y[op] - strip;
+        int carrier = op == 0u || op == 5u;
+        cv_rect(cx - 11, cy - 10, 23, 21, carrier ? color : track_rule[track]);
+        cv_rect(cx - 10, cy - 9, 21, 19, C_BLACK);
+        char label[] = {(char)('1' + op), 0};
+        cv_text(cx - 3, cy - 8, &FONT_B, label, C_WHITE);
+    }
+}
+
 static void draw_fm_routing(unsigned track, unsigned algorithm, uint32_t config,
     uint16_t accent, int offset)
 {
+    unsigned mode = graph_fm_mode(track);
+    if (mode < 2u) {
+        draw_legacy_fm(track, mode, accent, offset);
+        return;
+    }
     static const uint8_t x[] = {183, 120, 57, 57, 120, 183};
     static const uint8_t y[] = {70, 70, 70, 24, 24, 24};
     static const uint8_t sources[] = {5, 4, 3, 2, 1, 4};
@@ -4417,6 +4463,7 @@ static void draw_panel(void)
             static const char *const profiles[] = {"SOFT", "OFF", "BRIGHTER", "SOFT"};
             labels[0] = "IDLE BUTTONS"; values[0] = profiles[led_style];
             labels[1] = "NORMAL KEYS"; values[1] = led_keys_on_hit ? "OFF" : "MEDIUM";
+            labels[2] = "ACTIVE LIGHTS"; values[2] = led_active_soft ? "MEDIUM" : "HIGH";
             break;
         }
         case PREF_DIAG:
@@ -4860,6 +4907,21 @@ static void draw_panel(void)
         }
         if (edit_page && selected < DRUMS && (patch->engine == 0u || patch->engine == 2u)) {
             uint32_t config = track_timbre[selected];
+            if (patch->engine == 0u && graph_fm_mode(selected) < 2u) {
+                unsigned mode = graph_fm_mode(selected);
+                cv_text(8, 1, &FONT_M, mode ? "FM DUAL CARRIER" : "FM LEGACY", c);
+                cv_text(8, 25, &FONT_XS, "EDIT A PARAMETER FOR FM6", C_WHITE);
+                cv_blit(0, 80);
+                for (int y = 120; y < 208; y += 44) {
+                    cv_begin(240, 44, background);
+                    draw_legacy_fm(selected, mode, c, y - 120);
+                    cv_blit(0, y);
+                }
+                cv_begin(240, 32, background);
+                cv_text(8, 3, &FONT_XS, "FIXED OPS / TRACK ENV", C_WHITE);
+                cv_blit(0, 208);
+                return;
+            }
             if (patch->engine == 0u && edit_page == 4u) {
                 cv_text(8, 3, &FONT_M, "FM6 FEEDBACK", c);
                 cv_text(8, 27, &FONT_XS, "K1 FEEDBACK / ALGO PAGE", C_WHITE);
@@ -4889,22 +4951,48 @@ static void draw_panel(void)
             }
             if (patch->engine == 0u && edit_page == 3u) {
                 unsigned settings = track_fm_envelopes[selected][timbre_operator];
-                if (!settings) settings = 0x14561u;
+                if (!settings) settings = SLAP_FM_ENV_DEFAULT;
                 cv_text(8, 2, &FONT_B, "OP ENVELOPE", c);
                 decimal(number, timbre_operator + 1u);
                 cv_text(160, 2, &FONT_B, number, C_WHITE);
                 cv_text(8, 21, &FONT_XS, "K1 A   K2 D   K3 S   K4 R", C_WHITE);
                 cv_blit(0, 80);
                 cv_begin(240, 48, background);
-                int attack = 15 + (int)(settings & 15u) * 3;
-                int decay = attack + 10 + (int)(settings >> 4 & 15u) * 3;
-                int sustain = 40 - (int)(settings >> 8 & 15u) * 2;
-                int release = 218 - (int)(settings >> 12 & 15u) * 3;
-                for (int y = 8; y <= 40; y += 8) cv_rect(8, y, 218, 1, track_surface[selected]);
-                cv_line(8, 40, attack, 6, c);
-                cv_line(attack, 6, decay, sustain, c);
+                unsigned a = slap_fm_env_period(0, settings & 15u);
+                unsigned d = slap_fm_env_period(1, settings >> 4 & 15u);
+                unsigned r = slap_fm_env_period(3, settings >> 12 & 15u);
+                unsigned total = a + d + r;
+                int attack = 16 + (int)(a * 154u / total);
+                int decay = attack + 8 + (int)(d * 154u / total);
+                int release = decay + 34;
+                int sustain = 40 - (int)(settings >> 8 & 15u) * 34 / 15;
+                for (int y = 6; y <= 40; y += 8) cv_rect(8, y, 218, 1, track_surface[selected]);
+                int x = 8, y = 40;
+                for (unsigned step = 1; step <= 8; ++step) {
+                    float remaining = fm_exp2f(-0.705482f * step);
+                    int nx = 8 + (attack - 8) * (int)step / 8;
+                    int ny = step == 8 ? 6 : 6 + (int)(34.0f * remaining);
+                    cv_line(x, y, nx, ny, c);
+                    x = nx;
+                    y = ny;
+                }
+                x = attack; y = 6;
+                for (unsigned step = 1; step <= 8; ++step) {
+                    int nx = attack + (decay - attack) * (int)step / 8;
+                    int ny = step == 8 ? sustain :
+                        sustain - (int)((sustain - 6) * fm_exp2f(-0.705482f * step));
+                    cv_line(x, y, nx, ny, c);
+                    x = nx; y = ny;
+                }
                 cv_line(decay, sustain, release, sustain, c);
-                cv_line(release, sustain, 225, 40, c);
+                x = release; y = sustain;
+                for (unsigned step = 1; step <= 8; ++step) {
+                    int nx = release + (228 - release) * (int)step / 8;
+                    int ny = step == 8 ? 40 :
+                        40 - (int)((40 - sustain) * fm_exp2f(-0.705482f * step));
+                    cv_line(x, y, nx, ny, c);
+                    x = nx; y = ny;
+                }
                 cv_blit(0, 120);
                 cv_begin(240, 32, background);
                 const volatile SlapSynth *live = graph_voice(selected, 0);
@@ -4917,8 +5005,15 @@ static void draw_panel(void)
                 cv_rect(8, 24, (int)fm_clampf(gain * 224.0f, 0.0f, 224.0f), 4, c);
                 cv_blit(0, 168);
                 cv_begin(240, 40, background);
-                cv_text(8, 2, &FONT_XS, "OCT+ / K4 FEEDBACK", C_WHITE);
-                cv_text(8, 20, &FONT_XS, "SELECT OP / SEL+SELECT TRACK", C_WHITE);
+                static const char *const env_labels[] = {"A MS", "D MS", "S %", "R MS"};
+                for (unsigned stage = 0; stage < 4u; ++stage) {
+                    unsigned setting = settings >> (stage * 4u) & 15u;
+                    unsigned display = stage == 2u ? (setting * 100u + 7u) / 15u :
+                        (slap_fm_env_period(stage, setting) * SLAP_FM_ENV_DIVIDER * 1000u + RATE / 2u) / RATE;
+                    decimal(number, display);
+                    draw_performance_knob((int)stage * 60, env_labels[stage], number,
+                        (int)(setting * 200u / 15u) - 100, c);
+                }
                 cv_blit(0, 200);
                 return;
             }
@@ -5655,6 +5750,7 @@ int app_expect(const char *name, int *result)
     else if (name_matches(name, "perfect_note")) *result = !(perfect_note_off & (1u << slap_ui.track));
     else if (name_matches(name, "chord_mode")) *result = (int)((tracks[slap_ui.track].harmony >> 16) & 255u);
     else if (name_matches(name, "settings_section")) *result = (int)settings_section;
+    else if (name_matches(name, "led_active_soft")) *result = (int)led_active_soft;
     else if (name_matches(name, "resume_playback")) *result = (int)resume_playback;
     else if (name_matches(name, "output_trim")) *result = (int)output_trim;
     else if (name_matches(name, "metronome")) *result = (int)metronome;

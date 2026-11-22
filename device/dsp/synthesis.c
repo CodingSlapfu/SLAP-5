@@ -165,13 +165,13 @@ void slap_synth_fm_envelopes(SlapSynth *s, const uint32_t *operators, unsigned f
     for (unsigned op = 0; op < 6u; ++op) {
         unsigned value = operators[op];
         if (!value) continue;
-        float a = value & 15u, d = (value >> 4) & 15u, r = (value >> 12) & 15u;
+        unsigned a = value & 15u, d = (value >> 4) & 15u, r = (value >> 12) & 15u;
         s->operator_mask |= 1u << op;
         s->operators[op].gain = 0.0f;
-        s->operators[op].attack = 1.0f / (1.0f + 8.0f * a * a);
-        s->operators[op].decay = 1.0f / (3.0f + 15.0f * d * d);
+        s->operators[op].attack = 1.0f / ((float)slap_fm_env_period(0, a));
+        s->operators[op].decay = 1.0f / ((float)slap_fm_env_period(1, d));
         s->operators[op].sustain = ((value >> 8) & 15u) * (1.0f / 15.0f);
-        s->operators[op].release = 1.0f / (2.0f + 11.0f * r * r);
+        s->operators[op].release = 1.0f / ((float)slap_fm_env_period(3, r));
     }
     if (feedback) s->operator_feedback = 0.47f * (feedback - 1u) * (1.0f / 15.0f);
     else s->operator_feedback = 0.022f + 0.11f * s->color;
@@ -264,7 +264,7 @@ SLAP_SYNTH_SRAM float slap_synth_sample(SlapSynth *s)
              * engine owns the remaining phase fields and feedback history. */
             uint32_t config = s->timbre;
             unsigned algorithm = config ? config >> 30 : m < 0.34f ? 0u : m < 0.68f ? 1u : 2u;
-            if (s->operator_mask && !(s->operator_tick++ & 7u)) {
+            if (s->operator_mask && !(s->operator_tick++ & (SLAP_FM_ENV_DIVIDER - 1u))) {
                 for (unsigned op = 0; op < 6u; ++op) {
                     unsigned bit = 1u << op;
                     if (!(s->operator_mask & bit)) continue;

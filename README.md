@@ -65,3 +65,11 @@ For the native development build, set `JIELI_TOOLCHAIN` to the JieLi Linux toolc
 ## Release qualification
 
 See [the engineering record](evidence/groovebox-overhaul.md) and [owner acceptance checklist](https://github.com/CodingSlapfu/SLAP-5/issues/2) for the current tests and remaining physical gates. Version 9 song slots are used only for ratchet or Fill Only metadata. Earlier song versions remain readable. Keep independent project backups before moving between firmware versions.
+
+### Sound Lab graphs and active LED intensity
+
+Tap EDIT for the selected track. Turn ALGORITHM one detent right for the engine graph. PRESETS changes the patch. In FM6, ALGORITHM steps through routing, operators, envelope and feedback. SELECT chooses an operator on operator and envelope pages. Hold SEL while turning SELECT to switch tracks there. K1–K4 on the envelope page set attack, decay, sustain and release. The A/D/R readouts show the underlying smoothing time scales in milliseconds and S shows the sustain percentage. Hold OCT+ while turning K4 for feedback. Released notes may still contribute to the live gain display while their envelope decays. Older FM projects show the fixed legacy routing until a parameter edit enables FM6.
+
+With a Wavetable patch selected, K1 Morph and K2 Scan change the active waveform. The two reference traces show neighboring frames on the modern engine. The lower bars show the first eight harmonics of the displayed wave. Tap FX and turn ALGORITHM to FILTER for the response plot or SLICER for the current pattern, captured buffer and replay position.
+
+Under SETTINGS, use ALGORITHM to reach LEDS. SELECT the ACTIVE LIGHTS row and use K1 to choose HIGH or MEDIUM. This changes illuminated button and active key intensity, while IDLE BUTTONS and NORMAL KEYS control their respective idle states. Existing settings default to HIGH for active lights.
