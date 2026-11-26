@@ -26,4 +26,7 @@ wait 700
 reboot
 wait 6100
 expect background_theme 3
+tap HOME
+wait 100
+expect page 0
 shot theme-burgundy.png
