@@ -36,8 +36,15 @@ int plat_cpu2_set(int on)
         cpu2_start_state = PLAT_CPU2_BOOT_GUARD;
         return -1;
     }
+    int retry = fm1_cpu1_barred() && fm1_cpu1_bar.retry == FM1_CPU1_RETRY_PENDING;
+    if (retry) {
+        fm1_cpu1_bar.retry = FM1_CPU1_RETRY_USED;
+        fm1_cpu1_bar.barred = 0;
+        FM1_CPU1_SYNC();
+    }
     if (fm1_cpu1_start() != 0) {
-        cpu2_start_state = fm1_cpu1_barred() ? PLAT_CPU2_BARRED : PLAT_CPU2_NO_REPLY;
+        if (retry) fm1_cpu1_bar_set();
+        cpu2_start_state = retry || !fm1_cpu1_barred() ? PLAT_CPU2_NO_REPLY : PLAT_CPU2_BARRED;
         return -1;
     }
     // Exercise the real mailbox before entering the audio callback.
@@ -46,6 +53,7 @@ int plat_cpu2_set(int on)
     if (!fm1_cpu1_run(cpu2_probe, challenge) || fm1_cpu1_wait() != 0 ||
         cpu2_probe_result != (challenge ^ 0x43315259u)) {
         if (fm1_cpu1_on) fm1_cpu1_retire(FM1_CPU1_MISREAD);
+        if (retry) fm1_cpu1_bar_set();
         cpu2_start_state = PLAT_CPU2_PROBE_FAILED;
         return -1;
     }

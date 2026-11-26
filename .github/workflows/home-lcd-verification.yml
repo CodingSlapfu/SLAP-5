@@ -28,7 +28,7 @@ jobs:
           s = p.read_text()
           assert s.count("static uint32_t blits;") == s.count("    blits++;") == 1
           s = s.replace("static uint32_t blits;", "static uint32_t blits, meter_blits;\nstatic unsigned long long blit_pixels;")
-          s = s.replace("    blits++;", "    blits++;\n    blit_pixels += w * h;\n    if (w == 8 && h == 35) ++meter_blits;")
+          s = s.replace("    blits++;", "    blits++;\n    blit_pixels += w * h;\n    if (w == 8 && h == 34) ++meter_blits;")
           mark = '    printf("host: %u ms simulated'
           assert s.count(mark) == 1
           s = s.replace(mark, '    printf("LCD_PIXELS %llu METER_BLITS %u\\n", blit_pixels, meter_blits);\n' + mark)
@@ -76,7 +76,7 @@ jobs:
                   with Image.open(root / "candidate" / image.name) as capture:
                       assert capture.size == (240, 240), image.name
                       # The bottom row of every lane is painted, including the gutter.
-                      for y in (57, 92, 127, 162, 197):
+                      for y in (67, 101, 135, 169, 203):
                           assert capture.convert("RGB").getpixel((2, y)) != (0, 0, 0), (image.name, y)
               assert pixels[1] < pixels[0]
               print("60 full-height LOOPER lane captures. Pixels avoided:", pixels[0] - pixels[1])
@@ -129,10 +129,10 @@ jobs:
           for screenshot in knobs:
               with Image.open(screenshot) as image:
                   assert image.size == (240, 240), screenshot
-                  footers.add(image.crop((0, 198, 240, 240)).tobytes())
+                  footers.add(image.crop((0, 196, 240, 240)).tobytes())
                   image.resize((960, 960), Image.Resampling.NEAREST).save(
                       screenshot.with_stem(screenshot.stem + "-960"))
-          assert len(footers) == 4, "All four styles must change the HOME footer"
+          assert len(footers) == 4, "All four styles must change the MIXER footer"
           PY
           sh device/tests/dual-core.sh
           python3 device/tests/dense-recording.py --bpm 155 --extreme --soak-ms 10000
@@ -174,6 +174,12 @@ jobs:
           printf '%s  %s\n' 1935bbfa06f8ce7ffc0b0d3cefdf581a035db4c190d2c2dc8fe184ccb97865fe "$backup" | sha256sum -c -
           printf '%s  %s\n' 1511fbf8916ebc0e91c8d2981df813de96dfd8fb723077c7e809c509f4d8aebd "$previous" | sha256sum -c -
           tar -tzf "$backup" > "$RUNNER_TEMP/v041-backup-files.txt"
+          latest_release=https://github.com/CodingSlapfu/SLAP-5/releases/download/v0.1.42-hardware-testing
+          for entry in '7a2f7730a99b144c2390d6e42682082358e3c9921efe031cb777de19ac4ab1cc SLAP-5-0.1.42.fwsc' 'd9762dcca9156eb55bc3000eaa21a2181b4bb2f1b39c019621b6c1bde0dba127 SLAP-5-0.1.42-engineering-backup.tar.gz'; do
+            read -r digest name <<< "$entry"
+            curl -fsSL --retry 3 -o "$RUNNER_TEMP/$name" "$latest_release/$name"
+            printf '%s  %s\n' "$digest" "$RUNNER_TEMP/$name" | sha256sum -c -
+          done
           rollback="$RUNNER_TEMP/SLAP-5-0.1.31.fwsc"
           curl -fsSL --retry 3 -o "$rollback" \
             https://github.com/CodingSlapfu/SLAP-5/releases/download/v0.1.31-hardware-testing/SLAP-5-0.1.31.fwsc

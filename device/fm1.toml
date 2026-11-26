@@ -10,4 +10,4 @@ repo = "https://github.com/CodingSlapfu/SLAP-5"
 licence = "MPL-2.0"
 include = ["dsp"]
 o2 = ["dsp/synthesis.c", "dsp/patches.c", "dsp/effects.c"]
-gen = ["tools/oscillator_table.py {gen}/slap_sine_table.inc", "tools/drum_samples.py {gen}/slap_drum_samples.inc"]
+gen = ["tools/home_glyphs.py {gen}/slap_home_glyphs.inc", "tools/oscillator_table.py {gen}/slap_sine_table.inc", "tools/drum_samples.py {gen}/slap_drum_samples.inc"]

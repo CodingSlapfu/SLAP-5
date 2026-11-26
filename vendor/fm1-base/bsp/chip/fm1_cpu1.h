@@ -96,7 +96,8 @@ static struct { volatile uint32_t count; uint32_t echoes, cpu, dbg, emu, pc, ret
 
 /* one core until power-off. Not static, as fm1_crash: the compiler must not assume a zero start */
 #define FM1_CPU1_BAR_MAGIC 0x52414231u          /* "1BAR" */
-struct { uint32_t magic, barred, build; } fm1_cpu1_bar __attribute__((section(".noinit")));
+enum { FM1_CPU1_RETRY_PENDING = 0x4C415445u, FM1_CPU1_RETRY_USED = 0x55534544u };
+struct { uint32_t magic, barred, build, retry; } fm1_cpu1_bar __attribute__((section(".noinit")));
 static inline int fm1_cpu1_barred(void)
 {
     return FM1_CPU1_FALLBACK && fm1_cpu1_bar.magic == FM1_CPU1_BAR_MAGIC && fm1_cpu1_bar.barred == 1u;
@@ -109,8 +110,10 @@ static inline void fm1_cpu1_bar_set(void)
 /* at boot: a bar set by another build (another id) is lifted, as it was for that build's sake */
 static void fm1_cpu1_bar_build(uint32_t build)
 {
-    if (fm1_cpu1_bar.magic != FM1_CPU1_BAR_MAGIC || fm1_cpu1_bar.build != build)
+    if (fm1_cpu1_bar.magic != FM1_CPU1_BAR_MAGIC || fm1_cpu1_bar.build != build) {
         fm1_cpu1_bar.barred = 0;
+        fm1_cpu1_bar.retry = 0;
+    }
     fm1_cpu1_bar.magic = FM1_CPU1_BAR_MAGIC;
     fm1_cpu1_bar.build = build;
 }
@@ -187,6 +190,13 @@ static void fm1_cpu1_retire(uint32_t why)
                          why == FM1_CPU1_FAULT ? fm1_cpu1_fault.dbg : 0u);
     fm1_cpu1_stop();
     fm1_cpu1_bar_set();
+    /* Only a timeout without a mailbox error or CPU fault may retry, once
+     * on a subsequent clean boot. Never release the hardware hold here. */
+    if (why == FM1_CPU1_LATE && !fm1_cpu1_fault.count && !fm1_cpu1_mb.rejected) {
+        if (!fm1_cpu1_bar.retry) fm1_cpu1_bar.retry = FM1_CPU1_RETRY_PENDING;
+    } else {
+        fm1_cpu1_bar.retry = FM1_CPU1_RETRY_USED;
+    }
     fm1_cpu1_on = 0;
     fm1_cpu1_gave_up = (uint8_t)why;
     fm1_cpu1_mb.complete = fm1_cpu1_mb.request;
@@ -364,7 +374,9 @@ static int fm1_cpu1_fault_c(const uint32_t *f)
         fm1_cpu1_failure(FM1_CPU1_FAULT, f[16], dbg);
     return 1;
 own:
-    if (FM1_CPU1_FALLBACK && fm1_cpu1_on)
+    if (FM1_CPU1_FALLBACK && fm1_cpu1_on) {
         fm1_cpu1_bar_set();
+        fm1_cpu1_bar.retry = FM1_CPU1_RETRY_USED;
+    }
     return 0;
 }
