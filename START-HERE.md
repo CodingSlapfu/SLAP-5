@@ -1,8 +1,11 @@
 # SLAP-5 environment recovery
 
-## v0.1.40 candidate
+## v0.1.40 experimental firmware
 
-Exact source `843718ab19e7caca442db8cbf17effa59c608e15`. [Native, host, framebuffer and recovery qualification](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45842544639) passed. [Experimental release gate](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45842706224) also requires the exact-source Studio and pinned DSP runs before publication.
+Exact source `843718ab19e7caca442db8cbf17effa59c608e15`. [Native, host, framebuffer and recovery qualification](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45842544639) passed. [Experimental release gate](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45842706224) passed the exact-source Studio and pinned DSP checks and verified deployed firmware bytes.
+
+- [Browser installer](https://codingslapfu.github.io/SLAP-5/flash-testing.html), [standalone firmware](https://github.com/CodingSlapfu/SLAP-5/releases/download/v0.1.40-hardware-testing/SLAP-5-0.1.40.fwsc), [verified engineering backup](https://github.com/CodingSlapfu/SLAP-5/releases/download/v0.1.40-hardware-testing/SLAP-5-0.1.40-engineering-backup.tar.gz). Identity `FM-1_75000140`. Firmware SHA-256 `d6b3736d93a2c4dbe32d9da0012dc61c85b7827c50be945f8af2fd2e15df91ff`. Backup SHA-256 `fc11118744878cf540e0e6646fb6d83885598cbce172222e666a55fec5a12dc8`.
+- [Framebuffer captures](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45842544639/artifacts/15130115193). [Pinned 155 BPM host run](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45842544557) used v0.1.38 and pre-DSP baselines. Mixed-MIDI median wall P99 was 230.78 to 230.74 µs against v0.1.38, and median peak 313.06 to 317.44 µs.
 
 - LOOPER uses original, editable SIGNATURE bitmap row sources in `device/app.c`. Lettering occupies up to 33 pixels in each 35-pixel lane with one pixel above and below; long names are fitted horizontally. The approved reference remains the visual target. Wider firmware typography adoption and a reference-image comparison remain open.
 - Automatic leveling no longer prevents settled tracks from entering idle mix sleep. Unity gain smoothing finishes when a floating-point step rounds away. The GLOBAL fixture covers the default project going from sleep to MIDI wake to sleep, and K3 peak reset.
