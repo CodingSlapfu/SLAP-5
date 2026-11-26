@@ -1,0 +1,211 @@
+name: SLAP-5 v0.1.45 hardware testing
+on:
+  push:
+    branches: [slap-5-environment-recovery]
+    paths: ['.github/workflows/hardware-testing-0145.yml']
+permissions:
+  actions: read
+  contents: write
+  pages: write
+concurrency:
+  group: slap-5-0.1.45-hardware-testing
+jobs:
+  qualify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: v0.1.45-hardware-testing
+      CHECKPOINT: e6c3f7498d64c0763ceaab10bb1f9fa5d4e844eb
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: e6c3f7498d64c0763ceaab10bb1f9fa5d4e844eb
+      - name: Require exact-source host, native, browser and DSP comparison
+        run: |
+          test "$(git rev-parse HEAD)" = "$CHECKPOINT"
+          dsp_source=6128dcc0c8adefe9742ffc8b954f302321d9b6fb
+          git fetch --no-tags origin "$dsp_source"
+          git diff --exit-code "$dsp_source" "$CHECKPOINT" -- device vendor ':(exclude)device/tests/**'
+          for run in 45902866551 45902866456 45902669609; do
+            expected="$CHECKPOINT"
+            if [ "$run" = 45902669609 ]; then expected="$dsp_source"; fi
+            for attempt in $(seq 1 30); do
+              state="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq '.head_sha + ":" + .status + ":" + (.conclusion // "")')"
+              case "$state" in
+                "$expected:completed:success") break ;;
+                "$expected:completed:"*) exit 1 ;;
+                "$expected:"*) sleep 8 ;;
+                *) exit 1 ;;
+              esac
+            done
+            test "$state" = "$expected:completed:success"
+          done
+      - name: Build and audit the versioned native package
+        run: |
+          python3 -m venv "$RUNNER_TEMP/slap-python"
+          source "$RUNNER_TEMP/slap-python/bin/activate"
+          pip install Pillow==11.3.0 fonttools==4.59.2
+          bash vendor/fm1-base/tools/get_toolchain.sh "$RUNNER_TEMP/jieli"
+          export JIELI_TOOLCHAIN="$(realpath "$RUNNER_TEMP/jieli/toolchain")"
+          test "$(basename "$JIELI_TOOLCHAIN")" = jieli-linux-toolchains-20260730.1
+          # This candidate uses neither the vendor BLE nor Wi-Fi stack.
+          grep -qx 'ble = false' device/fm1.toml
+          ! grep -Eq '^wifi[[:space:]]*=[[:space:]]*true' device/fm1.toml
+          export AC79_SDK="$RUNNER_TEMP/ac79-packaging"
+          tools_dir="$AC79_SDK/cpu/wl82/tools"
+          sdk_raw=https://raw.githubusercontent.com/amitv87/fw-AC79_AIoT_SDK/d179b4484759423312073f5fbb232501aa491047/cpu/wl82/tools
+          while read -r digest file; do
+            mkdir -p "$(dirname "$tools_dir/$file")"
+            curl -fsSL --retry 2 --max-time 30 "$sdk_raw/$file" -o "$tools_dir/$file"
+            printf '%s  %s\n' "$digest" "$tools_dir/$file" | sha256sum -c -
+          done < evidence/sdk.sha256
+          sh device/build-native.sh --release 0.1.45
+          pkg=device/build/slap-5-0.1.45.fwsc
+          python3 tools/audit-package.py --sdk "$AC79_SDK" --app device/build/slap-5.bin \
+            --loader device/build/loader/ota.bin --package "$pkg" --identity FM-1_75000145
+          rollback="$RUNNER_TEMP/SLAP-5-0.1.31.fwsc"
+          curl -fsSL --retry 3 -o "$rollback" https://github.com/CodingSlapfu/SLAP-5/releases/download/v0.1.31-hardware-testing/SLAP-5-0.1.31.fwsc
+          printf '%s  %s\n' 36676ae153435f065c99c2106bdccf43917f7cd57f65fb702e0144d0055ef8be "$rollback" | sha256sum -c -
+          cc -O2 -o "$RUNNER_TEMP/ldr-test" vendor/fm1-base/tests/ldr_test.c
+          "$RUNNER_TEMP/ldr-test" "$rollback" "$pkg" --interrupt
+          "$RUNNER_TEMP/ldr-test" "$pkg" "$rollback"
+          mkdir -p "$RUNNER_TEMP/release" "$RUNNER_TEMP/components"
+          cp "$pkg" "$RUNNER_TEMP/release/SLAP-5-0.1.45.fwsc"
+          cp device/build/slap-5.bin device/build/loader/ota.bin "$RUNNER_TEMP/components/"
+          git archive --format=tar.gz --prefix=SLAP-5/ "$CHECKPOINT" > "$RUNNER_TEMP/components/source.tar.gz"
+          cp START-HERE.md "$RUNNER_TEMP/components/"
+          cat >> "$RUNNER_TEMP/components/START-HERE.md" <<'EOF'
+
+          ## v0.1.45 experimental build
+
+          Source e6c3f7498d64c0763ceaab10bb1f9fa5d4e844eb. Identity FM-1_75000145.
+          SETTINGS → DISPLAY → BACKGROUND THEME selects the neutral UI backdrop. HOME and MIXER share all four KNOB STYLE appearances.
+          GLOBAL Core 1 diagnostics report voice-worker activity. Track FX runs locally on Core 0 in this build.
+          A clean restart can retry Core 1 once after an eligible hard timeout. Preserve current work before restarting.
+          Hold SEL and turn ALGO in Sound Lab to open Expression.
+          Hold OCT+ for source on K1, delay on K3 and fade on K4.
+          Songs using custom Expression settings need v0.1.41 or later.
+          Keep an untouched copy of any song you need to reopen in an older release.
+          Firmware rollback remains available using the app-only v0.1.31 package.
+          EOF
+          cp "$RUNNER_TEMP/release/SLAP-5-0.1.45.fwsc" "$RUNNER_TEMP/components/"
+          (cd "$RUNNER_TEMP/components" && sha256sum SLAP-5-0.1.45.fwsc slap-5.bin ota.bin source.tar.gz START-HERE.md > SHA256SUMS && sha256sum -c SHA256SUMS)
+          tar -C "$RUNNER_TEMP/components" -czf "$RUNNER_TEMP/release/SLAP-5-0.1.45-engineering-backup.tar.gz" .
+          gh run download 45902866551 --repo "$GITHUB_REPOSITORY" --name looper-and-expression-framebuffer --dir "$RUNNER_TEMP/framebuffer"
+          python3 vendor/fm1-base/tools/build.py device --host
+          fixture="$RUNNER_TEMP/looper-reference-comparison.txt"
+          awk '{print} /^expect worker_fallbacks 0$/ {print "shot looper-jungle-240.png"}' device/tests/jungle-155.txt > "$fixture"
+          device/build/host/slap-5_host "$fixture" "$RUNNER_TEMP/framebuffer"
+          styles="$RUNNER_TEMP/looper-knob-compare.txt"
+          awk '/^shot knob-/ { name=$2; pending=1 } { print } /^tap HOME$/ && pending { sub(/^knob-/, "home-knob-", name); print "wait 100"; print "shot " name; pending=0 }' device/tests/knob-style.txt > "$styles"
+          device/build/host/slap-5_host "$styles" "$RUNNER_TEMP/framebuffer"
+          prior=https://github.com/CodingSlapfu/SLAP-5/releases/download/v0.1.44-hardware-testing/SLAP-5-0.1.44-framebuffer.zip
+          curl -fsSL --retry 3 "$prior" -o "$RUNNER_TEMP/looper-before.zip"
+          printf '%s  %s\n' 426c17be9bf3244510fd986611c82a1a8211e615e7ce77bac1d3525a0bbf60eb "$RUNNER_TEMP/looper-before.zip" | sha256sum -c -
+          python3 - <<'PY'
+          import base64
+          import io
+          import zipfile
+          import os
+          from pathlib import Path
+          from PIL import Image
+
+          folder = Path(os.environ["RUNNER_TEMP"]) / "framebuffer"
+          native = folder / "looper-jungle-240.png"
+          with Image.open(native) as capture:
+              assert capture.size == (240, 240)
+              capture.resize((960, 960), Image.Resampling.NEAREST).save(folder / "looper-jungle-960.png")
+          with zipfile.ZipFile(folder.parent / "looper-before.zip") as archive:
+              with Image.open(io.BytesIO(archive.read("looper-jungle-240.png"))) as before, Image.open(native) as after:
+                  compare = Image.new("RGB", (480, 240))
+                  compare.paste(before, (0, 0))
+                  compare.paste(after, (240, 0))
+                  compare.save(folder / "looper-before-after-480.png")
+          for home in sorted(folder.glob("home-knob-*.png")):
+              with Image.open(home) as left, Image.open(folder / home.name.removeprefix("home-")) as right:
+                  compare = Image.new("RGB", (480, 240))
+                  compare.paste(left, (0, 0))
+                  compare.paste(right, (240, 0))
+                  compare.save(folder / home.name.replace("home-knob-", "home-mixer-"))
+          encoded = base64.b64encode((folder / "looper-before-after-480.png").read_bytes()).decode("ascii")
+          for offset in range(0, len(encoded), 1200):
+              print(f"LOOPER_FRAME {offset:06d} {encoded[offset:offset + 1200]}")
+          PY
+          (cd "$RUNNER_TEMP/framebuffer" && zip -q "$RUNNER_TEMP/release/SLAP-5-0.1.45-framebuffer.zip" ./*.png)
+          cp "$RUNNER_TEMP/framebuffer/looper-before-after-480.png" "$RUNNER_TEMP/release/SLAP-5-0.1.45-HOME-before-after.png"
+          cd "$RUNNER_TEMP/release"
+          sha256sum SLAP-5-0.1.45.fwsc SLAP-5-0.1.45-engineering-backup.tar.gz SLAP-5-0.1.45-framebuffer.zip SLAP-5-0.1.45-HOME-before-after.png | tee SHA256SUMS-0.1.45
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SLAP-5-0.1.45-qualified-hardware-testing
+          path: ${{ runner.temp }}/release
+          if-no-files-found: error
+      - name: Publish the qualified experimental package
+        run: |
+          cd "$RUNNER_TEMP/release"
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$CHECKPOINT" --prerelease --latest=false \
+            --title 'SLAP-5 v0.1.45 — Experimental FM-1 Hardware Testing' \
+            --notes 'Experimental FM-1 testing. Project load now drops stale sequencer voices and resets mixer smoothing at the callback boundary. Core 0 retains live FX ownership. Four background-only palettes, larger secondary type and shared full-size HOME/MIXER knobs. Physical project-load audio acceptance remains pending. Roll back to v0.1.44 if needed.' \
+            SLAP-5-0.1.45.fwsc SLAP-5-0.1.45-engineering-backup.tar.gz SLAP-5-0.1.45-framebuffer.zip SLAP-5-0.1.45-HOME-before-after.png SHA256SUMS-0.1.45
+          mkdir downloaded
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir downloaded
+          (cd downloaded && sha256sum -c SHA256SUMS-0.1.45)
+          cmp SHA256SUMS-0.1.45 downloaded/SHA256SUMS-0.1.45
+      - name: Stage the versioned direct browser installer
+        run: |
+          git fetch --no-tags origin gh-pages
+          git worktree add --detach "$RUNNER_TEMP/pages45" FETCH_HEAD
+          cd "$RUNNER_TEMP/pages45"
+          cp "$RUNNER_TEMP/release/SLAP-5-0.1.45.fwsc" "$RUNNER_TEMP/release/SHA256SUMS-0.1.45" .
+          python3 - <<'PY'
+          from hashlib import sha256
+          import json
+          from pathlib import Path
+
+          package = Path("SLAP-5-0.1.45.fwsc").read_bytes()
+          manifest = dict(version="0.1.45", product="FM-1_75000145",
+                          sha256=sha256(package).hexdigest(), bytes=len(package),
+                          sources=["FM-1_75000131", "FM-1_75000137", "FM-1_75000138", "FM-1_75000139", "FM-1_75000140", "FM-1_75000141", "FM-1_75000142", "FM-1_75000143", "FM-1_75000144"])
+          Path("release-testing-0.1.45.json").write_text(json.dumps(manifest, indent=2) + "\n")
+          js = Path("flash-0.1.31.js").read_text()
+          Path("flash-0.1.45.js").write_text(js.replace("release-testing-0.1.31.json", "release-testing-0.1.45.json"))
+          html = Path("flash-testing-0.1.31.html").read_text()
+          html = html.replace("0.1.31", "0.1.45").replace("75000131", "75000145")
+          html = html.replace("nexus-0.1.45/", "nexus-0.1.31/")
+          html = html.replace('href="hardware-test-0.1.45.html"', 'href="https://github.com/CodingSlapfu/SLAP-5/releases/tag/v0.1.45-hardware-testing"')
+          html = html.replace("running firmware 0.1.30 (FM-1_75000130)", "running SLAP-5 v0.1.31, v0.1.37, v0.1.38, v0.1.39, v0.1.40, v0.1.41, v0.1.42, v0.1.43, or v0.1.44")
+          html = html.replace("flash-testing-0.1.30.html", "flash-testing-0.1.31.html").replace("Previous 0.1.30 installer", "Previous v0.1.31 installer")
+          html = html.replace("SLAP-5-0.1.30.fwsc", "SLAP-5-0.1.31.fwsc").replace("0.1.30 firmware", "v0.1.31 firmware")
+          Path("flash-testing-0.1.45.html").write_text(html)
+          Path("flash-testing.html").write_text(html)
+          PY
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import {validateRelease, verifyPackage} from './flash-release.mjs';
+          const release = validateRelease(JSON.parse(fs.readFileSync('release-testing-0.1.45.json')));
+          await verifyPackage(release, fs.readFileSync(release.file));
+          JS
+          git add flash-testing.html flash-testing-0.1.45.html flash-0.1.45.js release-testing-0.1.45.json SLAP-5-0.1.45.fwsc SHA256SUMS-0.1.45
+          git -c user.name=github-actions -c user.email=github-actions@users.noreply.github.com commit -m 'Stage verified v0.1.45 experimental browser installer'
+          git push origin HEAD:refs/heads/gh-pages
+          gh api --method POST "repos/$GITHUB_REPOSITORY/pages/builds" || echo 'Pages build request did not succeed; verify deployment separately.'
+
+      - name: Verify active browser installer and deployed package
+        run: |
+          cd "$RUNNER_TEMP/release"
+          published=https://codingslapfu.github.io/SLAP-5
+          for attempt in $(seq 1 18); do
+            if curl -fsSL --max-time 15 "$published/flash-testing.html?verify=$GITHUB_RUN_ID-$attempt" -o active.html &&
+              grep -Fq 'flash-0.1.45.js' active.html &&
+              curl -fsSL --max-time 15 "$published/flash-0.1.45.js" -o active.js &&
+              grep -Fq 'release-testing-0.1.45.json' active.js &&
+              curl -fsSL --max-time 15 "$published/release-testing-0.1.45.json" -o active.json &&
+              curl -fsSL --max-time 15 "$published/SLAP-5-0.1.45.fwsc" -o deployed.fwsc &&
+              cmp SLAP-5-0.1.45.fwsc deployed.fwsc; then
+              python3 -c 'import hashlib,json,pathlib; p=pathlib.Path("deployed.fwsc").read_bytes(); m=json.load(open("active.json")); assert m["product"]=="FM-1_75000145" and m["bytes"]==len(p) and m["sha256"]==hashlib.sha256(p).hexdigest()'
+              exit 0
+            fi
+            sleep 10
+          done
+          exit 1
