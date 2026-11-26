@@ -1,0 +1,119 @@
+name: Measure zero through five sounding tracks
+on:
+  push:
+    branches: [slap-5-environment-recovery]
+    paths: ['.github/workflows/idle-mix-comparison.yml']
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Build exact-source host variants with identical host-only timing probes
+        run: |
+          python3 -m venv "$RUNNER_TEMP/slap-python"
+          source "$RUNNER_TEMP/slap-python/bin/activate"
+          pip install Pillow==11.3.0 fonttools==4.59.2
+          for sha in c116d28ddb17ab6f7294bb44a42d51af3f3d3726 f948fa24b6547533be9e9465e4b7224136984405 "$GITHUB_SHA"; do
+            git worktree add --detach "$RUNNER_TEMP/$sha" "$sha"
+            (
+              cd "$RUNNER_TEMP/$sha"
+              python3 - <<'PY'
+          from pathlib import Path
+          path = Path("vendor/fm1-base/host/plat_host.c")
+          src = path.read_text()
+          start = "    double t0 = now_ns(), dt;"
+          end = "    dt = now_ns() - t0;"
+          assert src.count(start) == src.count(end) == 1
+          src = src.replace(start, start + """
+              static FILE *samples;
+              static int armed;
+              if (!armed) {
+                  const char *path = getenv("SLAP_DSP_SAMPLES");
+                  if (path) samples = fopen(path, "w");
+                  armed = 1;
+              }
+              struct timespec begin, finish;
+              clock_gettime(CLOCK_THREAD_CPUTIME_ID, &begin);
+          """)
+          src = src.replace(end, """
+              clock_gettime(CLOCK_THREAD_CPUTIME_ID, &finish);
+          """ + end + """
+              if (samples)
+                  fprintf(samples, "%u,%.0f,%lld\\n", now_ms, dt,
+                          (long long)(finish.tv_sec - begin.tv_sec) * 1000000000ll +
+                          finish.tv_nsec - begin.tv_nsec);
+          """)
+          path.write_text(src)
+          PY
+              python3 vendor/fm1-base/tools/build.py device --host
+            )
+          done
+      - name: Alternate pinned idle and held-note trials
+        run: |
+          export SLAP_BENCH_ROOT="$RUNNER_TEMP"
+          export PYTHONPATH="$PWD/device/tests"
+          cpu="$(grep Cpus_allowed_list /proc/self/status | awk '{print $2}' | cut -d, -f1 | cut -d- -f1)"
+          taskset -c "$cpu" python3 - <<'PY'
+          import csv
+          import math
+          import os
+          from pathlib import Path
+          import statistics
+          import subprocess
+          import tempfile
+
+          root = Path(os.environ["SLAP_BENCH_ROOT"])
+          variants = {
+              "v0.1.38": "c116d28ddb17ab6f7294bb44a42d51af3f3d3726",
+              "v0.1.39": "f948fa24b6547533be9e9465e4b7224136984405",
+              "branch": os.environ["GITHUB_SHA"],
+          }
+          def fixture(bpm, tracks):
+              lines = ["wait 6100", f"turn ALGO {bpm - 112}", "expect tempo 155"]
+              for channel in range(min(tracks, 4)):
+                  lines.append(f"midi {0x90 + channel:02X} {54 + channel * 3:02X} 64")
+              for _ in range(110):
+                  if tracks == 5:
+                      lines.append("midi 94 24 64")
+                  lines.append("wait 200")
+              return "\n".join(lines) + "\n"
+
+          def stats(samples):
+              samples = sorted(samples)
+              return tuple(round(samples[math.ceil(len(samples) * q) - 1] / 1000, 2)
+                           for q in (.50, .95, .99, 1))
+
+          for bpm in (155,):
+              for mode in range(6):
+                  trials = {name: [] for name in variants}
+                  for order in (list(variants), list(reversed(variants)), list(variants)):
+                      for name in order:
+                          host = root / variants[name] / "device/build/host/slap-5_host"
+                          with tempfile.TemporaryDirectory() as directory:
+                              work = Path(directory)
+                              script = work / "trial.txt"
+                              script.write_text(fixture(bpm, mode))
+                              output = work / "samples.csv"
+                              result = subprocess.run([host, script, work], text=True,
+                                  capture_output=True, env={**os.environ, "SLAP_DSP_SAMPLES": str(output)})
+                              if result.returncode:
+                                  raise SystemExit(result.stdout + result.stderr)
+                              with output.open() as stream:
+                                  samples = [tuple(map(int, row)) for row in csv.reader(stream)][-3000:]
+                              assert len(samples) == 3000
+                              wall = [sample[1] for sample in samples]
+                              cpu = [sample[2] for sample in samples]
+                              jitter = [max(0, w - c) for w, c in zip(wall, cpu)]
+                              row = (*stats(cpu), *stats(wall), stats(jitter)[2],
+                                     sum(v > 5804989 for v in wall))
+                              trials[name].append(row)
+                              print(bpm, mode, name, row, flush=True)
+                  for name, rows in trials.items():
+                      print("MEDIAN", bpm, mode, name,
+                            tuple(statistics.median(column) for column in zip(*rows)), flush=True)
+          PY
