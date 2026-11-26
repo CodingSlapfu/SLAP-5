@@ -1,5 +1,11 @@
 # SLAP-5 environment recovery
 
+## Active single-palette development checkpoint
+
+The owner approved implementation with a single default CHROMA palette. The 12-theme references below describe the older release. Candidate source `53a5f30d310e98bd1af34136ac0de2fef70cf8de` uses one fixed palette, discards the retired theme bits on settings load and removes the selector. HOME uses contiguous lane backgrounds. During a running take, hold REC and tap OCT− to undo the selected track's take or clear. Hold REC and tap OCT+ twice to confirm a selected-track loop clear. Playback and recording stay active. The host fixture verifies clearing and restoring the loop during the same take. [Candidate checks](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45837309094)
+
+Read [the 155 BPM hardware report](evidence/hardware-0.1.37-155bpm.md) before changing voice dispatch. Muted tracks no longer schedule new sequenced voices in the development branch. This does not establish the cause of the chord-load overload or worker fallback. The remaining approved LOOPER, font, expression, adaptive polyphony, track sleep and hardware qualification work is open. The public hardware-testing release remains v0.1.37.
+
 ## Latest experimental release
 
 **v0.1.37 is published for hardware testing.** The application source is `74f8fb192e6de777c4fa02c110c3e90702b88366` and the release is pinned to qualification checkpoint `a55fdc8fdb93958514c735be354f231413a0ed4f`. The owner deferred the noncritical backlog below for a later window. The historical continuation notes retain their original checkpoint context.
