@@ -30,7 +30,7 @@ jobs:
           bash vendor/fm1-base/tools/get_toolchain.sh "$RUNNER_TEMP/jieli"
           toolchain="$(realpath "$RUNNER_TEMP/jieli/toolchain")"
           test "$(basename "$toolchain")" = jieli-linux-toolchains-20260730.1
-          bash vendor/fm1-base/bsp/tools/get_sdk.sh "$RUNNER_TEMP/ac79"
+          SDK_URL=https://gitee.com/Jieli-Tech/fw-AC79_AIoT_SDK.git bash vendor/fm1-base/bsp/tools/get_sdk.sh "$RUNNER_TEMP/ac79"
           printf 'JIELI_TOOLCHAIN=%s\nAC79_SDK=%s\n' "$toolchain" "$RUNNER_TEMP/ac79" >> "$GITHUB_ENV"
       - name: Build v0.1.36 with verified native inputs
         run: |
