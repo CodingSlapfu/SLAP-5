@@ -1,5 +1,15 @@
 # SLAP-5 environment recovery
 
+## v0.1.42 experimental firmware
+
+Application source `2d89ffe83b8146917837092698b42136e4add881`. Firmware identity `FM-1_75000142`. [Engineering and physical test instructions](evidence/qualification-0.1.42.md). [Exact-source software gates, package and deployed installer verification](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45885709203).
+
+- [Experimental browser installer](https://codingslapfu.github.io/SLAP-5/flash-testing.html), [standalone firmware](https://github.com/CodingSlapfu/SLAP-5/releases/download/v0.1.42-hardware-testing/SLAP-5-0.1.42.fwsc), [engineering backup](https://github.com/CodingSlapfu/SLAP-5/releases/download/v0.1.42-hardware-testing/SLAP-5-0.1.42-engineering-backup.tar.gz), [firmware framebuffer captures](https://github.com/CodingSlapfu/SLAP-5/releases/download/v0.1.42-hardware-testing/SLAP-5-0.1.42-framebuffer.zip).
+- Firmware SHA-256 `7a2f7730a99b144c2390d6e42682082358e3c9921efe031cb777de19ac4ab1cc`. Backup SHA-256 `d9762dcca9156eb55bc3000eaa21a2181b4bb2f1b39c019621b6c1bde0dba127`.
+- Acknowledged late voice work drains safely and resumes. Repeated late jobs narrow the remote batch, while FX admission uses remaining budget and the last matching job's runtime. GLOBAL identifies VOICE LATE or FX LATE after a hard timeout. The platform hard stop remains enabled for an unacknowledged job.
+- SETTINGS → KNOB STYLE uses K1 to select four persistent appearances. HOME uses revised SIGNATURE glyph height and shadow. The single CHROMA palette and hardware assignments are retained.
+- The 155 BPM dense recording and JUNGLE fixtures, worker timeout injection, MIDI, host/browser, native package, interrupted OTA and rollback checks passed. Physical testing is still required for crackling, XRUNs and the first late job. Keep an untouched legacy project for v0.1.31 rollback. Schema 13 projects need v0.1.41 or newer.
+
 ## v0.1.41 experimental firmware
 
 Exact application source `a3d4f2ccb71a0344c81a2a593d8db377952e9ab6`. Firmware identity `FM-1_75000141`. [Release verification and deployed installer check](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45845292454). [Browser installer](https://codingslapfu.github.io/SLAP-5/flash-testing.html), [standalone firmware](https://github.com/CodingSlapfu/SLAP-5/releases/download/v0.1.41-hardware-testing/SLAP-5-0.1.41.fwsc), [engineering backup](https://github.com/CodingSlapfu/SLAP-5/releases/download/v0.1.41-hardware-testing/SLAP-5-0.1.41-engineering-backup.tar.gz), [framebuffer captures](https://github.com/CodingSlapfu/SLAP-5/releases/download/v0.1.41-hardware-testing/SLAP-5-0.1.41-framebuffer.zip). Firmware SHA-256 `1511fbf8916ebc0e91c8d2981df813de96dfd8fb723077c7e809c509f4d8aebd`. Backup SHA-256 `1935bbfa06f8ce7ffc0b0d3cefdf581a035db4c190d2c2dc8fe184ccb97865fe`.
