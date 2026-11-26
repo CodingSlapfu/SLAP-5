@@ -117,6 +117,23 @@ jobs:
             fi
           done
           python3 device/tests/midi-clock-stress.py "$host"
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          from PIL import Image
+
+          gallery = Path(os.environ["RUNNER_TEMP"]) / "looper-captures"
+          knobs = sorted(gallery.glob("knob-*.png"))
+          assert len(knobs) == 4, knobs
+          footers = set()
+          for screenshot in knobs:
+              with Image.open(screenshot) as image:
+                  assert image.size == (240, 240), screenshot
+                  footers.add(image.crop((0, 198, 240, 240)).tobytes())
+                  image.resize((960, 960), Image.Resampling.NEAREST).save(
+                      screenshot.with_stem(screenshot.stem + "-960"))
+          assert len(footers) == 4, "All four styles must change the HOME footer"
+          PY
           sh device/tests/dual-core.sh
           python3 device/tests/sound-graph-audio.py "$host"
       - uses: actions/upload-artifact@v4

@@ -2569,14 +2569,14 @@ static unsigned render_voice_batch(unsigned frames, unsigned muted,
 
 static unsigned select_fx_worker_tracks(void)
 {
-    // Each track costs at most 19 units, so five bits encode its cost.
-    // Runtime effect state does not influence the existing split policy.
+    // Live transitions can overlap configured effects. Allocate six bits per
+    // track so a heavy chain cannot overwrite its neighbor's cached cost.
     static unsigned previous_key, previous_mask;
-    _Static_assert(TRACKS * 5u <= 32u, "FX cost key fits in one word");
+    _Static_assert(TRACKS * 6u <= 32u, "FX cost key fits in one word");
     unsigned cost[TRACKS], total = 0, key = 0;
     for (unsigned t = 0; t < TRACKS; ++t) {
         cost[t] = slap_fx_work(t);
-        key |= cost[t] << (t * 5u);
+        key |= cost[t] << (t * 6u);
         total += cost[t];
     }
     if (key == previous_key) return previous_mask;
@@ -4446,7 +4446,7 @@ void app_input_only(void)
     uint32_t options = auto_mix | dancer_pattern << 1 | (unsigned)!dancer_outline << 3 |
         (unsigned)!dancer_lighting << 4 | (unsigned)!dancer_reactivity << 5 |
         led_keys_on_hit << 6 | 128u | led_active_soft << 8 | midi_options << 9 |
-        knob_style << 27 | 1u << 31;
+        (knob_style ? (knob_style << 27) | (1u << 31) : 0u);
     uint32_t duck = 0;
     for (unsigned t = 0; t < DRUMS; ++t) duck |= (uint32_t)mixer_duck[t] << (8u * t);
     uint32_t now = plat_ms();
