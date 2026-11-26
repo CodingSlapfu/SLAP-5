@@ -1,5 +1,16 @@
 # SLAP-5 environment recovery
 
+## v0.1.44 experimental firmware
+
+Application source `da17fe35bbde5b41865c896cfbcbd98f5c2786a0`. Identity `FM-1_75000144`. [Qualification and hardware test procedure](evidence/qualification-0.1.44.md). [Verified build, release and deployed installer](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45897199511).
+
+- [Experimental browser installer](https://codingslapfu.github.io/SLAP-5/flash-testing.html), [standalone firmware](https://github.com/CodingSlapfu/SLAP-5/releases/download/v0.1.44-hardware-testing/SLAP-5-0.1.44.fwsc), [engineering backup](https://github.com/CodingSlapfu/SLAP-5/releases/download/v0.1.44-hardware-testing/SLAP-5-0.1.44-engineering-backup.tar.gz), [HOME before and after](https://github.com/CodingSlapfu/SLAP-5/releases/download/v0.1.44-hardware-testing/SLAP-5-0.1.44-HOME-before-after.png), [framebuffer archive](https://github.com/CodingSlapfu/SLAP-5/releases/download/v0.1.44-hardware-testing/SLAP-5-0.1.44-framebuffer.zip).
+- Firmware SHA-256 `18ed006e09a75678aca7d9ef968b34d84b9f09956ed45f251538cacf7bbdd553`. Backup SHA-256 `c2eae900974f384560c098a78e8233b275ac58ba7d5469e186356cde4f9e3a51`.
+- Native track FX now runs on Core 0 to prevent FX-LATE retirement. Core 1 remains available for voice rendering. Five wet chains matched PCM in hosted validation. Physical Core 1 operation and deadline margin with the owner's JUNGLE project are still open.
+- HOME restores compact dials, adds bar and selected-loop progress, brightens lane text and pulse, and limits names to eight characters. Small utility text uses Barlow Semi Condensed SemiBold. Review legibility on the physical panel before acceptance.
+- Use the v0.1.43 package as immediate rollback and preserve the project used for the physical comparison.
+
+
 ## v0.1.43 experimental firmware
 
 Application `720683d2e7974274d67163670bd9f9d6fdd0ad53`. Identity `FM-1_75000143`. [Engineering qualification and physical acceptance procedure](evidence/qualification-0.1.43.md). [Verified build and live installer](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45891460507).
