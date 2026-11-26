@@ -2924,9 +2924,12 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
                 (amplitude > mixer_envelope[t] ? 0.003f : 0.00018f);
             if (gain_needed[t]) {
                 float response = gain_goal[t] < mixer_gain[t] ? 0.00035f : 0.00009f;
-                mixer_gain[t] += (gain_goal[t] - mixer_gain[t]) * response;
-                if (gain_goal[t] == 1.0f && fm_fabsf(1.0f - mixer_gain[t]) < 0.00005f)
-                    mixer_gain[t] = 1.0f;
+                float previous = mixer_gain[t];
+                float next = previous + (gain_goal[t] - previous) * response;
+                // A sub-ULP smoothing step can leave the gain just short of unity forever.
+                if (gain_goal[t] == 1.0f && (next == previous || fm_fabsf(1.0f - next) < 0.00005f))
+                    next = 1.0f;
+                mixer_gain[t] = next;
                 sample *= mixer_gain[t];
                 amplitude = fm_fabsf(sample);
             }
