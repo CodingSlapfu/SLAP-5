@@ -2,7 +2,7 @@ name: SLAP-5 HOME LCD verification
 on:
   push:
     branches: [slap-5-environment-recovery]
-    paths: [.github/workflows/home-lcd-verification.yml, device/app.c, device/visuals.h, device/tests/chroma-themes.txt]
+    paths: [.github/workflows/home-lcd-verification.yml, device/app.c, device/visuals.h, device/tests/chroma-themes.txt, device/tests/chroma-panels.py]
 permissions:
   contents: read
 jobs:
@@ -100,6 +100,7 @@ jobs:
           done
           python3 device/tests/midi-clock-stress.py "$host"
           sh device/tests/dual-core.sh
+          python3 device/tests/chroma-panels.py "$host"
       - name: Compile candidate with verified native inputs
         run: |
           source "$RUNNER_TEMP/slap-python/bin/activate"
