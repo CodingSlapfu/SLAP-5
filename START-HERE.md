@@ -1,5 +1,13 @@
 # SLAP-5 environment recovery
 
+## v0.1.40 candidate
+
+Exact source `843718ab19e7caca442db8cbf17effa59c608e15`. [Native, host, framebuffer and recovery qualification](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45842544639) passed. [Experimental release gate](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45842706224) also requires the exact-source Studio and pinned DSP runs before publication.
+
+- LOOPER uses original, editable SIGNATURE bitmap row sources in `device/app.c`. Lettering occupies up to 33 pixels in each 35-pixel lane with one pixel above and below; long names are fitted horizontally. The approved reference remains the visual target. Wider firmware typography adoption and a reference-image comparison remain open.
+- Automatic leveling no longer prevents settled tracks from entering idle mix sleep. Unity gain smoothing finishes when a floating-point step rounds away. The GLOBAL fixture covers the default project going from sleep to MIDI wake to sleep, and K3 peak reset.
+- Generalized track sleep, chord-overload diagnosis and ASP, SOUND LAB EXPRESSION, broader diagnostics, and the remaining qualification backlog are still open. Physical FM-1 timing is unverified.
+
 ## v0.1.39 experimental firmware and next development checkpoint
 
 - [Verified direct browser installer](https://codingslapfu.github.io/SLAP-5/flash-testing.html), [standalone firmware](https://github.com/CodingSlapfu/SLAP-5/releases/download/v0.1.39-hardware-testing/SLAP-5-0.1.39.fwsc), [v0.1.31 rollback](https://github.com/CodingSlapfu/SLAP-5/releases/download/v0.1.31-hardware-testing/SLAP-5-0.1.31.fwsc).
