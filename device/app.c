@@ -2616,7 +2616,18 @@ static void render_worker_fx(uint32_t frames)
 
 static unsigned render_fx_batch(unsigned frames, unsigned mask, unsigned active, uint32_t start, uint32_t budget)
 {
-    if (!mask || voice_pending || !plat_cpu2_on() || plat_cpu2_busy() || plat_ticks24() - start >= budget * 3u / 4u) return 0;
+    if (!mask || voice_pending || voice_recovery_jobs || !plat_cpu2_on() || plat_cpu2_busy()) return 0;
+    uint32_t elapsed = plat_ticks24() - start;
+    uint32_t cutoff = budget * 3u / 4u;
+    if (elapsed >= cutoff) return 0;
+#ifndef PLAT_HOST
+    // Start only when the last acknowledged job for these tracks can fit.
+    // The existing wait and rollback remain the hard safety backstop.
+    static unsigned measured_mask, measured_frames;
+    static uint32_t measured_ticks;
+    if (mask == measured_mask && measured_ticks * frames >= (cutoff - elapsed) * measured_frames)
+        return 0;
+#endif
     fx_worker_count = 0;
     for (unsigned t = 1; t < TRACKS; ++t) {
         if (!(mask & (1u << t))) continue;
@@ -2673,6 +2684,11 @@ static unsigned render_fx_batch(unsigned frames, unsigned mask, unsigned active,
                                                fx_job_start, fx_job_ticks);
         ++fx_worker_jobs;
         fx_worker_ticks += fx_job_ticks;
+#ifndef PLAT_HOST
+        measured_mask = mask;
+        measured_frames = frames;
+        measured_ticks = fx_job_ticks;
+#endif
     }
     return frames;
 }

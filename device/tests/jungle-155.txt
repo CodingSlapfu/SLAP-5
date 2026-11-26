@@ -1,0 +1,144 @@
+wait 6100
+turn ALGO 43
+expect tempo 155
+turn K4 60
+expect swing 60
+tap SEQ
+key w1 down
+key w1 up
+expect pitch >0
+press SEL
+turn SELECT 1
+release SEL
+key w2 down
+key w2 up
+expect pitch >0
+press SEL
+turn SELECT 1
+release SEL
+key w3 down
+key w3 up
+expect pitch >0
+press SEL
+turn SELECT 1
+release SEL
+key w4 down
+key w4 up
+expect pitch >0
+tap HOME
+turn SELECT 1
+tap SEQ
+key w1 down
+key w1 up
+expect pitch >0
+press SEL
+turn SELECT 1
+release SEL
+key w2 down
+key w2 up
+expect pitch >0
+press SEL
+turn SELECT 1
+release SEL
+key w3 down
+key w3 up
+expect pitch >0
+press SEL
+turn SELECT 1
+release SEL
+key w4 down
+key w4 up
+expect pitch >0
+tap HOME
+turn SELECT 1
+tap SEQ
+key w1 down
+key w1 up
+expect pitch >0
+press SEL
+turn SELECT 1
+release SEL
+key w2 down
+key w2 up
+expect pitch >0
+press SEL
+turn SELECT 1
+release SEL
+key w3 down
+key w3 up
+expect pitch >0
+press SEL
+turn SELECT 1
+release SEL
+key w4 down
+key w4 up
+expect pitch >0
+tap HOME
+turn SELECT 1
+tap SEQ
+key w1 down
+key w1 up
+expect pitch >0
+press SEL
+turn SELECT 1
+release SEL
+key w2 down
+key w2 up
+expect pitch >0
+press SEL
+turn SELECT 1
+release SEL
+key w3 down
+key w3 up
+expect pitch >0
+press SEL
+turn SELECT 1
+release SEL
+key w4 down
+key w4 up
+expect pitch >0
+tap HOME
+turn SELECT 1
+expect track 5
+tap SEQ
+tap SEQ
+turn K1 3
+tap SEL
+expect gen_count 1
+tap HOME
+tap FX
+turn ALGO 2
+expect fx_page 3
+turn K1 2
+expect fx_k1 2
+tap HOME
+tap PLAY
+wait 3200
+expect peak_voices 16
+tap PLAY
+tap SAVE
+key w0 down
+wait 4200
+key w0 up
+expect store_writes 1
+reboot
+wait 6100
+tap SAVE
+tap SEL
+tap HOME
+expect tempo 155
+expect swing 60
+tap PLAY
+wait 3200
+expect playing 1
+expect peak_voices 16
+expect worker_online 1
+expect worker_fallbacks 0
+tap PLAY
+expect playing 0
+wait 1500
+tap PLAY
+expect playing 1
+wait 3200
+expect worker_online 1
+tap PLAY
