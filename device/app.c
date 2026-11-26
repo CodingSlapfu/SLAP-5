@@ -4398,6 +4398,20 @@ static int held_note_width(unsigned duration, unsigned step, unsigned base, unsi
 
 static void draw_performance_knob(int x, const char *label, const char *value, int position, uint16_t color)
 {
+    const felucca_font_t *label_font = text_w(&FONT_B, label) <= 58 ? &FONT_B :
+        text_w(&FONT_T, label) <= 58 ? &FONT_T : &FONT_XS;
+    const felucca_font_t *value_font = text_w(&FONT_B, value) <= 27 ? &FONT_B : &FONT_T;
+    int width = text_w(value_font, value);
+    if (width > 27) {
+        value_font = text_w(&FONT_B, value) <= 56 ? &FONT_B :
+            width <= 56 ? &FONT_T : &FONT_XS;
+        width = text_w(value_font, value);
+        cv_text(x + (60 - width) / 2, 0, value_font, value, C_WHITE);
+        cv_rect(x + 4, 20, 52, 2, 0x3186);
+        cv_rect(x + 4 + (position + 100) * 48 / 200, 18, 4, 6, color);
+        cv_text(x + 1, 26, label_font, label, color);
+        return;
+    }
     int center = x + 16;
     const int cy = 14;
     static const uint8_t rim[] = {14, 14, 14, 14, 13, 13, 13, 12, 11, 10, 9, 8, 7, 5, 2};
@@ -4420,20 +4434,7 @@ static void draw_performance_knob(int x, const char *label, const char *value, i
     int py = cy + visual_wave(angle, 11);
     cv_line(center + visual_wave(angle + 256u, 4), cy + visual_wave(angle, 4), px, py, color);
     cv_rect(px, py, 2, 2, C_WHITE);
-    int width = text_w(&FONT_B, value);
-    const felucca_font_t *value_font = width <= 27 ? &FONT_B : &FONT_T;
-    width = text_w(value_font, value);
-    if (width <= 27) cv_text(x + 33, 5, value_font, value, C_WHITE);
-    else {
-        for (int i = 0, at = x + 32; value[i] && at < x + 57; ++i) {
-            char character[] = {value[i], 0};
-            int span = text_w(&FONT_T, character);
-            if (at + span > x + 60) break;
-            cv_text(at, 5, &FONT_T, character, C_WHITE);
-            at += span;
-        }
-    }
-    const felucca_font_t *label_font = text_w(&FONT_B, label) <= 58 ? &FONT_B : &FONT_T;
+    cv_text(x + 33, 5, value_font, value, C_WHITE);
     cv_text(x + 1, 26, label_font, label, color);
 }
 
