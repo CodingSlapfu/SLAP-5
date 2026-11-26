@@ -1,5 +1,15 @@
 # SLAP-5 environment recovery
 
+## Latest experimental release
+
+**v0.1.37 is published for hardware testing.** The application source is `74f8fb192e6de777c4fa02c110c3e90702b88366` and the release is pinned to qualification checkpoint `a55fdc8fdb93958514c735be354f231413a0ed4f`. The owner deferred the noncritical backlog below for a later window. The historical continuation notes retain their original checkpoint context.
+
+- Package identity `FM-1_75000137`, SHA-256 `0255ef443a95e909c4a93b4d0c17d0d358a418b7b2733fb0a11217047128dfe1`. [Prerelease and package](https://github.com/CodingSlapfu/SLAP-5/releases/tag/v0.1.37-hardware-testing)
+- Native compile, app-only package audit, interrupted-write recovery and v0.1.31 rollback with song/settings preservation passed in the loader simulator. The public assets were re-downloaded and checked against the audited checksums. [Qualification](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45781972179) · [Public asset verification](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45782237725)
+- The release includes the downloadable source, package, application, loader, component checksums, and recovery notes. The original development package and frozen source are available separately in the [original checkpoint archive](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45781972179/artifacts/15098278259), which has limited Actions retention.
+- Use the standalone package with [M-Flasher](https://github.com/jvitkauskas/m-flasher/releases/latest) on a confirmed compatible FM-1. The existing browser installer is unchanged. [v0.1.31 rollback](https://github.com/CodingSlapfu/SLAP-5/releases/download/v0.1.31-hardware-testing/SLAP-5-0.1.31.fwsc)
+- Physical acceptance remains pending. This prerelease does not change the stable track or deploy Studio.
+
 The consolidated release gate remains open. The public hardware-testing firmware is [v0.1.31](https://github.com/CodingSlapfu/SLAP-5/releases/tag/v0.1.31-hardware-testing).
 
 ## Current continuation checkpoint
