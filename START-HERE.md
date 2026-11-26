@@ -1,5 +1,17 @@
 # SLAP-5 environment recovery
 
+## v0.1.38 experimental audio-repair checkpoint
+
+[Published hardware-testing prerelease](https://github.com/CodingSlapfu/SLAP-5/releases/tag/v0.1.38-hardware-testing). Exact firmware source `c116d28ddb17ab6f7294bb44a42d51af3f3d3726`. Identity `FM-1_75000138`. Package SHA-256 `852e1a6fc4c77baf97eb47e9e3c5bc787136b93ebc1c04966c6fa03e5d1b86df`. The prerelease contains the checked firmware, source, application, loader, and recovery instructions. Package, native limits, interruption and v0.1.31 rollback with settings and songs preserved passed. Public assets were downloaded and checksum-verified. [Publication run](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45838756162)
+
+- Muted and solo-excluded tracks skip new sequenced voice allocation. Existing releases and effect state are retained. Sixteen shared voices and 256-frame blocks are unchanged.
+- The Core 1 FX path can accept an acknowledged completion within 480 µs of the wait start and within the existing three-quarter callback cutoff. A job that completes during the extra wait moves FX work to Core 0 for 64 callbacks. Core 1 remains available for voices. A hard timeout still stops the worker before rollback and rerender. Forced recoverable and hard-failure PCM parity passed. [Native, host and forced-worker checks](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45838409672)
+- At 155 BPM with mixed MIDI, median host wall P95/P99/peak were 141.37/156.48/200.06 µs on v0.1.37 and 141.07/157.06/182.10 µs on v0.1.38. There were zero measured host budget overruns in the comparison. [Pinned measurements](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45838409609)
+- The synthetic reproduction verified 155 BPM, 60% swing, JUNGLE drums, SLICER and 16 voices before and after saving and reloading. It does not contain the owner's original project or reproduce physical timing. [Jungle project fixture](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45838883526)
+- Native resource use is 565,000 / 581,564 bytes flash, 88,424 / 98,304 bytes static RAM and 335,568 / 344,064 bytes pool. [Exact-source browser and Studio checks](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45838409600)
+
+Next physical test: copy the v0.1.37 project, reset GLOBAL stats, reproduce the chords at 155 BPM and 60% swing, and capture the worker status before reboot if lag appears. Compare sustained Core 1 job progress, late voice and FX counters, XRUNs and deadline misses with FX active, FX off, and all tracks muted. The original hardware trigger remains open. Full adaptive voice and tail handling, generalized track sleep, expression, SIGNATURE typography, and the complete LOOPER remain open. Stable and browser installer tracks remain unchanged. Use the standalone experimental package with M-Flasher.
+
 ## Active single-palette development checkpoint
 
 The owner approved implementation with a single default CHROMA palette. The 12-theme references below describe the older release. Candidate source `53a5f30d310e98bd1af34136ac0de2fef70cf8de` uses one fixed palette, discards the retired theme bits on settings load and removes the selector. HOME uses contiguous lane backgrounds. During a running take, hold REC and tap OCT− to undo the selected track's take or clear. Hold REC and tap OCT+ twice to confirm a selected-track loop clear. Playback and recording stay active. The host fixture verifies clearing and restoring the loop during the same take. [Candidate checks](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45837309094)
