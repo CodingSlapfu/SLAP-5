@@ -2865,7 +2865,7 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
             sleeping_mix = 0;
             unsigned signal_tracks = voice_span_tracks | effect_mask | low_filter_mask | high_filter_mask;
             for (unsigned t = 0; t < TRACKS; ++t) {
-                if ((signal_tracks & (1u << t)) || gain_needed[t] ||
+                if ((signal_tracks & (1u << t)) || mixer_gain[t] != 1.0f ||
                     (duck_enabled && t < DRUMS)) continue;
                 if (mixer_envelope[t] < 0.0000001f && energy_smooth[t] < 0.0000001f) {
                     mixer_envelope[t] = energy_smooth[t] = 0.0f;
