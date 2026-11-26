@@ -145,3 +145,36 @@ jobs:
             device/build/slap-5.bin
             device/build/loader/ota.bin
             device/build/SHA256SUMS
+  archive:
+    needs: home
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: slap-5-engineering-checkpoint-unpublished
+          path: engineering-backup
+      - name: Save a private draft backup and verify its assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd engineering-backup
+          sha256sum -c SHA256SUMS
+          backup_tag="engineering-backup-${GITHUB_SHA:0:12}"
+          tar -czf "$backup_tag.tar.gz" slap-5.fwsc slap-5.bin loader/ota.bin SHA256SUMS
+          sha256sum "$backup_tag.tar.gz" > "$backup_tag.sha256"
+          if ! gh release view "$backup_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$backup_tag" --repo "$GITHUB_REPOSITORY" \
+              --draft --target "$GITHUB_SHA" --title "Engineering backup ${GITHUB_SHA:0:12}" \
+              --notes "Private engineering backup. Source: $GITHUB_SHA. Verification: https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+              "$backup_tag.tar.gz" "$backup_tag.sha256"
+          fi
+          test "$(gh release view "$backup_tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" = true
+          mkdir -p restored
+          gh release download "$backup_tag" --repo "$GITHUB_REPOSITORY" --dir restored
+          cd restored
+          sha256sum -c "$backup_tag.sha256"
+          cmp "$backup_tag.tar.gz" "../$backup_tag.tar.gz"
+          tar -xzf "$backup_tag.tar.gz"
+          sha256sum -c SHA256SUMS
