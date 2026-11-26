@@ -75,7 +75,7 @@ jobs:
                   assert image.read_bytes() == (root / "candidate" / image.name).read_bytes(), image.name
               assert pixels[1] < pixels[0]
               print("60 identical screens. Pixels avoided:", pixels[0] - pixels[1])
-              fixture.write_text("wait 6100\ntap GLO\nturn ALGO 5\nwait 2200\nshot display.png\ntap HOME\ntap GLO\nwait 500\nshot reenter.png\n")
+              fixture.write_text("wait 6100\ntap GLO\nturn ALGO 5\nwait 2200\nshot display.png\ntap HOME\ntap GLO\nturn ALGO 5\nwait 500\nshot reenter.png\n")
               transfer_counts = []
               dirs = []
               for label, source in zip(("baseline", "candidate"), sources):
