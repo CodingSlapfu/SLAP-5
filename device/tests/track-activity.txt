@@ -1,0 +1,31 @@
+wait 6100
+expect diag_sleep_mask 31
+midi 90 3C 64
+wait 100
+expect diag_track1_voices 1
+expect diag_voice_peak 1
+expect diag_sleep_mask 30
+midi 80 3C 00
+wait 5000
+expect diag_track1_voices 0
+expect diag_sleep_mask 31
+press GLO
+wait 5100
+release GLO
+expect page 2
+expect diag_voice_peak 1
+turn K3 1
+wait 50
+expect diag_voice_peak 0
+expect diag_sleep_mask 31
+tap GLO
+tap GLO
+tap GLO
+tap GLO
+tap GLO
+tap GLO
+tap GLO
+tap GLO
+tap GLO
+tap GLO
+shot track-activity.png

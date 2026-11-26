@@ -6276,6 +6276,9 @@ int app_expect(const char *name, int *result)
     if (name_matches(name, "track")) *result = slap_ui.track + 1;
 #if defined(PLAT_HOST)
     else if (name_matches(name, "peak_voices")) *result = (int)host_peak_voices;
+    else if (name_matches(name, "diag_voice_peak")) *result = (int)peak_active_voices;
+    else if (name_matches(name, "diag_sleep_mask")) *result = (int)track_sleep_mask;
+    else if (name_matches(name, "diag_track1_voices")) *result = (int)(track_voice_counts & 31u);
     else if (name_matches(name, "voice_steals")) *result = (int)voice_steals;
 #endif
 #if defined(PLAT_HOST) && !defined(PLAT_WEB)
