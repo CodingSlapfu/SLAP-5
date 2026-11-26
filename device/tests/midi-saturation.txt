@@ -1,0 +1,217 @@
+wait 6100
+tap GLO
+turn ALGO 8
+turn K1 1
+turn SELECT 2
+turn K1 1
+turn ALGO 2
+turn SELECT 1
+turn K1 1
+tap HOME
+tap SEQ
+key 0 down
+key 0 up
+expect pitch >0
+press SEL
+turn SELECT 1
+release SEL
+key 1 down
+key 1 up
+expect pitch >0
+press SEL
+turn SELECT 1
+release SEL
+key 2 down
+key 2 up
+expect pitch >0
+press SEL
+turn SELECT 1
+release SEL
+key 3 down
+key 3 up
+expect pitch >0
+tap HOME
+turn SELECT 1
+tap SEQ
+key 0 down
+key 0 up
+expect pitch >0
+press SEL
+turn SELECT 1
+release SEL
+key 1 down
+key 1 up
+expect pitch >0
+press SEL
+turn SELECT 1
+release SEL
+key 2 down
+key 2 up
+expect pitch >0
+press SEL
+turn SELECT 1
+release SEL
+key 3 down
+key 3 up
+expect pitch >0
+tap HOME
+turn SELECT 1
+tap SEQ
+key 0 down
+key 0 up
+expect pitch >0
+press SEL
+turn SELECT 1
+release SEL
+key 1 down
+key 1 up
+expect pitch >0
+press SEL
+turn SELECT 1
+release SEL
+key 2 down
+key 2 up
+expect pitch >0
+press SEL
+turn SELECT 1
+release SEL
+key 3 down
+key 3 up
+expect pitch >0
+tap HOME
+turn SELECT 1
+tap SEQ
+key 0 down
+key 0 up
+expect pitch >0
+press SEL
+turn SELECT 1
+release SEL
+key 1 down
+key 1 up
+expect pitch >0
+press SEL
+turn SELECT 1
+release SEL
+key 2 down
+key 2 up
+expect pitch >0
+press SEL
+turn SELECT 1
+release SEL
+key 3 down
+key 3 up
+expect pitch >0
+tap HOME
+turn SELECT 1
+tap SEQ
+press SEL
+turn SELECT 1
+release SEL
+key 0 down
+key 0 up
+expect pitch >0
+press SEL
+turn SELECT 1
+release SEL
+key 0 down
+key 0 up
+expect pitch >0
+press SEL
+turn SELECT 1
+release SEL
+key 0 down
+key 0 up
+expect pitch >0
+press SEL
+turn SELECT 1
+release SEL
+key 0 down
+key 0 up
+expect pitch >0
+press SEL
+turn SELECT 1
+release SEL
+key 0 down
+key 0 up
+expect pitch >0
+press SEL
+turn SELECT 1
+release SEL
+key 0 down
+key 0 up
+expect pitch >0
+press SEL
+turn SELECT 1
+release SEL
+key 0 down
+key 0 up
+expect pitch >0
+press SEL
+turn SELECT 1
+release SEL
+key 0 down
+key 0 up
+expect pitch >0
+press SEL
+turn SELECT 1
+release SEL
+key 0 down
+key 0 up
+expect pitch >0
+press SEL
+turn SELECT 1
+release SEL
+key 0 down
+key 0 up
+expect pitch >0
+press SEL
+turn SELECT 1
+release SEL
+key 0 down
+key 0 up
+expect pitch >0
+press SEL
+turn SELECT 1
+release SEL
+key 0 down
+key 0 up
+expect pitch >0
+press SEL
+turn SELECT 1
+release SEL
+key 0 down
+key 0 up
+expect pitch >0
+press SEL
+turn SELECT 1
+release SEL
+key 0 down
+key 0 up
+expect pitch >0
+press SEL
+turn SELECT 1
+release SEL
+key 0 down
+key 0 up
+expect pitch >0
+press SEL
+turn SELECT 1
+release SEL
+key 0 down
+key 0 up
+expect pitch >0
+tap HOME
+tap PLAY
+wait 25
+expect midi_pending 24
+expect midi_drops >0
+midi-room 0
+tap PLAY
+wait 50
+expect playing 0
+expect midi_pending 24
+midi-room 64
+wait 50
+expect midi_pending 0
+expect midi_out 48
