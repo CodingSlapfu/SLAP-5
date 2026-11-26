@@ -2219,6 +2219,7 @@ static PLAT_POOL SlapSynth worker_synth[REMOTE_VOICES];
 static float fx_bus[TRACKS][VOICE_BATCH] __attribute__((aligned(32)));
 static unsigned fx_worker_tracks[SLAP_FX_WORKER_TRACKS], fx_worker_count;
 static volatile uint32_t fx_worker_jobs, fx_worker_fallbacks, fx_worker_ticks;
+static unsigned fx_worker_cooldown;
 static uint32_t fx_job_start, fx_job_ticks, worker_overlap_ticks;
 static volatile uint32_t worker_jobs, worker_fallbacks, worker_ticks, worker_wait_ticks;
 static volatile uint32_t voice_late_jobs, voice_rejected_jobs, voice_busy_jobs, fx_late_jobs;
@@ -2548,6 +2549,14 @@ static unsigned render_fx_batch(unsigned frames, unsigned mask, unsigned active,
     while ((busy = plat_cpu2_busy()) &&
            plat_ticks24() - wait_start < 240u * 24u &&
            plat_ticks24() - start < budget * 3u / 4u) {}
+    if (busy) {
+        // Allow a late FX worker to finish only inside the existing callback
+        // budget. Its live state must remain exclusively owned until it stops.
+        while ((busy = plat_cpu2_busy()) &&
+               plat_ticks24() - wait_start < 480u * 24u &&
+               plat_ticks24() - start < budget * 3u / 4u) {}
+        if (!busy) fx_worker_cooldown = 64u;
+    }
     worker_wait_ticks += plat_ticks24() - wait_start;
 #ifdef PLAT_HOST
     busy |= host_discard_fx_result && fx_worker_jobs == 128u;
@@ -2757,6 +2766,11 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
     const unsigned muted = muted_drums();
     unsigned measure_fx = slap_ui.page == FX && slap_ui.fx_page == 4;
     const unsigned analyze = slap_ui.page == VISUAL;
+    const unsigned spectrum = analyze && (unsigned)slap_ui.visual < 4u;
+    if (!spectrum) {
+        analysis_phase = 0;
+        analysis_mono = 0.0f;
+    }
     const unsigned inspect_fx = slap_ui.page == FX ||
         (slap_ui.page == PATCH && edit_page && edit_page != SOUND_LAB_MAIN);
     const unsigned active_effects = slap_fx_active_mask();
@@ -2770,8 +2784,10 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
     uint32_t callback_budget = (24000000u / RATE) * frames;
 #if FM1B_CPU2 && !defined(PLAT_WEB)
     unsigned fx_batch_end = 0;
-    unsigned fx_mask = !measure_fx && (active_effects & (active_effects - 1u)) && plat_cpu2_on()
+    unsigned fx_mask = !fx_worker_cooldown && !measure_fx &&
+        (active_effects & (active_effects - 1u)) && plat_cpu2_on()
         ? select_fx_worker_tracks() : 0;
+    if (fx_worker_cooldown) --fx_worker_cooldown;
     uint32_t voice_batch_ticks = 0, fx_batch_ticks = 0;
     uint32_t remote_start = worker_ticks + fx_worker_ticks, wait_start = worker_wait_ticks;
     uint32_t overlap_start = worker_overlap_ticks;
@@ -2956,8 +2972,8 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
             meter_sum[1] += r * r;
             meter_peak[0] = fm_maxf(meter_peak[0], fm_fabsf(l));
             meter_peak[1] = fm_maxf(meter_peak[1], fm_fabsf(r));
-            capture_spectrum(l, r);
         }
+        if (spectrum) capture_spectrum(l, r);
         l *= master_gain;
         r *= master_gain;
         lr[i * 2] = (int32_t)(l * 8300000.0f);
@@ -6122,7 +6138,7 @@ static void draw_panel(void)
 void app_frame(void)
 {
     app_input_only();
-    if (slap_ui.page == VISUAL) update_spectrum();
+    if (slap_ui.page == VISUAL && (unsigned)slap_ui.visual < 4u) update_spectrum();
     else analysis_read = analysis_write;
     uint32_t now = plat_ms();
     sample_battery(now);
