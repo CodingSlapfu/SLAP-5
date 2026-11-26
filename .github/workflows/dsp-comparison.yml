@@ -18,7 +18,7 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/slap-python"
           source "$RUNNER_TEMP/slap-python/bin/activate"
           pip install Pillow==11.3.0 fonttools==4.59.2
-          for sha in 74f8fb192e6de777c4fa02c110c3e90702b88366 53a5f30d310e98bd1af34136ac0de2fef70cf8de "$GITHUB_SHA"; do
+          for sha in c116d28ddb17ab6f7294bb44a42d51af3f3d3726 53a5f30d310e98bd1af34136ac0de2fef70cf8de "$GITHUB_SHA"; do
             git worktree add --detach "$RUNNER_TEMP/$sha" "$sha"
             (
               cd "$RUNNER_TEMP/$sha"
@@ -70,7 +70,7 @@ jobs:
 
           root = Path(os.environ["SLAP_BENCH_ROOT"])
           variants = {
-              "v0.1.37": "74f8fb192e6de777c4fa02c110c3e90702b88366",
+              "v0.1.38": "c116d28ddb17ab6f7294bb44a42d51af3f3d3726",
               "pre-DSP": "53a5f30d310e98bd1af34136ac0de2fef70cf8de",
               "branch": os.environ["GITHUB_SHA"],
           }

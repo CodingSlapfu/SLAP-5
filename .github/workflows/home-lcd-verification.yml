@@ -28,7 +28,7 @@ jobs:
           s = p.read_text()
           assert s.count("static uint32_t blits;") == s.count("    blits++;") == 1
           s = s.replace("static uint32_t blits;", "static uint32_t blits, meter_blits;\nstatic unsigned long long blit_pixels;")
-          s = s.replace("    blits++;", "    blits++;\n    blit_pixels += w * h;\n    if (w == 44 && h == 7) ++meter_blits;")
+          s = s.replace("    blits++;", "    blits++;\n    blit_pixels += w * h;\n    if (w == 8 && h == 35) ++meter_blits;")
           mark = '    printf("host: %u ms simulated'
           assert s.count(mark) == 1
           s = s.replace(mark, '    printf("LCD_PIXELS %llu METER_BLITS %u\\n", blit_pixels, meter_blits);\n' + mark)
@@ -79,7 +79,13 @@ jobs:
                       for y in (57, 92, 127, 162, 197):
                           assert capture.convert("RGB").getpixel((2, y)) != (0, 0, 0), (image.name, y)
               assert pixels[1] < pixels[0]
-              print("60 full-height HOME lane captures. Pixels avoided:", pixels[0] - pixels[1])
+              print("60 full-height LOOPER lane captures. Pixels avoided:", pixels[0] - pixels[1])
+              gallery = Path(os.environ["RUNNER_TEMP"]) / "looper-captures"
+              gallery.mkdir()
+              for label in ("baseline", "candidate"):
+                  with Image.open(root / label / "on-0.png") as capture:
+                      capture.save(gallery / (label + "-240.png"))
+                      capture.resize((960, 960), Image.Resampling.NEAREST).save(gallery / (label + "-960.png"))
               fixture.write_text("wait 6100\ntap GLO\nturn ALGO 5\nwait 2200\nshot display.png\ntap HOME\ntap GLO\nturn ALGO 5\nwait 500\nshot reenter.png\n")
               transfer_counts = []
               dirs = []
@@ -96,6 +102,10 @@ jobs:
               assert transfer_counts[1] < transfer_counts[0]
               print("DISPLAY settled and re-entry pixels:", transfer_counts)
           PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: looper-framebuffer-comparison
+          path: ${{ runner.temp }}/looper-captures
       - name: Run candidate host, MIDI and dual-core regressions
         run: |
           source "$RUNNER_TEMP/slap-python/bin/activate"
