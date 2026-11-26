@@ -224,6 +224,7 @@ static volatile uint32_t peak_worker_overlap, peak_voice_recovery, peak_fx_recov
 #endif
 
 static volatile uint32_t active_voices, voice_steals;
+static volatile uint32_t track_voice_counts, track_sleep_mask, peak_active_voices;
 #if defined(PLAT_HOST)
 static unsigned host_peak_voices;
 #endif
@@ -2645,6 +2646,7 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
     uint32_t serial[PROFILE_COUNT] = {0};
     if (dsp_reset_request) {
         dsp_peak_ticks = dsp_avg_ticks = dsp_overruns = dsp_callbacks = 0;
+        peak_active_voices = 0;
         peak_voice_batch = peak_fx_batch = peak_worker_work = peak_worker_wait = 0;
         serial_peak = spike_callback = 0;
 #if defined(PLAT_HOST) && !defined(PLAT_WEB)
@@ -3072,9 +3074,16 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
             dsp_peak_ticks = elapsed;
         }
         if (!profile && !spike_enabled) dsp_avg_ticks = dsp_avg_ticks - dsp_avg_ticks / 8u + elapsed / 8u;
-        unsigned active = 0;
-        for (unsigned v = 0; v < VOICES; ++v) active += voices[v].age != 0;
+        unsigned active = 0, counts = 0;
+        for (unsigned v = 0; v < VOICES; ++v) {
+            if (!voices[v].age) continue;
+            ++active;
+            counts += 1u << (5u * voices[v].track);
+        }
+        track_voice_counts = counts;
+        track_sleep_mask = sleeping_mix;
         active_voices = active;
+        if (active > peak_active_voices) peak_active_voices = active;
 #if defined(PLAT_HOST)
         if (active > host_peak_voices) host_peak_voices = active;
 #endif
@@ -3703,7 +3712,7 @@ void app_input_only(void)
     } else if (glo_pending) {
         glo_pending = 0;
         if (slap_ui.page == GLOBAL)
-            global_details = (global_details + 1u) % 10u;
+            global_details = (global_details + 1u) % 11u;
         else {
             slap_ui.page = SETTINGS;
             settings_section = settings_item = 0;
@@ -5091,6 +5100,7 @@ static void draw_panel(void)
             global_details == 3 ? "WORKER COUNTERS  /  GLO NEXT" :
             global_details == 4 ? "CORE TIMING  /  GLO NEXT" :
             global_details == 5 ? "CORE 1 STATUS  /  GLO NEXT" :
+            global_details == 10 ? "TRACK ACTIVITY  /  GLO NEXT" :
             global_details == 9 ? "ENGINE SPAN PEAKS  /  TIMING OVERHEAD" :
             global_details == 8 ? (half_trace_frozen ? "DMA FROZEN / K1 PAGE / K2 RESUME" : "DMA TRACE / K1 PAGE / K2 FREEZE") :
             global_details == 7 ? "SPIKE PROFILE  /  TIMING OVERHEAD" :
@@ -5160,6 +5170,25 @@ static void draw_panel(void)
                 for (unsigned col = 0; col < 2; ++col) {
                     int x = 8 + (int)col * 116;
                     unsigned stage = (unsigned)strip * 2u + col;
+                    if (global_details == 10) {
+                        if (stage < TRACKS) {
+                            char label[] = "TRACK 1 VOICES";
+                            label[6] += (char)stage;
+                            unsigned count = track_voice_counts >> (5u * stage) & 31u;
+                            cv_text(x, 0, &FONT_XS, label, track_color[stage]);
+                            if (track_sleep_mask & (1u << stage))
+                                cv_text(x, 13, &FONT_B, "SLEEP", C_WHITE);
+                            else {
+                                decimal(number, count);
+                                cv_text(x, 13, &FONT_M, number, c);
+                            }
+                        } else {
+                            cv_text(x, 0, &FONT_XS, "PEAK VOICES", C_WHITE);
+                            decimal(number, peak_active_voices);
+                            cv_text(x, 13, &FONT_M, number, c);
+                        }
+                        continue;
+                    }
                     if (global_details == 9) {
                         const volatile uint32_t *peaks = col ? remote_engine_peaks : local_engine_peaks;
                         unsigned engine = 0;
