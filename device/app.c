@@ -4518,7 +4518,7 @@ static void draw_home_meter(int x, int y, int width, unsigned peak, uint16_t col
 static const char signature_letters[26][8] = {
     "EVRVVRR", "UVRUVVU", "EVOOOVE", "UVRRRVU", "VSOUSOV",
     "VSOUOOO", "EVOJRVF", "RRRVVRR", "SSSSSSS", "33333VE",
-    "RVUSUVR", "OOOOOOV", "RVVVVRR", "RVVVVVR", "EVRRRVE",
+    "RVUSUVR", "OOOOOOV", "RVVVVRR", "RVTRNRR", "EVRRRVE",
     "UVRVUOO", "EVRRRVF", "UVRVURR", "FVOE3VU", "VEEEEEE",
     "RRRRRVE", "RRRRVEE", "RRVVVVR", "RVEEEVR", "RVEEEEE",
     "V367COV"
@@ -4537,7 +4537,8 @@ static void draw_signature_name(const char *name, uint16_t ink)
     }
     if (!cells) return;
     // Fit the full name before reducing its height. Leave the meter column free.
-    const int width = cells * 4 < 224 ? cells * 4 : 224;
+    const int natural_width = cells * 10 / 3;
+    const int width = natural_width < 224 ? natural_width : 224;
     int position = 0;
     for (int i = 0; i < count; ++i) {
         unsigned c = (unsigned char)name[i];
@@ -4550,6 +4551,9 @@ static void draw_signature_name(const char *name, uint16_t ink)
             c >= '0' && c <= '9' ? signature_digits[c - '0'] :
             c == '-' ? "000V000" : c == '+' ? "004V400" :
             c == '.' ? "00000CC" : c == '/' ? "1336COO" : "EV36C0C";
+        int edges[6];
+        for (int edge = 0; edge <= 5; ++edge)
+            edges[edge] = 5 + (position + edge) * width / cells;
         for (int row = 0; row < 7; ++row) {
             unsigned bits = glyph[row] <= '9' ? glyph[row] - '0' : glyph[row] - 'A' + 10;
             int y = 1 + row * 33 / 7;
@@ -4561,9 +4565,8 @@ static void draw_signature_name(const char *name, uint16_t ink)
                 }
                 int start = col++;
                 while (col < 5 && (bits & (16u >> col))) ++col;
-                int x = 5 + (position + start) * width / cells;
-                int end = 5 + (position + col) * width / cells;
-                if (end > x) cv_rect(x, y, end - x, height, ink);
+                int span = edges[col] - edges[start];
+                if (span > 0) cv_rect(edges[start], y, span, height, ink);
             }
         }
         position += 6;
