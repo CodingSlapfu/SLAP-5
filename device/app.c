@@ -299,7 +299,7 @@ static float master_gain, energy_smooth[TRACKS];
 static volatile uint32_t track_energy[TRACKS], visual_notes[TRACKS];
 static unsigned note_activity[TRACKS], dancer_pattern, dancer_outline = 1, dancer_lighting = 1, dancer_reactivity = 1;
 #if FM1B_CPU2 && defined(PLAT_HOST) && !defined(PLAT_WEB)
-static int host_discard_worker_result, host_discard_fx_result, host_late_voice;
+static int host_discard_worker_result, host_discard_fx_result, host_late_voice, host_fx_grace;
 enum { HOST_COST_SPLIT, HOST_SLOT_SPLIT, HOST_TRACK_SPLIT };
 static unsigned host_voice_split;
 #endif
@@ -525,6 +525,7 @@ void app_init(void)
         split && strcmp(split, "tracks") == 0 ? HOST_TRACK_SPLIT : HOST_COST_SPLIT;
     host_discard_worker_result = getenv("SLAP_TEST_DISCARD_WORKER") != 0;
     host_discard_fx_result = getenv("SLAP_TEST_DISCARD_FX") != 0;
+    host_fx_grace = getenv("SLAP_TEST_FX_GRACE") != 0;
     const char *late_voice = getenv("SLAP_TEST_LATE_VOICE");
     host_late_voice = late_voice ? atoi(late_voice) : 0;
     plat_cpu2_set(getenv("SLAP_TEST_SINGLE_CORE") == 0);
@@ -1893,6 +1894,7 @@ static void next_step(const uint32_t *mix)
         click_accent = !(positions & 15u);
         click_phase = 0;
     }
+    unsigned solo = mixer_solo;
     for (unsigned t = 0; t < TRACKS; ++t) {
         unsigned step = positions % pattern_length(mix[t]);
         uint32_t word = tracks[t].steps[step];
@@ -1900,7 +1902,7 @@ static void next_step(const uint32_t *mix)
         monitored_next_step[t] = 0;
         // A mixer mute takes effect before scheduling new sequenced voices.
         // Existing voices and FX tails retain their normal release behavior.
-        if (mix[t] & (1u << 24)) continue;
+        if ((mix[t] & (1u << 24)) || (solo && !(solo & (1u << t)))) continue;
         if (t < DRUMS) {
             if (!(monitored & 1u)) schedule_event(t, pattern_row(t, 0), step, word);
             for (unsigned lane = 1; lane < MELODIC_LANES; ++lane)
@@ -2549,6 +2551,12 @@ static unsigned render_fx_batch(unsigned frames, unsigned mask, unsigned active,
     while ((busy = plat_cpu2_busy()) &&
            plat_ticks24() - wait_start < 240u * 24u &&
            plat_ticks24() - start < budget * 3u / 4u) {}
+#ifdef PLAT_HOST
+    if (host_fx_grace && fx_worker_jobs == 128u) {
+        host_fx_grace = 0;
+        busy = 1;
+    }
+#endif
     if (busy) {
         // Allow a late FX worker to finish only inside the existing callback
         // budget. Its live state must remain exclusively owned until it stops.

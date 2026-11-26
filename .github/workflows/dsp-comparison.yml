@@ -18,7 +18,7 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/slap-python"
           source "$RUNNER_TEMP/slap-python/bin/activate"
           pip install Pillow==11.3.0 fonttools==4.59.2
-          for sha in 2b8330d8a559ba5800fc7d07d0e40847a7c1a179 1ee54631cbc1c0f1e5a8a4c2734e29942bd27bc0 "$GITHUB_SHA"; do
+          for sha in 74f8fb192e6de777c4fa02c110c3e90702b88366 53a5f30d310e98bd1af34136ac0de2fef70cf8de "$GITHUB_SHA"; do
             git worktree add --detach "$RUNNER_TEMP/$sha" "$sha"
             (
               cd "$RUNNER_TEMP/$sha"
@@ -53,7 +53,7 @@ jobs:
               python3 vendor/fm1-base/tools/build.py device --host
             )
           done
-      - name: Alternate pinned trials at 112, 137 and 160 BPM
+      - name: Alternate pinned trials at 155 BPM
         run: |
           export SLAP_BENCH_ROOT="$RUNNER_TEMP"
           export PYTHONPATH="$PWD/device/tests"
@@ -70,8 +70,8 @@ jobs:
 
           root = Path(os.environ["SLAP_BENCH_ROOT"])
           variants = {
-              "0.1.35": "2b8330d8a559ba5800fc7d07d0e40847a7c1a179",
-              "0.1.36": "1ee54631cbc1c0f1e5a8a4c2734e29942bd27bc0",
+              "v0.1.37": "74f8fb192e6de777c4fa02c110c3e90702b88366",
+              "pre-DSP": "53a5f30d310e98bd1af34136ac0de2fef70cf8de",
               "branch": os.environ["GITHUB_SHA"],
           }
           dense = runpy.run_path('device/tests/dense-recording.py')
@@ -105,7 +105,7 @@ jobs:
               return tuple(round(samples[math.ceil(len(samples) * q) - 1] / 1000, 2)
                            for q in (.50, .95, .99, 1))
 
-          for bpm in (112, 137, 160):
+          for bpm in (155,):
               for mode in ("rx", "tx", "both"):
                   trials = {name: [] for name in variants}
                   for order in (list(variants), list(reversed(variants)), list(variants)):
