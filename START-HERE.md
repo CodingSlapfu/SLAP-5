@@ -39,7 +39,9 @@ For the known baseline, build `8d68d757a39acb71f3d73fe491f86f33b6a653ac` with `s
 - The lighter pinned 112, 137 and 160 BPM comparison measured 137 BPM mixed-traffic wall P99 of 62.14 µs on 0.1.35 and 62.20 µs on 0.1.36. It did not reproduce the previous 232 → 336 µs regression. An experimental skipped MIDI scan made 137 BPM mixed-traffic timing worse in its same-run comparison, so the patch was reverted. [Baseline comparison](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45776254468) · [Experiment](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45776451001) · [Dense comparison](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45777378746)
 
 - SLICER hides its pattern and replay markers while transport is stopped and labels the enabled stopped state. The synthesis and capture paths are unchanged. [Latest app host tests and native build](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45777577383)
-- The app at this checkpoint compiles to 566,024 / 581,564 bytes, with 88,504 / 98,304 bytes static RAM and 335,568 / 344,064 bytes pool usage. [Candidate Chromium/WASM/Studio](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45777705279) · [Candidate package audit, rollback and backup](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45777705356)
+- The app at this checkpoint compiles to 566,024 / 581,564 bytes, with 88,504 / 98,304 bytes static RAM and 335,568 / 344,064 bytes pool usage. [Candidate Chromium/WASM/Studio](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45777705279) · [Candidate package audit, rollback and backup](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45778375289)
+
+The unpublished development package is `FM-1_7500`, SHA-256 `77667971c5c7685733d824d242493c9207cd1fbb4eaab994f6df5171a4490cb7`. The package audit, interrupted-update recovery and rollback to the checksum-verified v0.1.31 package passed in the loader simulation. The [engineering artifact](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45778375289/artifacts/15097381512) retains firmware, application, OTA loader and component hashes for 30 days. Gitee also timed out in one later attempt. The candidate workflow can recover all three required non-BLE packaging inputs from an alternate source at the same SDK revision and validates every file against the checked-in SHA-256 manifest.
 
 ## Dense host evidence
 
@@ -52,6 +54,16 @@ The existing filter, patch-switch and dense recording scenario reaches 16 voices
 | 160 BPM | 190.69 / 213.09 / 300.57 | 189.05 / 211.74 / 236.95 |
 
 The run did not reproduce the prior 137 BPM tail regression. At 137 BPM with combined traffic, wall-minus-thread-CPU P99 was 1.0 µs on both baselines. The separate 137 BPM receive-only run differed by 3.59 µs in wall P99, while transmit-only differed by 0.20 µs. These cases recorded zero host callbacks above the 256-frame budget. The earlier environment and workload remain relevant to attribution. Actual LCD transfers, native Core 1 mailboxes, USB/DMA contention and FM-1 deadline behavior still require device measurements. [Exact baseline comparison](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45776943852)
+
+The [final app comparison](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45777577375) tested exact app checkpoint `e20f669` against both releases. With traffic in both directions, wall-timing medians were:
+
+| Tempo | v0.1.35 P95/P99/peak (µs) | v0.1.36 P95/P99/peak (µs) | Candidate P95/P99/peak (µs) |
+|---|---:|---:|---:|
+| 112 BPM | 167.70 / 191.42 / 244.59 | 167.59 / 191.75 / 235.63 | 168.79 / 189.96 / 230.08 |
+| 137 BPM | 180.12 / 212.43 / 255.90 | 179.71 / 211.61 / 259.75 | 179.78 / 211.76 / 256.58 |
+| 160 BPM | 144.99 / 158.06 / 192.20 | 144.97 / 158.92 / 200.89 | 145.12 / 159.85 / 198.28 |
+
+No measured callback in any of the receive-only, transmit-only or combined trials crossed the simulator budget. The kernel and VM varied across hosted runs, so use the within-run comparisons.
 
 ## Reference firmware
 
