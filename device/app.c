@@ -761,22 +761,21 @@ static void trigger_voice(unsigned track, unsigned pitch, unsigned velocity, uin
         expression_seen |= flag;
     }
     float quietest_release = 0.0f;
+    unsigned best_class = 4u;
+    const unsigned hidden = mixer_solo ? ((1u << TRACKS) - 1u) & ~mixer_solo : 0u;
     for (unsigned i = 0; i < VOICES; ++i) {
         Voice *candidate = &voices[i];
         if (!candidate->age) { voice = candidate; break; }
-        if (candidate->audition && !auditioning_step) {
-            if (!voice->audition) voice = candidate;
-            continue;
-        }
-        if (voice->audition && !auditioning_step) continue;
-        if (candidate->releasing) {
-            float loudness = candidate->env * candidate->velocity;
-            if (!voice->releasing || i == 0 || loudness < quietest_release) {
-                voice = candidate;
-                quietest_release = loudness;
-            }
-        } else if (!voice->releasing && candidate->age < voice->age) {
+        unsigned lane = candidate->track;
+        unsigned silent_lane = ((hidden >> lane) & 1u) || (tracks[lane].mix & (1u << 24));
+        unsigned priority = candidate->audition ? 0u : silent_lane ? 1u : candidate->releasing ? 2u : 3u;
+        float loudness = candidate->releasing ? candidate->env * candidate->velocity : 0.0f;
+        if (priority < best_class ||
+            (priority == best_class && (priority == 2u ? loudness < quietest_release :
+              ages - candidate->age > ages - voice->age))) {
             voice = candidate;
+            best_class = priority;
+            quietest_release = loudness;
         }
     }
     if (auditioning_step && voice->age) return;
@@ -2925,7 +2924,7 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
             unsigned signal_tracks = voice_span_tracks | effect_mask | low_filter_mask | high_filter_mask;
             for (unsigned t = 0; t < TRACKS; ++t) {
                 if ((signal_tracks & (1u << t)) || mixer_gain[t] != 1.0f ||
-                    (duck_enabled && t < DRUMS)) continue;
+                    (t < DRUMS && (duck_depth[t] > 0.0f || duck_amount[t] > 0.0f))) continue;
                 if (mixer_envelope[t] < 0.0000001f && energy_smooth[t] < 0.0000001f) {
                     mixer_envelope[t] = energy_smooth[t] = 0.0f;
                     sleeping_mix |= 1u << t;
@@ -6567,6 +6566,7 @@ int app_expect(const char *name, int *result)
     else if (name_matches(name, "step")) *result = (int)positions;
     else if (name_matches(name, "arp_events")) *result = (int)arp_cursor;
     else if (name_matches(name, "expression1")) *result = (int)expression[0];
+    else if (name_matches(name, "expression_source")) *result = (int)(expression[0] & 3u);
     else if (name_matches(name, "expression2")) *result = (int)expression[1];
     else if (name_matches(name, "arp_mode")) *result = (int)(arp_setup[0] & 255u);
     else if (name_matches(name, "arp_note")) *result = (int)arp_history[(arp_cursor - 1u) & 15u];

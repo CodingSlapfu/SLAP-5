@@ -1,0 +1,51 @@
+wait 6100
+expect expression1 0
+expect expression2 0
+tap EDIT
+press SEL
+turn ALGO 1
+release SEL
+turn K1 5
+turn K2 1
+turn K3 12
+turn K4 14
+expect expression1 >0
+expect expression2 0
+press OCT+
+turn K3 9
+turn K4 10
+release OCT+
+midi 90 3C 64
+midi 90 40 64
+midi 90 43 64
+wait 500
+expect diag_track1_voices 3
+midi 80 3C 00
+midi 80 40 00
+midi 80 43 00
+shot sound-lab-expression.png
+tap SAVE
+key 4 down
+wait 4200
+key 4 up
+expect store_writes 1
+tap HOME
+tap EDIT
+press SEL
+turn ALGO 1
+release SEL
+press OCT+
+turn K1 -1
+release OCT+
+expect expression_source 0
+tap SAVE
+tap SEL
+tap HOME
+tap EDIT
+press SEL
+turn ALGO 1
+release SEL
+shot expression-reloaded.png
+expect expression_source 1
+expect expression1 >0
+expect expression2 0
