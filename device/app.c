@@ -2298,12 +2298,15 @@ static volatile uint32_t voice_short_spans, voice_budget_skips, voice_no_split;
 static volatile uint32_t voice_drained_jobs, peak_voice_job_ticks;
 static uint32_t voice_pending_since;
 static unsigned voice_pending, voice_recovery_jobs, voice_late_streak;
+static volatile unsigned worker_late_source;
+enum { WORKER_LATE_VOICE = 1, WORKER_LATE_FX };
 
 static void service_late_voice(uint32_t callback_budget)
 {
     if (!voice_pending) return;
     if (plat_cpu2_busy()) {
         if (plat_ticks24() - voice_pending_since >= callback_budget) {
+            worker_late_source = WORKER_LATE_VOICE;
             plat_cpu2_retire_late();
             voice_pending = 0;
         }
@@ -2420,6 +2423,7 @@ static unsigned render_voice_batch(unsigned frames, unsigned muted,
     // A callback already in single-core mode needs only one live mix bus.
     // A launched job always keeps both groups until it commits or recovers.
     unsigned remote = 0, remote_count = 0;
+    unsigned remote_limit = voice_late_streak >= 3u ? 1u : REMOTE_VOICES;
     if (dispatch && active > 1) {
         unsigned remaining = (total_cost * (voice_recovery_jobs ? 6u : 7u) + 8u) / 16u;
         // Keep two-voice chords eligible without offloading the entire workload.
@@ -2430,9 +2434,9 @@ static unsigned render_voice_batch(unsigned frames, unsigned muted,
         else
 #endif
         for (unsigned cost = remaining < MAX_VOICE_COST ? remaining : MAX_VOICE_COST;
-             cost && remote_count < REMOTE_VOICES; --cost) {
+             cost && remote_count < remote_limit; --cost) {
             unsigned slots = eligible_by_cost[cost];
-            while (slots && cost <= remaining && remote_count < REMOTE_VOICES) {
+            while (slots && cost <= remaining && remote_count < remote_limit) {
                 unsigned slot_bit = slots & (0u - slots);
                 slots ^= slot_bit;
                 remote |= slot_bit;
@@ -2501,11 +2505,9 @@ static unsigned render_voice_batch(unsigned frames, unsigned muted,
                 ++voice_late_jobs;
                 // A late voice job writes only its private scratch. Do not
                 // reuse it until acknowledged or held by the hard timeout.
-                if (++voice_late_streak >= 3u) plat_cpu2_retire_late();
-                else {
-                    voice_pending = 1;
-                    voice_pending_since = recovery_start;
-                }
+                if (voice_late_streak < 3u) ++voice_late_streak;
+                voice_pending = 1;
+                voice_pending_since = recovery_start;
                 voice_recovery_jobs = 16u;
             } else {
                 ++voice_rejected_jobs;
@@ -2643,7 +2645,10 @@ static unsigned render_fx_batch(unsigned frames, unsigned mask, unsigned active,
     if (busy || plat_cpu2_wait() != 0) {
         // Stop the worker before restoring any state or reusing its output bus.
         uint32_t recovery_start = plat_ticks24();
-        if (busy) plat_cpu2_retire_late();
+        if (busy) {
+            worker_late_source = WORKER_LATE_FX;
+            plat_cpu2_retire_late();
+        }
         else if (plat_cpu2_on()) plat_cpu2_set(0);
         ++fx_worker_fallbacks;
         if (busy) ++fx_late_jobs;
@@ -2860,7 +2865,7 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
     uint32_t callback_budget = (24000000u / RATE) * frames;
 #if FM1B_CPU2 && !defined(PLAT_WEB)
     unsigned fx_batch_end = 0;
-    unsigned fx_mask = !fx_worker_cooldown && !measure_fx &&
+    unsigned fx_mask = !fx_worker_cooldown && !voice_recovery_jobs && !measure_fx &&
         (active_effects & (active_effects - 1u)) && plat_cpu2_on()
         ? select_fx_worker_tracks() : 0;
     if (fx_worker_cooldown) --fx_worker_cooldown;
@@ -5437,6 +5442,8 @@ static void draw_panel(void)
                         if (stage == 3) value = plat_cpu2_mailbox_jobs();
                         if (stage == 4 && boot == PLAT_CPU2_STARTED) value = plat_cpu2_stack();
                         if (stage == 5 && reason < sizeof retired / sizeof *retired) state = retired[reason];
+                        if (stage == 5 && worker_late_source)
+                            state = worker_late_source == WORKER_LATE_VOICE ? "VOICE LATE" : "FX LATE";
 #endif
                         cv_text(x, 0, &FONT_XS, labels_c1[stage], C_WHITE);
                         if (stage >= 2 && stage <= 4) {

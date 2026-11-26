@@ -115,10 +115,10 @@ printf '%s\n' 'expect voice_late_jobs 2' 'expect worker_jobs >4' 'expect voice_d
 SLAP_TEST_LATE_VOICE=2 build/host/slap-5_host "$tmp/repeated/input.txt" "$tmp/repeated"
 python3 tests/pcm_parity.py "$tmp/single/dual-core.wav" "$tmp/repeated/dual-core.wav"
 
-# A third consecutive late job exhausts the recovery allowance.
+# Repeated late jobs that acknowledge can resume with a smaller remote batch.
 mkdir "$tmp/persistent"
 cp tests/dual-core.txt "$tmp/persistent/input.txt"
-printf '%s\n' 'expect voice_late_jobs 3' 'expect worker_jobs 4' 'expect voice_drained_jobs 2' 'expect worker_fallbacks 3' >> "$tmp/persistent/input.txt"
+printf '%s\n' 'expect voice_late_jobs 3' 'expect worker_jobs >4' 'expect voice_drained_jobs 3' 'expect worker_fallbacks 3' >> "$tmp/persistent/input.txt"
 SLAP_TEST_LATE_VOICE=3 build/host/slap-5_host "$tmp/persistent/input.txt" "$tmp/persistent"
 python3 tests/pcm_parity.py "$tmp/single/dual-core.wav" "$tmp/persistent/dual-core.wav"
 
