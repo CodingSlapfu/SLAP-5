@@ -440,12 +440,15 @@ static void load_patch(unsigned track, unsigned number)
 
 enum { PREF_AUDIO, PREF_METRO, PREF_RECORD, PREF_TRANSPORT, PREF_KEYS, PREF_DISPLAY, PREF_DIAG, PREF_LEDS, PREF_MIDI, PREF_SYNC, PREF_MIDI_ROUTE, PREF_MIDI_TRACKS, PREF_MIDI_MON, PREF_SECTIONS };
 static unsigned settings_section, settings_item;
-static const uint8_t settings_count[PREF_SECTIONS] = {4, 3, 4, 1, 1, 2, 1, 3, 4, 4, 4, 4, 1};
+static const uint8_t settings_count[PREF_SECTIONS] = {4, 3, 4, 1, 1, 3, 1, 3, 4, 4, 4, 4, 1};
 static const char *const settings_names[] = {
     "AUDIO", "METRONOME", "RECORDING", "TRANSPORT", "KEYBOARD", "DISPLAY", "SYSTEM", "LEDS", "MIDI", "MIDI SYNC", "MIDI ROUTE", "MIDI TRACKS", "MIDI MONITOR"
 };
 static volatile uint32_t output_trim, speaker_mode, click_trim, resume_playback, auto_level_off, auto_mix;
 static unsigned visual_quality, led_style, led_keys_on_hit, led_active_soft;
+static unsigned chroma_theme;
+static void chroma_select(int index);
+enum { CHROMA_SETTINGS_SHIFT = 27 };
 static volatile unsigned split_keys;
 
 void app_init(void)
@@ -466,7 +469,8 @@ void app_init(void)
     }
     uint32_t options = setting_bytes >= 16 && settings[0] == SETTINGS_TAG ? settings[3] : 0u;
     uint32_t duck = setting_bytes == 20 && settings[0] == SETTINGS_TAG ? settings[4] : 0u;
-    midi_options = options >> 9;
+    midi_options = (options >> 9) & ((1u << (CHROMA_SETTINGS_SHIFT - 9)) - 1u);
+    chroma_select((int)(options >> CHROMA_SETTINGS_SHIFT & 15u));
     midi_clock_window = midi_clock_intervals = 0;
     midi_pending = midi_phase = midi_ext_step = midi_clock_seen = midi_clock_period = 0;
     midi_last_clock = midi_clock_accum = midi_sent_run = midi_tx_epoch = midi_link = midi_usb_ready = 0;
@@ -3947,6 +3951,7 @@ void app_input_only(void)
         case PREF_DISPLAY:
             slap_ui.visual = select_visual(slap_ui.visual, knob[0]);
             visual_quality = (unsigned)clamp((int)visual_quality + knob[1], 0, 1);
+            if (knob[2]) chroma_select((int)chroma_theme + knob[2]);
             break;
         }
     } else if (slap_ui.page == VISUAL && slap_ui.visual == 6) {
@@ -4240,7 +4245,7 @@ void app_input_only(void)
         resume_playback << 20 | visual_quality << 21 | (unsigned)slap_ui.visual << 22 | auto_level_off << 25 | split_keys << 26 | led_style << 30;
     uint32_t options = auto_mix | dancer_pattern << 1 | (unsigned)!dancer_outline << 3 |
         (unsigned)!dancer_lighting << 4 | (unsigned)!dancer_reactivity << 5 |
-        led_keys_on_hit << 6 | 128u | led_active_soft << 8 | midi_options << 9;
+        led_keys_on_hit << 6 | 128u | led_active_soft << 8 | midi_options << 9 | chroma_theme << CHROMA_SETTINGS_SHIFT;
     uint32_t duck = 0;
     for (unsigned t = 0; t < DRUMS; ++t) duck |= (uint32_t)mixer_duck[t] << (8u * t);
     uint32_t now = plat_ms();
@@ -4513,7 +4518,10 @@ static void draw_home_sequences(void)
         if (focused) {
             uint16_t outline = pulse ? color : track_rule[t];
             cv_rect(5, 0, 231, 34, outline);
-            cv_rect(28, 1, 207, 32, track_surface[t]);
+            if (chroma_theme) {
+                for (unsigned band = 0; band < 8u; ++band)
+                    cv_rect(28, 1 + (int)band * 4, 207, 4, chroma_gradient[t][band]);
+            } else cv_rect(28, 1, 207, 32, track_surface[t]);
         }
         cv_rect(5, 0, 24, 34, focused && pulse ? color : track_rule[t]);
         if (focused) cv_rect(5, 0, 2, 34, color);
@@ -4867,9 +4875,10 @@ static void draw_panel(void)
             labels[0] = "PERFECT NOTE";
             values[0] = perfect_note_off == 0u ? "ON" : perfect_note_off == 15u ? "OFF" : "MIXED"; break;
         case PREF_DISPLAY:
-            labels[0] = "VISUALIZER"; labels[1] = "DISPLAY QUALITY";
+            labels[0] = "VISUALIZER"; labels[1] = "DISPLAY QUALITY"; labels[2] = "COLOR THEME";
             decimal(level, visual_index(slap_ui.visual) + 1u);
-            values[0] = level; values[1] = visual_quality ? "ECO" : "ADAPTIVE"; break;
+            values[0] = level; values[1] = visual_quality ? "ECO" : "ADAPTIVE";
+            values[2] = chroma_names[chroma_theme]; break;
         case PREF_LEDS: {
             static const char *const profiles[] = {"SOFT", "OFF", "BRIGHTER", "SOFT"};
             labels[0] = "IDLE BUTTONS"; values[0] = profiles[led_style];
@@ -6152,6 +6161,7 @@ static int name_matches(const char *a, const char *b)
 int app_expect(const char *name, int *result)
 {
     if (name_matches(name, "track")) *result = slap_ui.track + 1;
+    else if (name_matches(name, "theme")) *result = (int)chroma_theme;
 #if defined(PLAT_HOST)
     else if (name_matches(name, "peak_voices")) *result = (int)host_peak_voices;
     else if (name_matches(name, "voice_steals")) *result = (int)voice_steals;
