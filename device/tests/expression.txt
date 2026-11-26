@@ -25,6 +25,8 @@ midi 80 40 00
 midi 80 43 00
 shot sound-lab-expression.png
 tap SAVE
+turn SELECT 2
+expect slot 3
 key 4 down
 wait 4200
 key 4 up
@@ -39,6 +41,7 @@ turn K1 -1
 release OCT+
 expect expression_source 0
 tap SAVE
+expect slot 3
 tap SEL
 tap HOME
 tap EDIT

@@ -689,7 +689,8 @@ static unsigned voice_dispatch_cost(const Voice *voice, const SlapSynth *synth)
     if (voice->track == DRUMS)
         return (voice->drum_family == 0 ? 5u : 4u) + (voice->drum_layers ? 2u : 0u);
     unsigned engine = synth->engine;
-    unsigned cost = engine_cost[engine] + (voice->lfo_wave ? 2u : 0u);
+    unsigned cost = engine_cost[engine] + (voice->lfo_wave ? 2u : 0u) +
+        (voice->expression_depth ? 2u : 0u);
     if (synth->modern && (engine == 0 || engine == 13 || engine == 16 || engine == 18 || engine == 20)) cost += 2u;
     // Shared sample-and-hold RNG and mutable string lines stay on Core 0.
     if (voice->lfo_wave == 5 || engine == 4 || engine == 6) cost |= VOICE_LOCAL_ONLY;
@@ -721,8 +722,15 @@ static uint32_t factory_expression(unsigned patch, unsigned engine, unsigned mod
     return 0;
 }
 
+static int expression_compatible(unsigned track)
+{
+    unsigned engine = slap_patches[tracks[track].patch].engine;
+    return engine != 4u && engine != 6u; // Fixed-length plucked-string models.
+}
+
 static uint32_t effective_expression(unsigned track)
 {
+    if (!expression_compatible(track)) return 0;
     uint32_t word = expression[track];
     if (word & 3u) return (word & 3u) == 1u ? word : 0u;
     unsigned patch = tracks[track].patch;
@@ -5616,7 +5624,8 @@ static void draw_panel(void)
             uint32_t word = effective_expression(selected);
             cv_text(8, 1, &FONT_M, "EXPRESSION", c);
             cv_text(165, 4, &FONT_B, sources[expression[selected] & 3u], C_WHITE);
-            cv_text(8, 27, &FONT_XS, "HOLD OCT+ FOR SOURCE / ONSET", C_WHITE);
+            cv_text(8, 27, &FONT_XS, expression_compatible(selected) ?
+                "OCT+ K1 SOURCE / K3 DELAY / K4 FADE" : "FIXED PITCH STRING ENGINE", C_WHITE);
             cv_blit(0, 80);
             static const char *const names[] = {"GLIDE MS", "GLIDE MODE", "VIBRATO CT", "RATE X100", "DELAY MS", "FADE MS"};
             unsigned values[] = {(word >> 4 & 31u) * 5u, word >> 2 & 3u,

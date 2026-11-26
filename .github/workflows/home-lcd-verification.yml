@@ -102,20 +102,24 @@ jobs:
               assert transfer_counts[1] < transfer_counts[0]
               print("DISPLAY settled and re-entry pixels:", transfer_counts)
           PY
-      - uses: actions/upload-artifact@v4
-        with:
-          name: looper-framebuffer-comparison
-          path: ${{ runner.temp }}/looper-captures
       - name: Run candidate host, MIDI and dual-core regressions
         run: |
           source "$RUNNER_TEMP/slap-python/bin/activate"
           host="$PWD/device/build/host/slap-5_host"
           for fixture in device/tests/*.txt; do
-            "$host" "$fixture" "$(mktemp -d)"
+            out="$(mktemp -d)"
+            "$host" "$fixture" "$out"
+            if [ "$fixture" = device/tests/expression.txt ]; then
+              cp "$out"/sound-lab-expression.png "$out"/expression-reloaded.png "$RUNNER_TEMP/looper-captures/"
+            fi
           done
           python3 device/tests/midi-clock-stress.py "$host"
           sh device/tests/dual-core.sh
           python3 device/tests/sound-graph-audio.py "$host"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: looper-and-expression-framebuffer
+          path: ${{ runner.temp }}/looper-captures
       - name: Compile candidate with verified native inputs
         run: |
           source "$RUNNER_TEMP/slap-python/bin/activate"
