@@ -1,0 +1,92 @@
+name: SLAP-5 v0.1.38 hardware testing
+on:
+  push:
+    branches: [slap-5-environment-recovery]
+    paths: ['.github/workflows/hardware-testing-0138.yml']
+permissions:
+  actions: read
+  contents: write
+concurrency:
+  group: slap-5-0.1.38-hardware-testing
+jobs:
+  qualify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: v0.1.38-hardware-testing
+      CHECKPOINT: c116d28ddb17ab6f7294bb44a42d51af3f3d3726
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: c116d28ddb17ab6f7294bb44a42d51af3f3d3726
+      - name: Require exact-source host, browser and 155 BPM comparisons
+        run: |
+          test "$(git rev-parse HEAD)" = "$CHECKPOINT"
+          for run in 45838409672 45838409600 45838409609; do
+            for attempt in $(seq 1 30); do
+              state="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq '.head_sha + ":" + .status + ":" + (.conclusion // "")')"
+              case "$state" in
+                "$CHECKPOINT:completed:success") break ;;
+                "$CHECKPOINT:completed:"*) exit 1 ;;
+                "$CHECKPOINT:"*) sleep 8 ;;
+                *) exit 1 ;;
+              esac
+            done
+            test "$state" = "$CHECKPOINT:completed:success"
+          done
+      - name: Build and audit the versioned native package
+        run: |
+          python3 -m venv "$RUNNER_TEMP/slap-python"
+          source "$RUNNER_TEMP/slap-python/bin/activate"
+          pip install Pillow==11.3.0 fonttools==4.59.2
+          bash vendor/fm1-base/tools/get_toolchain.sh "$RUNNER_TEMP/jieli"
+          export JIELI_TOOLCHAIN="$(realpath "$RUNNER_TEMP/jieli/toolchain")"
+          test "$(basename "$JIELI_TOOLCHAIN")" = jieli-linux-toolchains-20260730.1
+          # This candidate uses neither the vendor BLE nor Wi-Fi stack.
+          grep -qx 'ble = false' device/fm1.toml
+          ! grep -Eq '^wifi[[:space:]]*=[[:space:]]*true' device/fm1.toml
+          export AC79_SDK="$RUNNER_TEMP/ac79-packaging"
+          tools_dir="$AC79_SDK/cpu/wl82/tools"
+          sdk_raw=https://raw.githubusercontent.com/amitv87/fw-AC79_AIoT_SDK/d179b4484759423312073f5fbb232501aa491047/cpu/wl82/tools
+          while read -r digest file; do
+            mkdir -p "$(dirname "$tools_dir/$file")"
+            curl -fsSL --retry 2 --max-time 30 "$sdk_raw/$file" -o "$tools_dir/$file"
+            printf '%s  %s\n' "$digest" "$tools_dir/$file" | sha256sum -c -
+          done < evidence/sdk.sha256
+          sh device/build-native.sh --release 0.1.38
+          pkg=device/build/slap-5-0.1.38.fwsc
+          python3 tools/audit-package.py --sdk "$AC79_SDK" --app device/build/slap-5.bin \
+            --loader device/build/loader/ota.bin --package "$pkg" --identity FM-1_75000138
+          rollback="$RUNNER_TEMP/SLAP-5-0.1.31.fwsc"
+          curl -fsSL --retry 3 -o "$rollback" https://github.com/CodingSlapfu/SLAP-5/releases/download/v0.1.31-hardware-testing/SLAP-5-0.1.31.fwsc
+          printf '%s  %s\n' 36676ae153435f065c99c2106bdccf43917f7cd57f65fb702e0144d0055ef8be "$rollback" | sha256sum -c -
+          cc -O2 -o "$RUNNER_TEMP/ldr-test" vendor/fm1-base/tests/ldr_test.c
+          "$RUNNER_TEMP/ldr-test" "$rollback" "$pkg" --interrupt
+          "$RUNNER_TEMP/ldr-test" "$pkg" "$rollback"
+          mkdir -p "$RUNNER_TEMP/release" "$RUNNER_TEMP/components"
+          cp "$pkg" "$RUNNER_TEMP/release/SLAP-5-0.1.38.fwsc"
+          cp device/build/slap-5.bin device/build/loader/ota.bin "$RUNNER_TEMP/components/"
+          git archive --format=tar.gz --prefix=SLAP-5/ "$CHECKPOINT" > "$RUNNER_TEMP/components/source.tar.gz"
+          cp START-HERE.md "$RUNNER_TEMP/components/"
+          cp "$RUNNER_TEMP/release/SLAP-5-0.1.38.fwsc" "$RUNNER_TEMP/components/"
+          (cd "$RUNNER_TEMP/components" && sha256sum SLAP-5-0.1.38.fwsc slap-5.bin ota.bin source.tar.gz START-HERE.md > SHA256SUMS && sha256sum -c SHA256SUMS)
+          tar -C "$RUNNER_TEMP/components" -czf "$RUNNER_TEMP/release/SLAP-5-0.1.38-engineering-backup.tar.gz" .
+          cd "$RUNNER_TEMP/release"
+          sha256sum SLAP-5-0.1.38.fwsc SLAP-5-0.1.38-engineering-backup.tar.gz | tee SHA256SUMS-0.1.38
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SLAP-5-0.1.38-qualified-hardware-testing
+          path: ${{ runner.temp }}/release
+          if-no-files-found: error
+      - name: Publish the qualified experimental package
+        run: |
+          cd "$RUNNER_TEMP/release"
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$CHECKPOINT" --prerelease --latest=false \
+            --title 'SLAP-5 v0.1.38 — Experimental FM-1 Hardware Testing' \
+            --notes 'Experimental FM-1 testing, identity FM-1_75000138. One default CHROMA palette, live undo and clear, reduced muted and solo-excluded sequencer work, and bounded handling of late Core 1 FX jobs. This build is for comparing the 155 BPM chord overload on hardware. The original trigger and native deadline performance remain unverified. Native package audit, interrupted app-only update and v0.1.31 rollback simulation passed. Use M-Flasher with a compatible 1 MiB 0x856014 device, chip key 0x980F and V15-style app-only layout. Stable and existing browser installer tracks are unchanged.' \
+            SLAP-5-0.1.38.fwsc SLAP-5-0.1.38-engineering-backup.tar.gz SHA256SUMS-0.1.38
+          mkdir downloaded
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir downloaded
+          (cd downloaded && sha256sum -c SHA256SUMS-0.1.38)
+          cmp SHA256SUMS-0.1.38 downloaded/SHA256SUMS-0.1.38
