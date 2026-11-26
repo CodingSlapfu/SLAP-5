@@ -40,7 +40,7 @@ int plat_cpu2_set(int on)
     if (retry) {
         fm1_cpu1_bar.retry = FM1_CPU1_RETRY_USED;
         fm1_cpu1_bar.barred = 0;
-        FM1_CPU1_SYNC();
+        fm1_cpu1_sync();
     }
     if (fm1_cpu1_start() != 0) {
         if (retry) fm1_cpu1_bar_set();

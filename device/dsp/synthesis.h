@@ -13,7 +13,13 @@ typedef struct {
 typedef struct {
     float phase, second, third, slow, pole, feedback, strike;
     float inc, color, motion, slow_inc;
-    struct { float gain, attack, decay, sustain, release; } operators[6];
+    union {
+        struct { float gain, attack, decay, sustain, release; } operators[6];
+        struct {
+            float second_ratio, third_ratio, noise_filter, body;
+            float second, second_strike, third_strike, noise_gain;
+        } piano;
+    };
     float operator_feedback;
     uint32_t rng, timbre;
     uint8_t operator_mask, operator_tick, operator_decay, operator_release;

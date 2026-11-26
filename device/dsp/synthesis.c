@@ -112,6 +112,17 @@ void slap_synth_start(SlapSynth *s, int16_t *string, unsigned engine, unsigned p
         s->slow_inc = 0.0f;
         break;
     }
+    if (engine == 16u && modern) {
+        float c = s->color, m = s->motion;
+        s->piano.second_ratio = 2.003f + 0.021f * c;
+        s->piano.third_ratio = (m < 0.44f ? 4.0f : 3.0f) + 0.012f + 0.045f * c;
+        s->piano.noise_filter = 0.12f + 0.30f * c;
+        s->piano.body = 0.32f + 0.19f * m;
+        s->piano.second = 0.055f + 0.07f * m;
+        s->piano.second_strike = 0.21f * c;
+        s->piano.third_strike = 0.24f * c;
+        s->piano.noise_gain = 0.05f + 0.14f * c;
+    }
     if (engine == 4 || engine == 6) {
         unsigned period = (unsigned)(1.0f / s->inc + 0.25f);
         s->length = period > SLAP_STRING_CAPACITY ? SLAP_STRING_CAPACITY :
@@ -471,14 +482,14 @@ SLAP_SYNTH_SRAM float slap_synth_sample(SlapSynth *s)
         break;
     case 16:
         if (s->modern) {
-            next_x = x + d * (2.003f + 0.021f * c);
-            next_y = y + d * ((m < 0.44f ? 4.0f : 3.0f) + 0.012f + 0.045f * c);
+            next_x = x + d * s->piano.second_ratio;
+            next_y = y + d * s->piano.third_ratio;
             float hammer = s->strike * s->strike;
-            s->pole += (noise_sample(s) - s->pole) * (0.12f + 0.30f*c);
-            out = 0.59f * sine(p) * (0.32f + 0.19f * m + 0.49f * s->strike) +
-                  (0.055f + 0.07f * m + 0.21f * c * s->strike) * sine(x) +
-                  (0.015f + 0.24f * c * hammer) * sine(y) +
-                  (0.05f + 0.14f * c) * hammer * s->pole;
+            s->pole += (noise_sample(s) - s->pole) * s->piano.noise_filter;
+            out = 0.59f * sine(p) * (s->piano.body + 0.49f * s->strike) +
+                  (s->piano.second + s->piano.second_strike * s->strike) * sine(x) +
+                  (0.015f + s->piano.third_strike * hammer) * sine(y) +
+                  s->piano.noise_gain * hammer * s->pole;
         } else {
             next_x = x + d*2.007f;
             next_y = y + d*3.028f;

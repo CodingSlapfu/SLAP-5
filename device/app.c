@@ -2256,8 +2256,9 @@ static void render_local_voice_bus(const unsigned *slots, unsigned active, unsig
     clear_voice_bus(voice_bus, frames);
     voice_span_tracks = 0;
     for (unsigned n = 0; n < active; ++n) voice_span_tracks |= 1u << voices[slots[n]].track;
-    if (ordered_rng) {
-        // Sample-and-hold shares the scheduler RNG and needs sample/slot order.
+    if (ordered_rng > 1) {
+        // Multiple sample-and-hold voices share the scheduler RNG. A lone
+        // consumer can run in a block without changing seed or mix order.
         for (unsigned i = 0; i < frames; ++i) {
             for (unsigned n = 0; n < active; ++n) {
                 unsigned slot = slots[n];
@@ -2423,7 +2424,7 @@ static unsigned render_voice_batch(unsigned frames, unsigned muted,
         const Voice *voice = &voices[j];
         if (!voice->age) continue;
         active_slots[active++] = j;
-        ordered_rng |= voice->track != DRUMS && voice->lfo_wave == 5;
+        ordered_rng += voice->track != DRUMS && voice->lfo_wave == 5;
         if (!dispatch) continue;
         unsigned hint = voice->dispatch_cost;
         unsigned cost = hint & (VOICE_LOCAL_ONLY - 1u);
@@ -2705,7 +2706,7 @@ static unsigned render_voice_batch(unsigned frames, unsigned muted,
     for (unsigned j = 0; j < VOICES; ++j) {
         if (!voices[j].age) continue;
         slots[active++] = j;
-        ordered_rng |= voices[j].track != DRUMS && voices[j].lfo_wave == 5;
+        ordered_rng += voices[j].track != DRUMS && voices[j].lfo_wave == 5;
     }
     render_local_voice_bus(slots, active, 0, ordered_rng, muted, frames);
     return frames;
