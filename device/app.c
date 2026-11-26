@@ -129,6 +129,7 @@ static unsigned midi_rx_count, midi_tx_count, midi_drops;
 static unsigned midi_ext_step, midi_phase, midi_clock_seen, midi_clock_port;
 static uint32_t midi_last_clock, midi_clock_period, midi_clock_accum, midi_clock_window;
 static unsigned midi_clock_intervals;
+static uint8_t midi_count_in_substep;
 static unsigned midi_sent_run, midi_tx_epoch, midi_link, midi_pending, midi_usb_ready;
 enum { MIDI_USB_VOICE = 2u, MIDI_PEDAL_HELD = 4u, MIDI_OWNER_MASK = 3u };
 static uint8_t midi_sustain[2][TRACKS];
@@ -473,6 +474,7 @@ void app_init(void)
     midi_options = (options >> 9) & ((1u << (CHROMA_SETTINGS_SHIFT - 9)) - 1u);
     chroma_select((int)(options >> CHROMA_SETTINGS_SHIFT & 15u));
     midi_clock_window = midi_clock_intervals = 0;
+    midi_count_in_substep = 0;
     midi_pending = midi_phase = midi_ext_step = midi_clock_seen = midi_clock_period = 0;
     midi_last_clock = midi_clock_accum = midi_sent_run = midi_tx_epoch = midi_link = midi_usb_ready = 0;
     midi_rx_count = midi_tx_count = midi_drops = 0;
@@ -1578,7 +1580,8 @@ static void midi_realtime(unsigned status, unsigned source)
         midi_clock_port = source;
         midi_clock_seen = 1;
         midi_last_clock = now;
-        if (playing && ++midi_phase >= 6u) {
+        unsigned local_count_in = recording && rec_start_mode && !rec_running && !(midi_options & MIDI_RUN_RX);
+        if ((playing || local_count_in) && ++midi_phase >= 6u) {
             midi_phase = 0;
             if (midi_ext_step < 4u) ++midi_ext_step;
             else ++midi_drops;
@@ -1596,6 +1599,7 @@ static void midi_realtime(unsigned status, unsigned source)
             for (unsigned i = 0; i < VOICES; ++i)
                 if (!voices[i].manual) voices[i].releasing = 1;
             midi_phase = 5;
+            midi_count_in_substep = 0;
         }
         playing = status != 0xfcu;
         if (!playing) {
@@ -2711,7 +2715,7 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
             mix[rec_track] = tracks[rec_track].mix;
         }
     }
-    if (!recording) rec_countdown = 0;
+    if (!recording) rec_countdown = midi_count_in_substep = 0;
     if (!playing) {
         apply_pattern_action();
         apply_generated_drums();
@@ -2731,8 +2735,10 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
         arp_last_track = arp_track;
     }
     if (rec_running) mix[rec_track] = tracks[rec_track].mix;
-    const unsigned home_count_in = recording && rec_loop && rec_start_mode && !rec_running;
-    if (!playing && !home_count_in) click_remaining = 0;
+    const unsigned external_clock = midi_external();
+    const unsigned count_in = recording && rec_start_mode && !rec_running &&
+        (rec_loop || external_clock);
+    if (!playing && !count_in) click_remaining = 0;
     slap_fx_begin_live(tempo, live_fx_word);
     unsigned live_mix_active = slap_fx_mix_active();
     const unsigned muted = muted_drums();
@@ -2759,24 +2765,27 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
     uint32_t jobs_start = worker_jobs + fx_worker_jobs;
 #endif
     if (profile) serial[PROFILE_INPUT] = plat_ticks24() - audio_started;
-    unsigned external_clock = midi_external();
     for (uint32_t i = 0; i < frames; ++i) {
         uint32_t section = profile ? plat_ticks24() : 0;
-        if ((playing || home_count_in) && (external_clock && !home_count_in ? i == 0 && midi_ext_step : until_step == 0)) {
+        if ((playing || count_in) && (external_clock ? i == 0 && midi_ext_step : until_step == 0)) {
             midi_sample = i;
             if (midi_ext_step) --midi_ext_step;
             if (recording && !rec_running && rec_start_mode) {
-                if (step_number < 4) {
-                    click_remaining = CLICK_SAMPLES;
-                    click_accent = step_number == 0;
-                    click_phase = 0;
-                    rec_countdown = 4u - step_number++;
-                    until_step = RATE * 60u / tempo;
-                } else {
-                    step_number = rec_countdown = 0;
-                    playing = 1;
-                    begin_recording();
-                    mix[rec_track] = tracks[rec_track].mix;
+                // MIDI advances in sixteenths. Count-in clicks only on quarter notes.
+                unsigned beat = !external_clock || !(midi_count_in_substep++ & 3u);
+                if (beat) {
+                    if (step_number < 4) {
+                        click_remaining = CLICK_SAMPLES;
+                        click_accent = step_number == 0;
+                        click_phase = 0;
+                        rec_countdown = 4u - step_number++;
+                        until_step = RATE * 60u / tempo;
+                    } else {
+                        step_number = rec_countdown = 0;
+                        playing = 1;
+                        begin_recording();
+                        mix[rec_track] = tracks[rec_track].mix;
+                    }
                 }
             }
             if (rec_running && !rec_loop && step_number >= rec_length) {
@@ -2796,7 +2805,7 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
                 next_step(mix);
             }
         }
-        if ((playing || home_count_in) && until_step) --until_step;
+        if ((playing || count_in) && until_step) --until_step;
         if (arp_active) arp_render_clock(arp_track, arp_config);
         if (profile) serial[PROFILE_EVENTS] += plat_ticks24() - section;
         if (i == batch_end) {

@@ -1,0 +1,113 @@
+wait 6100
+tap GLO
+turn ALGO 1
+turn SELECT 2
+turn K1 1
+turn ALGO 7
+turn K1 1
+turn SELECT 1
+turn K1 1
+turn ALGO 1
+turn K1 1
+turn SELECT 2
+turn K1 1
+tap HOME
+tap REC
+wait 600
+expect recording 1
+expect rec_running 0
+expect rec_countdown 0
+midi FA 00 00
+wait 15
+midi-clock-burst 1
+wait 10
+expect rec_countdown 4
+wait 100
+midi-clock-burst 6
+wait 14
+expect rec_countdown 4
+expect rec_running 0
+wait 100
+midi-clock-burst 6
+wait 14
+expect rec_countdown 4
+expect rec_running 0
+wait 100
+midi-clock-burst 6
+wait 14
+expect rec_countdown 4
+expect rec_running 0
+wait 100
+midi-clock-burst 6
+wait 14
+expect rec_countdown 3
+expect rec_running 0
+wait 100
+midi-clock-burst 6
+wait 14
+expect rec_countdown 3
+expect rec_running 0
+wait 100
+midi-clock-burst 6
+wait 14
+expect rec_countdown 3
+expect rec_running 0
+wait 100
+midi-clock-burst 6
+wait 14
+expect rec_countdown 3
+expect rec_running 0
+wait 100
+midi-clock-burst 6
+wait 14
+expect rec_countdown 2
+expect rec_running 0
+wait 100
+midi-clock-burst 6
+wait 14
+expect rec_countdown 2
+expect rec_running 0
+wait 100
+midi-clock-burst 6
+wait 14
+expect rec_countdown 2
+expect rec_running 0
+wait 100
+midi-clock-burst 6
+wait 14
+expect rec_countdown 2
+expect rec_running 0
+wait 100
+midi-clock-burst 6
+wait 14
+expect rec_countdown 1
+expect rec_running 0
+wait 100
+midi-clock-burst 6
+wait 14
+expect rec_countdown 1
+expect rec_running 0
+wait 100
+midi-clock-burst 6
+wait 14
+expect rec_countdown 1
+expect rec_running 0
+wait 100
+midi-clock-burst 6
+wait 14
+expect rec_countdown 1
+expect rec_running 0
+wait 100
+midi-clock-burst 6
+wait 14
+expect rec_countdown 0
+expect rec_running 1
+midi 90 3C 60
+wait 35
+midi 80 3C 00
+wait 35
+expect recorded 1
+midi FC 00 00
+wait 25
+expect playing 0
+expect recording 0
