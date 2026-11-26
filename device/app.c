@@ -2774,11 +2774,6 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
     const unsigned muted = muted_drums();
     unsigned measure_fx = slap_ui.page == FX && slap_ui.fx_page == 4;
     const unsigned analyze = slap_ui.page == VISUAL;
-    const unsigned spectrum = analyze && (unsigned)slap_ui.visual < 4u;
-    if (!spectrum) {
-        analysis_phase = 0;
-        analysis_mono = 0.0f;
-    }
     const unsigned inspect_fx = slap_ui.page == FX ||
         (slap_ui.page == PATCH && edit_page && edit_page != SOUND_LAB_MAIN);
     const unsigned active_effects = slap_fx_active_mask();
@@ -2980,8 +2975,8 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
             meter_sum[1] += r * r;
             meter_peak[0] = fm_maxf(meter_peak[0], fm_fabsf(l));
             meter_peak[1] = fm_maxf(meter_peak[1], fm_fabsf(r));
+            capture_spectrum(l, r);
         }
-        if (spectrum) capture_spectrum(l, r);
         l *= master_gain;
         r *= master_gain;
         lr[i * 2] = (int32_t)(l * 8300000.0f);
@@ -6146,7 +6141,7 @@ static void draw_panel(void)
 void app_frame(void)
 {
     app_input_only();
-    if (slap_ui.page == VISUAL && (unsigned)slap_ui.visual < 4u) update_spectrum();
+    if (slap_ui.page == VISUAL) update_spectrum();
     else analysis_read = analysis_write;
     uint32_t now = plat_ms();
     sample_battery(now);
