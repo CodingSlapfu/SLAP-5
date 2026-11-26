@@ -1,0 +1,39 @@
+name: SLAP-5 environment recovery
+on:
+  push:
+    branches: [slap-5-environment-recovery]
+permissions:
+  contents: read
+jobs:
+  baseline:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 8d68d757a39acb71f3d73fe491f86f33b6a653ac
+      - name: Host baseline and regression fixtures
+        run: |
+          python3 -m venv "$RUNNER_TEMP/slap-python"
+          source "$RUNNER_TEMP/slap-python/bin/activate"
+          pip install Pillow==11.3.0 fonttools==4.59.2
+          python3 vendor/fm1-base/tools/build.py device --host
+          host="$PWD/device/build/host/slap-5_host"
+          for fixture in device/tests/*.txt; do
+            output="$(mktemp -d)"
+            "$host" "$fixture" "$output"
+          done
+          python3 device/tests/midi-clock-stress.py "$host"
+      - name: Recover pinned native toolchain and SDK
+        if: always()
+        run: |
+          bash vendor/fm1-base/tools/get_toolchain.sh "$RUNNER_TEMP/jieli"
+          toolchain="$(realpath "$RUNNER_TEMP/jieli/toolchain")"
+          test "$(basename "$toolchain")" = jieli-linux-toolchains-20260730.1
+          bash vendor/fm1-base/bsp/tools/get_sdk.sh "$RUNNER_TEMP/ac79"
+          printf 'JIELI_TOOLCHAIN=%s\nAC79_SDK=%s\n' "$toolchain" "$RUNNER_TEMP/ac79" >> "$GITHUB_ENV"
+      - name: Build v0.1.36 with verified native inputs
+        run: |
+          source "$RUNNER_TEMP/slap-python/bin/activate"
+          sh device/build-native.sh --release 0.1.36
+          find device/build -type f -name '*.fwsc' -exec sha256sum '{}' +
