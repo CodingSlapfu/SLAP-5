@@ -2,7 +2,7 @@ name: SLAP-5 HOME LCD verification
 on:
   push:
     branches: [slap-5-environment-recovery]
-    paths: [.github/workflows/home-lcd-verification.yml, device/app.c]
+    paths: [.github/workflows/home-lcd-verification.yml, device/app.c, device/visuals.h, device/tests/chroma-themes.txt]
 permissions:
   contents: read
 jobs:
@@ -75,6 +75,21 @@ jobs:
                   assert image.read_bytes() == (root / "candidate" / image.name).read_bytes(), image.name
               assert pixels[1] < pixels[0]
               print("60 identical screens. Pixels avoided:", pixels[0] - pixels[1])
+              fixture.write_text("wait 6100\ntap GLO\nturn ALGO 5\nwait 2200\nshot display.png\ntap HOME\ntap GLO\nwait 500\nshot reenter.png\n")
+              transfer_counts = []
+              dirs = []
+              for label, source in zip(("baseline", "candidate"), sources):
+                  output = root / (label + "-display")
+                  output.mkdir()
+                  dirs.append(output)
+                  host = source / "device/build/host/slap-5_host"
+                  result = subprocess.check_output([host, fixture, output], text=True)
+                  transfer_counts.append(int(re.search(r"LCD_PIXELS (\d+)", result).group(1)))
+              # COLOR THEME is a new DISPLAY row. Compare each build to itself on re-entry.
+              for output in dirs:
+                  assert (output / "display.png").read_bytes() == (output / "reenter.png").read_bytes()
+              assert transfer_counts[1] < transfer_counts[0]
+              print("DISPLAY settled and re-entry pixels:", transfer_counts)
           PY
       - name: Run candidate host, MIDI and dual-core regressions
         run: |
