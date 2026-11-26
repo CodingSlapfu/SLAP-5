@@ -2063,6 +2063,7 @@ static float (*volatile dsp_render_voice)(Voice *, SlapSynth *) = render_voice;
 
 enum { VOICE_BATCH = 64 };
 static float voice_bus[TRACKS][VOICE_BATCH];
+static unsigned voice_span_tracks;
 
 static void clear_voice_bus(float bus[][VOICE_BATCH], unsigned frames)
 {
@@ -2182,6 +2183,8 @@ static void render_local_voice_bus(const unsigned *slots, unsigned active, unsig
                                    int ordered_rng, unsigned muted, unsigned frames)
 {
     clear_voice_bus(voice_bus, frames);
+    voice_span_tracks = 0;
+    for (unsigned n = 0; n < active; ++n) voice_span_tracks |= 1u << voices[slots[n]].track;
     if (ordered_rng) {
         // Sample-and-hold shares the scheduler RNG and needs sample/slot order.
         for (unsigned i = 0; i < frames; ++i) {
@@ -2228,7 +2231,7 @@ static volatile uint32_t voice_late_jobs, voice_rejected_jobs, voice_busy_jobs, 
 static volatile uint32_t voice_short_spans, voice_budget_skips, voice_no_split;
 static volatile uint32_t voice_drained_jobs, peak_voice_job_ticks;
 static uint32_t voice_pending_since;
-static unsigned voice_pending, voice_jobs_since_late = 16;
+static unsigned voice_pending, voice_recovery_jobs, voice_late_streak;
 
 static void service_late_voice(uint32_t callback_budget)
 {
@@ -2352,7 +2355,7 @@ static unsigned render_voice_batch(unsigned frames, unsigned muted,
     // A launched job always keeps both groups until it commits or recovers.
     unsigned remote = 0, remote_count = 0;
     if (dispatch && active > 1) {
-        unsigned remaining = (total_cost * 7u + 8u) / 16u;
+        unsigned remaining = (total_cost * (voice_recovery_jobs ? 6u : 7u) + 8u) / 16u;
         // Keep two-voice chords eligible without offloading the entire workload.
         if (active == 2) remaining = (total_cost + 1u) / 2u;
 #ifdef PLAT_HOST
@@ -2430,12 +2433,14 @@ static unsigned render_voice_batch(unsigned frames, unsigned muted,
             recovery_start = plat_ticks24();
             if (busy) {
                 ++voice_late_jobs;
-                if (voice_jobs_since_late < 16) plat_cpu2_retire_late();
+                // A late voice job writes only its private scratch. Do not
+                // reuse it until acknowledged or held by the hard timeout.
+                if (++voice_late_streak >= 3u) plat_cpu2_retire_late();
                 else {
                     voice_pending = 1;
                     voice_pending_since = recovery_start;
                 }
-                voice_jobs_since_late = 0;
+                voice_recovery_jobs = 16u;
             } else {
                 ++voice_rejected_jobs;
                 if (plat_cpu2_on()) plat_cpu2_set(0);
@@ -2445,7 +2450,7 @@ static unsigned render_voice_batch(unsigned frames, unsigned muted,
     }
     if (completed) {
         ++worker_jobs;
-        if (voice_jobs_since_late < 16) ++voice_jobs_since_late;
+        if (voice_recovery_jobs && !--voice_recovery_jobs) voice_late_streak = 0;
         if (voice_worker.ticks > peak_voice_job_ticks) peak_voice_job_ticks = voice_worker.ticks;
         worker_ticks += voice_worker.ticks;
         if (voice_worker.profile) {
@@ -2783,7 +2788,7 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
     float click_gain = 1.0f - 0.25f * click_trim;
     const unsigned speaker = speaker_mode;
     static float speaker_dc_l, speaker_dc_r;
-    unsigned batch_start = 0, batch_end = 0;
+    unsigned batch_start = 0, batch_end = 0, sleeping_mix = 0;
     uint32_t callback_budget = (24000000u / RATE) * frames;
 #if FM1B_CPU2 && !defined(PLAT_WEB)
     unsigned fx_batch_end = 0;
@@ -2855,6 +2860,16 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
             uint32_t stage_start = profile ? plat_ticks24() : 0;
 #endif
             batch_end = i + render_voice_batch(amount, muted, audio_started, callback_budget);
+            sleeping_mix = 0;
+            unsigned signal_tracks = voice_span_tracks | effect_mask | low_filter_mask | high_filter_mask;
+            for (unsigned t = 0; t < TRACKS; ++t) {
+                if ((signal_tracks & (1u << t)) || gain_needed[t] ||
+                    (duck_enabled && t < DRUMS)) continue;
+                if (mixer_envelope[t] < 0.0000001f && energy_smooth[t] < 0.0000001f) {
+                    mixer_envelope[t] = energy_smooth[t] = 0.0f;
+                    sleeping_mix |= 1u << t;
+                }
+            }
 #if FM1B_CPU2 && !defined(PLAT_WEB)
             uint32_t voice_end = plat_ticks24();
             uint32_t voice_ticks = voice_end - stage_start;
@@ -2881,6 +2896,7 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
             duck = drum_duck_envelope;
         }
         for (unsigned t = 0; t < TRACKS; ++t) {
+            if (sleeping_mix & (1u << t)) continue;
             unsigned sample_cost = measure_fx && i == 0u;
             float sample = voice_bus[t][i - batch_start];
             if (effect_mask & (1u << t)) {

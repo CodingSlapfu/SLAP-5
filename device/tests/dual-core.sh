@@ -108,12 +108,19 @@ printf '%s\n' 'expect voice_late_jobs 1' 'expect worker_jobs >4' 'expect voice_d
 SLAP_TEST_LATE_VOICE=1 build/host/slap-5_host "$tmp/late/input.txt" "$tmp/late"
 python3 tests/pcm_parity.py "$tmp/single/dual-core.wav" "$tmp/late/dual-core.wav"
 
-# Repeated misses before the worker establishes a healthy run still retire it.
+# Two recoverable late completions discard stale scratch and resume.
 mkdir "$tmp/repeated"
 cp tests/dual-core.txt "$tmp/repeated/input.txt"
-printf '%s\n' 'expect voice_late_jobs 2' 'expect worker_jobs 4' 'expect voice_drained_jobs 1' 'expect worker_fallbacks 2' >> "$tmp/repeated/input.txt"
+printf '%s\n' 'expect voice_late_jobs 2' 'expect worker_jobs >4' 'expect voice_drained_jobs 2' 'expect worker_fallbacks 2' >> "$tmp/repeated/input.txt"
 SLAP_TEST_LATE_VOICE=2 build/host/slap-5_host "$tmp/repeated/input.txt" "$tmp/repeated"
 python3 tests/pcm_parity.py "$tmp/single/dual-core.wav" "$tmp/repeated/dual-core.wav"
+
+# A third consecutive late job exhausts the recovery allowance.
+mkdir "$tmp/persistent"
+cp tests/dual-core.txt "$tmp/persistent/input.txt"
+printf '%s\n' 'expect voice_late_jobs 3' 'expect worker_jobs 4' 'expect voice_drained_jobs 2' 'expect worker_fallbacks 3' >> "$tmp/persistent/input.txt"
+SLAP_TEST_LATE_VOICE=3 build/host/slap-5_host "$tmp/persistent/input.txt" "$tmp/persistent"
+python3 tests/pcm_parity.py "$tmp/single/dual-core.wav" "$tmp/persistent/dual-core.wav"
 
 # Held chord arpeggios can allocate several voices. Batch only up to their
 # next sample-accurate tick and compare with the single-core render.
