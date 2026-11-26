@@ -1,0 +1,160 @@
+name: Check 155 BPM Jungle project and reload
+on:
+  push:
+    branches: [slap-5-environment-recovery]
+    paths: ['.github/workflows/jungle-155-regression.yml']
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: c116d28ddb17ab6f7294bb44a42d51af3f3d3726
+      - name: Run exact-source synthetic reproduction
+        run: |
+          python3 -m venv "$RUNNER_TEMP/python"
+          source "$RUNNER_TEMP/python/bin/activate"
+          pip install Pillow==11.3.0 fonttools==4.59.2
+          python3 vendor/fm1-base/tools/build.py device --host
+          out="$(mktemp -d)"
+          cat > "$out/jungle.txt" <<'FIXTURE'
+          wait 6100
+          turn ALGO 43
+          expect tempo 155
+          turn K4 60
+          expect swing 60
+          tap SEQ
+          key w1 down
+          key w1 up
+          expect pitch >0
+          press SEL
+          turn SELECT 1
+          release SEL
+          key w2 down
+          key w2 up
+          expect pitch >0
+          press SEL
+          turn SELECT 1
+          release SEL
+          key w3 down
+          key w3 up
+          expect pitch >0
+          press SEL
+          turn SELECT 1
+          release SEL
+          key w4 down
+          key w4 up
+          expect pitch >0
+          tap HOME
+          turn SELECT 1
+          tap SEQ
+          key w1 down
+          key w1 up
+          expect pitch >0
+          press SEL
+          turn SELECT 1
+          release SEL
+          key w2 down
+          key w2 up
+          expect pitch >0
+          press SEL
+          turn SELECT 1
+          release SEL
+          key w3 down
+          key w3 up
+          expect pitch >0
+          press SEL
+          turn SELECT 1
+          release SEL
+          key w4 down
+          key w4 up
+          expect pitch >0
+          tap HOME
+          turn SELECT 1
+          tap SEQ
+          key w1 down
+          key w1 up
+          expect pitch >0
+          press SEL
+          turn SELECT 1
+          release SEL
+          key w2 down
+          key w2 up
+          expect pitch >0
+          press SEL
+          turn SELECT 1
+          release SEL
+          key w3 down
+          key w3 up
+          expect pitch >0
+          press SEL
+          turn SELECT 1
+          release SEL
+          key w4 down
+          key w4 up
+          expect pitch >0
+          tap HOME
+          turn SELECT 1
+          tap SEQ
+          key w1 down
+          key w1 up
+          expect pitch >0
+          press SEL
+          turn SELECT 1
+          release SEL
+          key w2 down
+          key w2 up
+          expect pitch >0
+          press SEL
+          turn SELECT 1
+          release SEL
+          key w3 down
+          key w3 up
+          expect pitch >0
+          press SEL
+          turn SELECT 1
+          release SEL
+          key w4 down
+          key w4 up
+          expect pitch >0
+          tap HOME
+          turn SELECT 1
+          expect track 5
+          tap SEQ
+          tap SEQ
+          turn K1 3
+          tap SEL
+          expect gen_count 1
+          tap HOME
+          tap FX
+          turn ALGO 2
+          expect fx_page 3
+          turn K1 2
+          expect fx_k1 2
+          tap HOME
+          tap PLAY
+          wait 3200
+          expect peak_voices 16
+          tap PLAY
+          tap SAVE
+          key w0 down
+          wait 4200
+          key w0 up
+          expect store_writes 1
+          reboot
+          wait 6100
+          tap SAVE
+          tap SEL
+          tap HOME
+          expect tempo 155
+          expect swing 60
+          tap PLAY
+          wait 3200
+          expect playing 1
+          expect peak_voices 16
+          tap PLAY
+          FIXTURE
+          device/build/host/slap-5_host "$out/jungle.txt" "$out"
