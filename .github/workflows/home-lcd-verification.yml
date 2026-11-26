@@ -1,0 +1,97 @@
+name: SLAP-5 HOME LCD verification
+on:
+  push:
+    branches: [slap-5-environment-recovery]
+    paths: [.github/workflows/home-lcd-verification.yml, device/app.c]
+permissions:
+  contents: read
+jobs:
+  home:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Compile and compare HOME pixels and transfer sizes
+        run: |
+          python3 -m venv "$RUNNER_TEMP/slap-python"
+          source "$RUNNER_TEMP/slap-python/bin/activate"
+          pip install Pillow==11.3.0 fonttools==4.59.2
+          git worktree add --detach "$RUNNER_TEMP/lcd-baseline" 8d68d757a39acb71f3d73fe491f86f33b6a653ac
+          for source in "$RUNNER_TEMP/lcd-baseline" "$GITHUB_WORKSPACE"; do
+            (
+              cd "$source"
+              python3 - <<'PY'
+          from pathlib import Path
+          p = Path("vendor/fm1-base/host/plat_host.c")
+          s = p.read_text()
+          assert s.count("static uint32_t blits;") == s.count("    blits++;") == 1
+          s = s.replace("static uint32_t blits;", "static uint32_t blits, meter_blits;\nstatic unsigned long long blit_pixels;")
+          s = s.replace("    blits++;", "    blits++;\n    blit_pixels += w * h;\n    if (w == 44 && h == 7) ++meter_blits;")
+          mark = '    printf("host: %u ms simulated'
+          assert s.count(mark) == 1
+          s = s.replace(mark, '    printf("LCD_PIXELS %llu METER_BLITS %u\\n", blit_pixels, meter_blits);\n' + mark)
+          p.write_text(s)
+          PY
+              python3 vendor/fm1-base/tools/build.py device --host
+            )
+          done
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          import re
+          import subprocess
+          import tempfile
+
+          sources = [Path(os.environ["RUNNER_TEMP"]) / "lcd-baseline", Path.cwd()]
+          with tempfile.TemporaryDirectory() as directory:
+              root = Path(directory)
+              commands = ["wait 6100", "expect page 0", "expect playing 0"]
+              for index in range(30):
+                  channel = index % 5
+                  pitch = 36 if channel == 4 else 55 + index % 9
+                  commands += [f"midi {0x90 | channel:02x} {pitch:02x} 64", "wait 145",
+                               f"shot on-{index}.png",
+                               f"midi {0x80 | channel:02x} {pitch:02x} 00", "wait 161",
+                               f"shot off-{index}.png"]
+              fixture = root / "meters.txt"
+              fixture.write_text("\n".join(commands) + "\n")
+              pixels = []
+              for label, source in zip(("baseline", "candidate"), sources):
+                  output = root / label
+                  output.mkdir()
+                  host = source / "device/build/host/slap-5_host"
+                  result = subprocess.check_output([host, fixture, output], text=True)
+                  match = re.search(r"LCD_PIXELS (\d+) METER_BLITS (\d+)", result)
+                  assert match, result
+                  total, meter = map(int, match.groups())
+                  print(label, total, "RGB565 pixels;", meter, "meter-only transfers")
+                  pixels.append(total)
+                  assert (meter > 0) == (label == "candidate")
+              images = sorted((root / "baseline").glob("*.png"))
+              assert len(images) == 60
+              for image in images:
+                  assert image.read_bytes() == (root / "candidate" / image.name).read_bytes(), image.name
+              assert pixels[1] < pixels[0]
+              print("60 identical screens. Pixels avoided:", pixels[0] - pixels[1])
+          PY
+      - name: Run candidate host, MIDI and dual-core regressions
+        run: |
+          source "$RUNNER_TEMP/slap-python/bin/activate"
+          host="$PWD/device/build/host/slap-5_host"
+          for fixture in device/tests/*.txt; do
+            "$host" "$fixture" "$(mktemp -d)"
+          done
+          python3 device/tests/midi-clock-stress.py "$host"
+          sh device/tests/dual-core.sh
+      - name: Compile candidate with verified native inputs
+        run: |
+          source "$RUNNER_TEMP/slap-python/bin/activate"
+          bash vendor/fm1-base/tools/get_toolchain.sh "$RUNNER_TEMP/jieli"
+          export JIELI_TOOLCHAIN="$(realpath "$RUNNER_TEMP/jieli/toolchain")"
+          test "$(basename "$JIELI_TOOLCHAIN")" = jieli-linux-toolchains-20260730.1
+          export AC79_SDK="$RUNNER_TEMP/ac79"
+          SDK_URL=https://gitee.com/Jieli-Tech/fw-AC79_AIoT_SDK.git bash vendor/fm1-base/bsp/tools/get_sdk.sh "$AC79_SDK"
+          git restore vendor/fm1-base/host/plat_host.c
+          sh device/build-native.sh
