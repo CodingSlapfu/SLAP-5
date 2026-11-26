@@ -5317,12 +5317,12 @@ static void draw_panel(void)
         case PREF_DIAG:
             labels[0] = "DIAGNOSTICS"; values[0] = "PRESS SEL"; break;
         }
-        cv_begin(240, 48, C_BLACK);
+        cv_begin(240, 48, background);
         cv_text(8, 4, &FONT_M, settings_names[settings_section], c);
         cv_text(8, 29, &FONT_XS, "ALGO PAGE / SELECT ITEM / K1 VALUE", C_WHITE);
         cv_blit(0, 48);
         for (unsigned row = 0; row < 4u; ++row) {
-            cv_begin(240, 36, C_BLACK);
+            cv_begin(240, 36, background);
             if (labels[row]) {
                 unsigned focused = settings_item == row;
                 cv_rect(5, 2, 230, 32, focused ? c : track_surface[selected]);
@@ -5363,7 +5363,7 @@ static void draw_panel(void)
             return;
         }
         for (unsigned row = 0; row < 4; ++row) {
-            cv_begin(240, 48, C_BLACK);
+            cv_begin(240, 48, background);
             for (unsigned col = 0; col < 3; ++col) {
                 unsigned index = row * 3 + col;
                 if (index < sizeof(live_fx_names) / sizeof(*live_fx_names)) {
