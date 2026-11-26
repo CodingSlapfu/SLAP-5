@@ -1,5 +1,16 @@
 # SLAP-5 environment recovery
 
+## v0.1.43 experimental firmware
+
+Application `720683d2e7974274d67163670bd9f9d6fdd0ad53`. Identity `FM-1_75000143`. [Engineering qualification and physical acceptance procedure](evidence/qualification-0.1.43.md). [Verified build and live installer](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45891460507).
+
+- [Experimental browser installer](https://codingslapfu.github.io/SLAP-5/flash-testing.html), [standalone firmware](https://github.com/CodingSlapfu/SLAP-5/releases/download/v0.1.43-hardware-testing/SLAP-5-0.1.43.fwsc), [engineering backup](https://github.com/CodingSlapfu/SLAP-5/releases/download/v0.1.43-hardware-testing/SLAP-5-0.1.43-engineering-backup.tar.gz), [24-bit preview of the 240×240 firmware framebuffer and all four MIXER knob styles](https://github.com/CodingSlapfu/SLAP-5/releases/download/v0.1.43-hardware-testing/SLAP-5-0.1.43-framebuffer.zip).
+- Firmware SHA-256 `387a7a96b30e6234411a17eb8c6a7deec11c3b3e7c335f4ef1755ec8170f774f`. Backup SHA-256 `77ab14a61502b7eac335d7dece0c8499662c3352bc67edf5b7cae63581cdcd80`.
+- Core 1 gets one guarded boot-time retry after a hard late job. GLOBAL shows live worker state and boot-lifetime jobs separately from K3-clearable counters. The acoustic-piano engine caches repeated terms at voice start.
+- HOME refreshes the layout with 22-pixel proportional glyphs, tinted gradients, a same-hue full-lane pulse, a fine grid and segmented meters. MIXER uses enlarged dials. Firmware-wide compact controls and the final visual match remain open.
+- Physical timing, XRUNs and playback of the owner's exact project still require FM-1 acceptance. Preserve the v0.1.42 project copy and use the v0.1.42 package as the immediate rollback. Keep a legacy copy for v0.1.31.
+
+
 ## v0.1.42 experimental firmware
 
 Application source `2d89ffe83b8146917837092698b42136e4add881`. Firmware identity `FM-1_75000142`. [Engineering and physical test instructions](evidence/qualification-0.1.42.md). [Exact-source software gates, package and deployed installer verification](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45885709203).
