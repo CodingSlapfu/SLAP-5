@@ -1290,6 +1290,7 @@ static struct {
 
 static unsigned clear_mode, clear_track;
 static uint32_t clear_armed_at;
+static volatile uint32_t live_edit_at, live_edit_notice;
 /* Foreground publishes one request. The audio callback owns pattern mutation. */
 enum { PATTERN_UNDO = 1, PATTERN_CLEAR_LOOP, PATTERN_CLEAR_TRACK, PATTERN_CLEAR_LEGACY, PATTERN_LIVE = 128 };
 static volatile uint32_t pattern_action;
@@ -1339,7 +1340,9 @@ static void apply_pattern_action(void)
         for (unsigned slot = 0; slot < VOICES; ++slot) finish_record_note(slot, record_clock);
         if (action == PATTERN_UNDO) finish_snapshot(track);
     }
+    unsigned changed = 1;
     if (action == PATTERN_UNDO) {
+        changed = take_undo[track].ready && pattern_revision[track] == take_undo[track].after;
         undo_recording(track);
         if (active_take) snapshot_take(track, rec_length);
     } else {
@@ -1351,6 +1354,10 @@ static void apply_pattern_action(void)
         finish_snapshot(track);
     }
     if (active_take) rec_begin_events = recorded_events;
+    if (changed && (request & PATTERN_LIVE)) {
+        live_edit_at = plat_ms();
+        live_edit_notice = (track + 1u) | (action == PATTERN_UNDO ? 8u : 16u);
+    }
     pattern_action = 0;
 }
 
@@ -4460,7 +4467,7 @@ static void draw_home_sequences(void)
 {
     unsigned position = positions, run = playing, fraction = step_progress;
     unsigned selection = slap_ui.track, bpm = tempo, solo = mixer_solo;
-    static unsigned last_bar, last_bpm, last_selection, last_mix, last_swing;
+    static unsigned last_bar, last_bpm, last_selection, last_mix, last_swing, last_notice;
     static int last_battery;
     static struct {
         unsigned cursor, first, patch, mix, revision, meter, peak, focused, pulse;
@@ -4470,7 +4477,11 @@ static void draw_home_sequences(void)
     unsigned bar = (position >> 4) + 1u;
     unsigned selected_mix = tracks[selection].mix;
     unsigned full = !home_idle_valid;
-    unsigned redraw_header = full || last_bar != bar || last_bpm != bpm || last_battery != battery;
+    unsigned notice = clear_mode == 1u ? (clear_track + 1u) | 32u :
+        plat_ms() - live_edit_at < 1200u ? live_edit_notice : 0u;
+    unsigned redraw_header = full || last_bar != bar || last_bpm != bpm ||
+        last_battery != battery || last_notice != notice;
+    last_notice = notice;
     unsigned redraw_footer = full || last_selection != selection || last_mix != selected_mix || last_swing != swing;
     unsigned geometry = full || last_bpm != bpm || last_swing != swing;
     last_bar = bar; last_bpm = bpm; last_battery = battery;
@@ -4485,9 +4496,16 @@ static void draw_home_sequences(void)
     decimal(number, bpm);
     cv_text(5, 0, &FONT_M, number, C_WHITE);
     cv_text(48, 5, &FONT_B, "BPM", C_WHITE);
-    decimal(number, bar);
-    cv_text(185, 1, &FONT_B, "BAR", C_WHITE);
-    cv_text(238 - text_w(&FONT_B, number), 1, &FONT_B, number, C_WHITE);
+    if (notice) {
+        char track_label[] = {'T', (char)('0' + (notice & 7u)), 0};
+        const char *label = notice & 32u ? "CLEAR?" : notice & 8u ? "UNDO" : "CLEARED";
+        cv_text(163, 1, &FONT_T, label, C_WHITE);
+        cv_text(238 - text_w(&FONT_T, track_label), 1, &FONT_T, track_label, C_WHITE);
+    } else {
+        decimal(number, bar);
+        cv_text(185, 1, &FONT_B, "BAR", C_WHITE);
+        cv_text(238 - text_w(&FONT_B, number), 1, &FONT_B, number, C_WHITE);
+    }
     if (battery_status == 4) {
         cv_text(96, 10, &FONT_B, "USB", track_color[1]);
     } else {
