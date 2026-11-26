@@ -4426,6 +4426,15 @@ static void draw_performance_knob(int x, const char *label, const char *value, i
     cv_text(x + 1, 26, label_font, label, color);
 }
 
+static void draw_home_meter(int x, int y, int width, unsigned peak, uint16_t color)
+{
+    cv_rect(x, y, width, 7, color);
+    if (peak) {
+        int marker = (int)(fm_sqrtf(peak * (1.0f / 160.0f)) * 43.0f);
+        cv_rect(x + marker, y, 1, 7, C_WHITE);
+    }
+}
+
 static void draw_home_sequences(void)
 {
     unsigned position = positions, run = playing, fraction = step_progress;
@@ -4492,12 +4501,20 @@ static void draw_home_sequences(void)
                 break;
             }
         }
-        if (!geometry && !recording && last_lane[t].cursor == cursor && last_lane[t].first == first &&
+        unsigned meter_only = !geometry && !recording &&
+            last_lane[t].cursor == cursor && last_lane[t].first == first &&
             last_lane[t].patch == patch && last_lane[t].mix == mix && last_lane[t].revision == revision &&
-            last_lane[t].meter == (unsigned)meter && last_lane[t].peak == peak &&
-            last_lane[t].focused == focused && last_lane[t].pulse == pulse && last_lane[t].active == sounding) continue;
+            last_lane[t].focused == focused && last_lane[t].pulse == pulse && last_lane[t].active == sounding;
+        if (meter_only && last_lane[t].meter == (unsigned)meter && last_lane[t].peak == peak) continue;
         last_lane[t] = (__typeof__(last_lane[t])){cursor, first, patch, mix, revision,
             (unsigned)meter, peak, focused, pulse, sounding};
+        int lane_y = 23 + (int)t * 35;
+        if (meter_only) {
+            cv_begin(44, 7, track_surface[t]);
+            draw_home_meter(0, 0, meter, peak, color);
+            cv_blit(190, lane_y + 5);
+            continue;
+        }
         cv_begin(240, 35, C_BLACK);
         if (focused) {
             uint16_t outline = pulse ? color : track_rule[t];
@@ -4510,8 +4527,7 @@ static void draw_home_sequences(void)
         cv_text(12, 9, &FONT_B, number, focused && pulse ? C_BLACK : C_WHITE);
         cv_text(34, 0, text_w(&FONT_B, name) <= 148 ? &FONT_B : &FONT_S, name, C_WHITE);
         cv_rect(190, 5, 44, 7, track_surface[t]);
-        cv_rect(190, 5, meter, 7, color);
-        if (peak) cv_rect(190 + (int)(fm_sqrtf(peak * (1.0f / 160.0f)) * 43.0f), 5, 1, 7, C_WHITE);
+        draw_home_meter(190, 5, meter, peak, color);
         int playhead = run ? 58 : 34;
         int origin = playhead - (int)cursor;
         int first_column = run ? -3 : 0;
@@ -4553,7 +4569,7 @@ static void draw_home_sequences(void)
             if (++index == length) index = 0;
         }
         if (run) cv_rect(playhead, 17, 1, 17, C_WHITE);
-        cv_blit(0, 23 + (int)t * 35);
+        cv_blit(0, lane_y);
     }
     if (redraw_footer) {
     cv_begin(240, 42, C_BLACK);
