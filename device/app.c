@@ -4509,6 +4509,64 @@ static void draw_home_meter(int x, int y, int width, unsigned peak, uint16_t col
     }
 }
 
+/* Original SLAP-5 SIGNATURE lane glyphs, top row first.
+ * Each five-bit row is stored as a base-32 digit, with the left pixel in bit 4.
+ * The renderer scales whole runs to keep strokes solid on the FM-1 LCD. */
+static const char signature_letters[26][8] = {
+    "EVRVVRR", "UVRUVVU", "EVOOOVE", "UVRRRVU", "VSOUSOV",
+    "VSOUOOO", "EVOJRVF", "RRRVVRR", "SSSSSSS", "33333VE",
+    "RVUSUVR", "OOOOOOV", "RVVVVRR", "RVVVVVR", "EVRRRVE",
+    "UVRVUOO", "EVRRRVF", "UVRVURR", "FVOE3VU", "VEEEEEE",
+    "RRRRRVE", "RRRRVEE", "RRVVVVR", "RVEEEVR", "RVEEEEE",
+    "V367COV"
+};
+static const char signature_digits[10][8] = {
+    "EVRRRVE", "6EEEEEV", "EV36COV", "UV36C3U", "RRVV333",
+    "VSOE3VU", "EVOUVVE", "V336CCC", "EVVEVVE", "EVVFE3E"
+};
+
+static void draw_signature_name(const char *name, uint16_t ink)
+{
+    int count = 0, cells = 0;
+    while (name[count]) {
+        unsigned c = (unsigned char)name[count++];
+        cells += c == ' ' ? 3 : 6;
+    }
+    if (!cells) return;
+    // Fit the full name before reducing its height. Leave the meter column free.
+    const int width = cells * 4 < 224 ? cells * 4 : 224;
+    int position = 0;
+    for (int i = 0; i < count; ++i) {
+        unsigned c = (unsigned char)name[i];
+        if (c >= 'a' && c <= 'z') c -= 'a' - 'A';
+        if (c == ' ') {
+            position += 3;
+            continue;
+        }
+        const char *glyph = c >= 'A' && c <= 'Z' ? signature_letters[c - 'A'] :
+            c >= '0' && c <= '9' ? signature_digits[c - '0'] :
+            c == '-' ? "000V000" : c == '+' ? "004V400" :
+            c == '.' ? "00000CC" : c == '/' ? "1336COO" : "EV36C0C";
+        for (int row = 0; row < 7; ++row) {
+            unsigned bits = glyph[row] <= '9' ? glyph[row] - '0' : glyph[row] - 'A' + 10;
+            int y = 1 + row * 33 / 7;
+            int height = 1 + (row + 1) * 33 / 7 - y;
+            for (int col = 0; col < 5;) {
+                if (!(bits & (16u >> col))) {
+                    ++col;
+                    continue;
+                }
+                int start = col++;
+                while (col < 5 && (bits & (16u >> col))) ++col;
+                int x = 5 + (position + start) * width / cells;
+                int end = 5 + (position + col) * width / cells;
+                if (end > x) cv_rect(x, y, end - x, height, ink);
+            }
+        }
+        position += 6;
+    }
+}
+
 static void draw_home_sequences(void)
 {
     unsigned position = positions, run = playing, fraction = step_progress;
@@ -4660,12 +4718,7 @@ static void draw_home_sequences(void)
             if (++index == length) index = 0;
         }
         if (run) cv_rect(playhead, 1, 1, 34, C_WHITE);
-        const felucca_font_t *face = text_w(&FONT_L, name) <= 220 ? &FONT_L :
-            text_w(&FONT_M, name) <= 220 ? &FONT_M :
-            text_w(&FONT_B, name) <= 220 ? &FONT_B : &FONT_S;
-        int label_y = face == &FONT_L ? 1 : face == &FONT_M ? 5 : 9;
-        cv_text(6, label_y + 1, face, name, C_BLACK);
-        cv_text(5, label_y, face, name, C_WHITE);
+        draw_signature_name(name, C_WHITE);
         draw_home_meter(232, 0, meter, peak, color);
         cv_blit(0, lane_y);
     }
