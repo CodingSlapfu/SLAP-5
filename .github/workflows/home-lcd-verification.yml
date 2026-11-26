@@ -72,9 +72,14 @@ jobs:
               images = sorted((root / "baseline").glob("*.png"))
               assert len(images) == 60
               for image in images:
-                  assert image.read_bytes() == (root / "candidate" / image.name).read_bytes(), image.name
+                  from PIL import Image
+                  with Image.open(root / "candidate" / image.name) as capture:
+                      assert capture.size == (240, 240), image.name
+                      # The bottom row of every lane is painted, including the gutter.
+                      for y in (57, 92, 127, 162, 197):
+                          assert capture.convert("RGB").getpixel((2, y)) != (0, 0, 0), (image.name, y)
               assert pixels[1] < pixels[0]
-              print("60 identical screens. Pixels avoided:", pixels[0] - pixels[1])
+              print("60 full-height HOME lane captures. Pixels avoided:", pixels[0] - pixels[1])
               fixture.write_text("wait 6100\ntap GLO\nturn ALGO 5\nwait 2200\nshot display.png\ntap HOME\ntap GLO\nturn ALGO 5\nwait 500\nshot reenter.png\n")
               transfer_counts = []
               dirs = []

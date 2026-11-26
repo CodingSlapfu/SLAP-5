@@ -1,0 +1,36 @@
+wait 6100
+tap SEQ
+key w2 down
+key w2 up
+expect pitch >0
+tap HOME
+press EDIT
+wait 2100
+release EDIT
+expect page 11
+key w0 down
+key w0 up
+key w1 down
+key w1 up
+key w2 down
+key w2 up
+key w3 down
+key w3 up
+key w4 down
+key w4 up
+tap HOME
+tap PLAY
+wait 550
+expect playing 1
+expect events 0
+tap PLAY
+press EDIT
+wait 2100
+release EDIT
+key w0 down
+key w0 up
+tap HOME
+tap PLAY
+wait 350
+expect events >0
+tap PLAY
