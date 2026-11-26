@@ -41,18 +41,21 @@ mkdir "$tmp/fx"
     done
     printf '%s\n' 'tap HOME' 'wav fx.wav' 'tap PLAY' 'wait 5500' 'wavstop'
 } > "$tmp/fx/input.txt"
-for mode in worker single discard grace timeout; do
+for mode in worker single discard grace timeout local_fx; do
     mkdir "$tmp/fx/$mode"
     cp "$tmp/fx/input.txt" "$tmp/fx/$mode/input.txt"
     case $mode in
         worker) printf '%s\n' 'expect fx_worker_jobs >128' 'expect fx_worker_fallbacks 0' ;;
         single) printf '%s\n' 'expect fx_worker_jobs 0' 'expect fx_worker_fallbacks 0' ;;
+        local_fx) printf '%s\n' 'expect fx_worker_jobs 0' 'expect worker_jobs >128' 'expect worker_online 1' 'expect fx_worker_fallbacks 0' ;;
         discard) printf '%s\n' 'expect fx_worker_jobs 128' 'expect fx_worker_fallbacks 1' ;;
         grace) printf '%s\n' 'expect fx_worker_jobs >128' 'expect fx_worker_fallbacks 0' ;;
         timeout) printf '%s\n' 'expect fx_worker_jobs 128' 'expect worker_late_source 2' 'expect worker_online 0' ;;
     esac >> "$tmp/fx/$mode/input.txt"
     (
         unset SLAP_TEST_SINGLE_CORE SLAP_TEST_DISCARD_WORKER SLAP_TEST_DISCARD_FX
+        unset SLAP_TEST_LEGACY_FX_WORKER
+        [ "$mode" = local_fx ] || export SLAP_TEST_LEGACY_FX_WORKER=1
         case $mode in
             single) export SLAP_TEST_SINGLE_CORE=1 ;;
             discard) export SLAP_TEST_DISCARD_FX=1 ;;
@@ -66,6 +69,7 @@ python3 tests/pcm_parity.py "$tmp/fx/single/fx.wav" "$tmp/fx/worker/fx.wav"
 python3 tests/pcm_parity.py "$tmp/fx/single/fx.wav" "$tmp/fx/discard/fx.wav"
 python3 tests/pcm_parity.py "$tmp/fx/single/fx.wav" "$tmp/fx/grace/fx.wav"
 python3 tests/pcm_parity.py "$tmp/fx/single/fx.wav" "$tmp/fx/timeout/fx.wav"
+python3 tests/pcm_parity.py "$tmp/fx/single/fx.wav" "$tmp/fx/local_fx/fx.wav"
 
 # Record Track 5 from a fresh boot, disarm, then let the drum-only take loop
 # with FX off. Compare the whole playback window after recording has ended.

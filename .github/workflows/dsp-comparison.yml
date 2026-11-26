@@ -18,7 +18,7 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/slap-python"
           source "$RUNNER_TEMP/slap-python/bin/activate"
           pip install Pillow==11.3.0 fonttools==4.59.2
-          for sha in c116d28ddb17ab6f7294bb44a42d51af3f3d3726 53a5f30d310e98bd1af34136ac0de2fef70cf8de 2d89ffe83b8146917837092698b42136e4add881 "$GITHUB_SHA"; do
+          for sha in c116d28ddb17ab6f7294bb44a42d51af3f3d3726 53a5f30d310e98bd1af34136ac0de2fef70cf8de 720683d2e7974274d67163670bd9f9d6fdd0ad53 "$GITHUB_SHA"; do
             git worktree add --detach "$RUNNER_TEMP/$sha" "$sha"
             (
               cd "$RUNNER_TEMP/$sha"
@@ -72,7 +72,7 @@ jobs:
           variants = {
               "v0.1.38": "c116d28ddb17ab6f7294bb44a42d51af3f3d3726",
               "pre-DSP": "53a5f30d310e98bd1af34136ac0de2fef70cf8de",
-              "v0.1.42": "2d89ffe83b8146917837092698b42136e4add881",
+              "v0.1.43": "720683d2e7974274d67163670bd9f9d6fdd0ad53",
               "branch": os.environ["GITHUB_SHA"],
           }
           dense = runpy.run_path('device/tests/dense-recording.py')
