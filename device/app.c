@@ -4830,39 +4830,29 @@ static void draw_panel(void)
     unsigned substep = step_progress;
     unsigned bank = (slap_ui.page == SEQ ? (unsigned)slap_ui.step : play_step) / 16u * 16u;
     uint16_t c = track_color[selected], background = C_BLACK;
-    static unsigned header_track, header_tempo, header_patches[TRACKS];
-    unsigned redraw_header = !header_valid || slap_ui.page != HOME ||
-        header_track != selected || header_tempo != tempo;
-    for (unsigned t = 0; t < TRACKS; ++t)
-        if (header_patches[t] != tracks[t].patch) redraw_header = 1;
-    header_valid = slap_ui.page == HOME;
-    if (redraw_header) {
+    static unsigned header_track, header_tempo, header_page;
+    if (!header_valid || header_page != (unsigned)slap_ui.page ||
+        header_track != selected || header_tempo != tempo) {
+        header_valid = 1;
         header_track = selected;
         header_tempo = tempo;
-        for (unsigned t = 0; t < TRACKS; ++t) header_patches[t] = tracks[t].patch;
-        cv_begin(240, slap_ui.page == HOME ? 50 : 48, background);
-        if (slap_ui.page == HOME) cv_text(8, 1, &FONT_M, "SLAP-5", C_WHITE);
-        else cv_text(8, 1, slap_ui.page == HARMONY ? &FONT_B : &FONT_M, page_names[slap_ui.page], c);
+        header_page = slap_ui.page;
+        cv_begin(240, 48, background);
+        if (chroma_theme)
+            for (unsigned band = 0; band < 8u; ++band)
+                cv_rect(0, (int)band * 3, 240, 3, chroma_gradient[selected][band]);
+        const char *title = page_names[slap_ui.page];
+        const felucca_font_t *title_font = text_w(&FONT_M, title) <= 152 ? &FONT_M : &FONT_B;
+        cv_text(8, 1, title_font, title, chroma_theme ? C_WHITE : c);
         decimal(number, tempo);
         cv_text(164, 1, &FONT_M, number, C_WHITE);
         cv_text(210, 10, &FONT_XS, "BPM", C_WHITE);
-        if (slap_ui.page == HOME) {
-            for (unsigned t = 0; t < TRACKS; ++t) home_track_card(t, selected, 25);
-        } else for (unsigned t = 0; t < TRACKS; ++t) {
+        for (unsigned t = 0; t < TRACKS; ++t) {
             int x = 4 + (int)t * 47;
             decimal(number, t + 1u);
             if (t == selected) cv_rect(x - 1, 24, 46, 24, C_WHITE);
             cv_rect(x, 25, 44, 22, track_color[t]);
             cv_text(x + 18, 28, &FONT_XS, number, C_BLACK);
-        }
-        if (slap_ui.page == HOME && low_battery) cv_text(104, 4, &FONT_T, "LOW BATTERY", C_WHITE);
-        else if (slap_ui.page == HOME && battery_status == 4) cv_text(139, 5, &FONT_T, "USB", C_WHITE);
-        else if (slap_ui.page == HOME && battery_status >= 0) {
-            cv_rect(138, 5, 17, 8, C_WHITE);
-            cv_rect(139, 6, 15, 6, C_BLACK);
-            cv_rect(155, 7, 2, 4, C_WHITE);
-            for (int bar = 0; bar < battery_status; ++bar)
-                cv_rect(140 + 4 * bar, 7, 3, 4, C_WHITE);
         }
         cv_blit(0, 0);
     }
