@@ -110,3 +110,28 @@ jobs:
           SDK_URL=https://gitee.com/Jieli-Tech/fw-AC79_AIoT_SDK.git bash vendor/fm1-base/bsp/tools/get_sdk.sh "$AC79_SDK"
           git restore vendor/fm1-base/host/plat_host.c
           sh device/build-native.sh
+          printf 'AC79_SDK=%s\n' "$AC79_SDK" >> "$GITHUB_ENV"
+      - name: Audit the candidate and simulate interrupted OTA and v0.1.31 rollback
+        run: |
+          source "$RUNNER_TEMP/slap-python/bin/activate"
+          python3 tools/audit-package.py --sdk "$AC79_SDK" --app device/build/slap-5.bin \
+            --loader device/build/loader/ota.bin --package device/build/slap-5.fwsc --identity FM-1_7500
+          rollback="$RUNNER_TEMP/SLAP-5-0.1.31.fwsc"
+          curl -fsSL --retry 3 -o "$rollback" \
+            https://github.com/CodingSlapfu/SLAP-5/releases/download/v0.1.31-hardware-testing/SLAP-5-0.1.31.fwsc
+          printf '%s  %s\n' 36676ae153435f065c99c2106bdccf43917f7cd57f65fb702e0144d0055ef8be "$rollback" | sha256sum -c -
+          cc -O2 -o "$RUNNER_TEMP/ldr-test" vendor/fm1-base/tests/ldr_test.c
+          "$RUNNER_TEMP/ldr-test" "$rollback" device/build/slap-5.fwsc --interrupt
+          "$RUNNER_TEMP/ldr-test" device/build/slap-5.fwsc "$rollback"
+          cd device/build
+          sha256sum slap-5.fwsc slap-5.bin loader/ota.bin | tee SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: slap-5-engineering-checkpoint-unpublished
+          retention-days: 30
+          if-no-files-found: error
+          path: |
+            device/build/slap-5.fwsc
+            device/build/slap-5.bin
+            device/build/loader/ota.bin
+            device/build/SHA256SUMS
