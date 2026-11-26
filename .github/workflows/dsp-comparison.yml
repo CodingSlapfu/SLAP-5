@@ -61,6 +61,7 @@ jobs:
           import csv
           import math
           import os
+          import runpy
           from pathlib import Path
           import statistics
           import subprocess
@@ -72,6 +73,7 @@ jobs:
               "0.1.36": "1ee54631cbc1c0f1e5a8a4c2734e29942bd27bc0",
               "branch": os.environ["GITHUB_SHA"],
           }
+          dense = runpy.run_path('device/tests/dense-recording.py')
           def fixture(bpm, mode):
               lines = ["wait 6100", "tap GLO", "turn ALGO 8", "turn K1 1",
                        "turn SELECT 1", "turn K1 1"]
@@ -80,20 +82,10 @@ jobs:
                             "turn SELECT 1", "turn K1 1", "turn ALGO 1",
                             "turn SELECT 1", "turn K1 1"]
               lines += ["tap HOME"]
-              if bpm != 112:
-                  lines += [f"turn ALGO {bpm - 112}"]
-              lines += [f"expect tempo {bpm}"]
-              for lane in range(4):
-                  lines += ["tap SEQ"]
-                  for step in range(16):
-                      lines += [f"key w{(lane + step % 4) % 8} down",
-                                f"key w{(lane + step % 4) % 8} up", "turn SELECT 1"]
-                  lines += ["tap HOME", "turn SELECT 1"]
-              lines += ["tap SEQ", "tap SEQ", "turn K2 100", "tap SEL",
-                        "expect gen_count 1", "tap HOME", "press EDIT", "wait 2050",
-                        "release EDIT", "turn K3 -22", "turn K4 22",
-                        "tap HOME", "tap PLAY", "tap HOME", "expect page 6",
-                        "wait 1000"]
+              dense_commands = dense["filter_visual_scenario"](519331, bpm, True)
+              assert dense_commands[0] == "wait 6100"
+              lines += dense_commands[1:]
+              lines += ["expect peak_voices 16", "expect playing 1", "expect page 6"]
               for pulse in range(1200):
                   if mode != "tx":
                       pitch = 48 + pulse % 9
