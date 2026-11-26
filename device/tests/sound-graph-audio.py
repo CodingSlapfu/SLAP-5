@@ -16,7 +16,7 @@ def render(host, directory, controls, changes):
     directory.mkdir()
     script = directory / "sound.txt"
     lines = ["wait 6100", *controls, *changes, "wait 120",
-             "wav note.wav", "key w2 down", "wait 380", "shot graph.png",
+             "wav note.wav", "key w2 down", "wait 500", "shot graph.png",
              "key w2 up", "wait 150", "wavstop"]
     script.write_text("\n".join(lines) + "\n")
     subprocess.run([host, script, directory], check=True)
@@ -43,6 +43,10 @@ def main():
             ["turn K1 127", "turn K2 127", "expect wave_morph 127", "expect wave_scan 127"],
         ),
     }
+    scenarios["expression-vibrato"] = (
+        ["tap EDIT", "press SEL", "turn ALGO 1", "release SEL", "turn K4 14"],
+        ["turn K3 18"],
+    )
     with TemporaryDirectory() as directory:
         root = Path(directory)
         for label, (controls, changes) in scenarios.items():
