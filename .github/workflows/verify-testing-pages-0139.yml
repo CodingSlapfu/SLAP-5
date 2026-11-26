@@ -1,0 +1,30 @@
+name: Verify deployed v0.1.39 browser installer
+on:
+  push:
+    branches: [slap-5-environment-recovery]
+    paths: ['.github/workflows/verify-testing-pages-0139.yml']
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Fetch the deployed installer, manifest and firmware
+        run: |
+          base=https://codingslapfu.github.io/SLAP-5
+          for attempt in $(seq 1 24); do
+            if curl -fsSL -H 'Cache-Control: no-cache' "$base/flash-testing.html?verification=$GITHUB_RUN_ID-$attempt" -o installer.html &&
+               grep -q 'src="flash-0.1.39.js"' installer.html; then
+              break
+            fi
+            sleep 8
+          done
+          grep -q 'src="flash-0.1.39.js"' installer.html
+          curl -fsSL "$base/flash-testing-0.1.39.html" | grep 'FM-1_75000139'
+          curl -fsSL "$base/flash-0.1.39.js" | grep 'release-testing-0.1.39.json'
+          curl -fsSL "$base/release-testing-0.1.39.json" -o manifest.json
+          jq -e '.version == "0.1.39" and .product == "FM-1_75000139" and .sha256 == "eb6404d11ba2353ef86bdebdda9ab72db5e62edd14c89ddbcbfeb0dbc4d0ab22"' manifest.json
+          curl -fsSL "$base/SLAP-5-0.1.39.fwsc" -o SLAP-5-0.1.39.fwsc
+          echo 'eb6404d11ba2353ef86bdebdda9ab72db5e62edd14c89ddbcbfeb0dbc4d0ab22  SLAP-5-0.1.39.fwsc' | sha256sum -c -
+          test "$(wc -c < SLAP-5-0.1.39.fwsc)" -eq "$(jq -r .bytes manifest.json)"
