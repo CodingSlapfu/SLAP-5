@@ -4775,11 +4775,18 @@ static void draw_sound_controls(unsigned selected, uint16_t color)
 }
 
 static unsigned browser_valid, browser_track, browser_patch, browser_group, browser_tempo, browser_page;
+static uint32_t display_settings_signature;
 
 static void draw_panel(void)
 {
     unsigned selected = (unsigned)slap_ui.track;
     if (selected >= TRACKS) return;
+    if (slap_ui.page == SETTINGS && settings_section == PREF_DISPLAY) {
+        uint32_t signature = (uint32_t)slap_ui.visual | visual_quality << 3 |
+            chroma_theme << 4 | settings_item << 8 | selected << 10 | tempo << 13;
+        if (signature == display_settings_signature) return;
+        display_settings_signature = signature;
+    } else display_settings_signature = 0;
     if (slap_ui.page == PATCH && (!edit_page || selected == DRUMS)) {
         unsigned patch = tracks[selected].patch, group = patch_group[selected];
         if (edit_page == SOUND_LAB_MAIN) {
@@ -6134,6 +6141,7 @@ void app_frame(void)
             } else draw_panel();
             if (slap_ui.page != HOME) home_idle_valid = 0;
             if (slap_ui.page != PATCH || slap_ui.booting) browser_valid = 0;
+            if (slap_ui.page != SETTINGS || slap_ui.booting) display_settings_signature = 0;
         }
     }
 }
@@ -6141,6 +6149,7 @@ void app_frame(void)
 void app_ui_init(void)
 {
     header_valid = graph_valid = home_idle_valid = browser_valid = 0;
+    display_settings_signature = 0;
     slap_ui.octave = 2;
     input_octave = 2;
     slap_ui.boot_at = plat_ms();
