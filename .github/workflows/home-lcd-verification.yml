@@ -109,6 +109,9 @@ jobs:
           for fixture in device/tests/*.txt; do
             out="$(mktemp -d)"
             "$host" "$fixture" "$out"
+            if [ "$fixture" = device/tests/knob-style.txt ]; then
+              cp "$out"/knob-*.png "$RUNNER_TEMP/looper-captures/"
+            fi
             if [ "$fixture" = device/tests/expression.txt ]; then
               cp "$out"/sound-lab-expression.png "$out"/expression-reloaded.png "$RUNNER_TEMP/looper-captures/"
             fi
@@ -145,6 +148,14 @@ jobs:
           source "$RUNNER_TEMP/slap-python/bin/activate"
           python3 tools/audit-package.py --sdk "$AC79_SDK" --app device/build/slap-5.bin \
             --loader device/build/loader/ota.bin --package device/build/slap-5.fwsc --identity FM-1_7500
+          backup="$RUNNER_TEMP/SLAP-5-0.1.41-engineering-backup.tar.gz"
+          previous="$RUNNER_TEMP/SLAP-5-0.1.41.fwsc"
+          release=https://github.com/CodingSlapfu/SLAP-5/releases/download/v0.1.41-hardware-testing
+          curl -fsSL --retry 3 -o "$backup" "$release/SLAP-5-0.1.41-engineering-backup.tar.gz"
+          curl -fsSL --retry 3 -o "$previous" "$release/SLAP-5-0.1.41.fwsc"
+          printf '%s  %s\n' 1935bbfa06f8ce7ffc0b0d3cefdf581a035db4c190d2c2dc8fe184ccb97865fe "$backup" | sha256sum -c -
+          printf '%s  %s\n' 1511fbf8916ebc0e91c8d2981df813de96dfd8fb723077c7e809c509f4d8aebd "$previous" | sha256sum -c -
+          tar -tzf "$backup" > "$RUNNER_TEMP/v041-backup-files.txt"
           rollback="$RUNNER_TEMP/SLAP-5-0.1.31.fwsc"
           curl -fsSL --retry 3 -o "$rollback" \
             https://github.com/CodingSlapfu/SLAP-5/releases/download/v0.1.31-hardware-testing/SLAP-5-0.1.31.fwsc

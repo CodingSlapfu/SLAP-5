@@ -307,7 +307,7 @@ static float master_gain, energy_smooth[TRACKS];
 static volatile uint32_t track_energy[TRACKS], visual_notes[TRACKS];
 static unsigned note_activity[TRACKS], dancer_pattern, dancer_outline = 1, dancer_lighting = 1, dancer_reactivity = 1;
 #if FM1B_CPU2 && defined(PLAT_HOST) && !defined(PLAT_WEB)
-static int host_discard_worker_result, host_discard_fx_result, host_late_voice, host_fx_grace;
+static int host_discard_worker_result, host_discard_fx_result, host_late_voice, host_fx_grace, host_voice_timeout, host_fx_timeout;
 enum { HOST_COST_SPLIT, HOST_SLOT_SPLIT, HOST_TRACK_SPLIT };
 static unsigned host_voice_split;
 #endif
@@ -447,14 +447,16 @@ static void load_patch(unsigned track, unsigned number)
         (patch->engine == 0u || patch->engine == 2u ? ADVANCED_SYNTH : 0u);
 }
 
-enum { PREF_AUDIO, PREF_METRO, PREF_RECORD, PREF_TRANSPORT, PREF_KEYS, PREF_DISPLAY, PREF_DIAG, PREF_LEDS, PREF_MIDI, PREF_SYNC, PREF_MIDI_ROUTE, PREF_MIDI_TRACKS, PREF_MIDI_MON, PREF_SECTIONS };
+enum { PREF_AUDIO, PREF_METRO, PREF_RECORD, PREF_TRANSPORT, PREF_KEYS, PREF_DISPLAY, PREF_DIAG, PREF_LEDS, PREF_MIDI, PREF_SYNC, PREF_MIDI_ROUTE, PREF_MIDI_TRACKS, PREF_MIDI_MON, PREF_KNOB_STYLE, PREF_SECTIONS };
 static unsigned settings_section, settings_item;
-static const uint8_t settings_count[PREF_SECTIONS] = {4, 3, 4, 1, 1, 2, 1, 3, 4, 4, 4, 4, 1};
+static const uint8_t settings_count[PREF_SECTIONS] = {4, 3, 4, 1, 1, 2, 1, 3, 4, 4, 4, 4, 1, 1};
 static const char *const settings_names[] = {
-    "AUDIO", "METRONOME", "RECORDING", "TRANSPORT", "KEYBOARD", "DISPLAY", "SYSTEM", "LEDS", "MIDI", "MIDI SYNC", "MIDI ROUTE", "MIDI TRACKS", "MIDI MONITOR"
+    "AUDIO", "METRONOME", "RECORDING", "TRANSPORT", "KEYBOARD", "DISPLAY", "SYSTEM", "LEDS", "MIDI", "MIDI SYNC", "MIDI ROUTE", "MIDI TRACKS", "MIDI MONITOR", "KNOB STYLE"
 };
 static volatile uint32_t output_trim, speaker_mode, click_trim, resume_playback, auto_level_off, auto_mix;
 static unsigned visual_quality, led_style, led_keys_on_hit, led_active_soft;
+enum { KNOB_CLASSIC, KNOB_STUDIO, KNOB_NEON, KNOB_SEGMENTED };
+static unsigned knob_style;
 static unsigned header_valid, graph_valid, home_idle_valid;
 static volatile unsigned split_keys;
 
@@ -477,6 +479,7 @@ void app_init(void)
     uint32_t options = setting_bytes >= 16 && settings[0] == SETTINGS_TAG ? settings[3] : 0u;
     uint32_t duck = setting_bytes == 20 && settings[0] == SETTINGS_TAG ? settings[4] : 0u;
     midi_options = (options >> 9) & 0x3ffffu; // Ignore retired palette bits in saved settings.
+    knob_style = options & (1u << 31) ? options >> 27 & 3u : KNOB_CLASSIC;
     midi_clock_window = midi_clock_intervals = 0;
     midi_count_in_substep = 0;
     midi_pending = midi_phase = midi_ext_step = midi_clock_seen = midi_clock_period = 0;
@@ -536,6 +539,8 @@ void app_init(void)
     host_fx_grace = getenv("SLAP_TEST_FX_GRACE") != 0;
     const char *late_voice = getenv("SLAP_TEST_LATE_VOICE");
     host_late_voice = late_voice ? atoi(late_voice) : 0;
+    host_voice_timeout = getenv("SLAP_TEST_VOICE_TIMEOUT") != 0;
+    host_fx_timeout = getenv("SLAP_TEST_FX_TIMEOUT") != 0;
     plat_cpu2_set(getenv("SLAP_TEST_SINGLE_CORE") == 0);
 #endif
 #endif
@@ -2304,8 +2309,13 @@ enum { WORKER_LATE_VOICE = 1, WORKER_LATE_FX };
 static void service_late_voice(uint32_t callback_budget)
 {
     if (!voice_pending) return;
-    if (plat_cpu2_busy()) {
-        if (plat_ticks24() - voice_pending_since >= callback_budget) {
+    int busy = plat_cpu2_busy();
+    int expired = plat_ticks24() - voice_pending_since >= callback_budget;
+#ifdef PLAT_HOST
+    if (host_voice_timeout) busy = expired = 1;
+#endif
+    if (busy) {
+        if (expired) {
             worker_late_source = WORKER_LATE_VOICE;
             plat_cpu2_retire_late();
             voice_pending = 0;
@@ -2641,6 +2651,7 @@ static unsigned render_fx_batch(unsigned frames, unsigned mask, unsigned active,
     worker_wait_ticks += plat_ticks24() - wait_start;
 #ifdef PLAT_HOST
     busy |= host_discard_fx_result && fx_worker_jobs == 128u;
+    busy |= host_fx_timeout && fx_worker_jobs == 128u;
 #endif
     if (busy || plat_cpu2_wait() != 0) {
         // Stop the worker before restoring any state or reusing its output bus.
@@ -4116,6 +4127,9 @@ void app_input_only(void)
             }
             break;
         }
+        case PREF_KNOB_STYLE:
+            knob_style = (unsigned)clamp((int)knob_style + knob[0], KNOB_CLASSIC, KNOB_SEGMENTED);
+            break;
         case PREF_DISPLAY:
             slap_ui.visual = select_visual(slap_ui.visual, knob[0]);
             visual_quality = (unsigned)clamp((int)visual_quality + knob[1], 0, 1);
@@ -4431,7 +4445,8 @@ void app_input_only(void)
         resume_playback << 20 | visual_quality << 21 | (unsigned)slap_ui.visual << 22 | auto_level_off << 25 | split_keys << 26 | led_style << 30;
     uint32_t options = auto_mix | dancer_pattern << 1 | (unsigned)!dancer_outline << 3 |
         (unsigned)!dancer_lighting << 4 | (unsigned)!dancer_reactivity << 5 |
-        led_keys_on_hit << 6 | 128u | led_active_soft << 8 | midi_options << 9;
+        led_keys_on_hit << 6 | 128u | led_active_soft << 8 | midi_options << 9 |
+        knob_style << 27 | 1u << 31;
     uint32_t duck = 0;
     for (unsigned t = 0; t < DRUMS; ++t) duck |= (uint32_t)mixer_duck[t] << (8u * t);
     uint32_t now = plat_ms();
@@ -4573,42 +4588,57 @@ static void draw_performance_knob(int x, const char *label, const char *value, i
 {
     const felucca_font_t *label_font = text_w(&FONT_B, label) <= 58 ? &FONT_B :
         text_w(&FONT_T, label) <= 58 ? &FONT_T : &FONT_XS;
-    const felucca_font_t *value_font = text_w(&FONT_B, value) <= 27 ? &FONT_B : &FONT_T;
+    const felucca_font_t *value_font = text_w(&FONT_B, value) <= 24 ? &FONT_B : &FONT_T;
     int width = text_w(value_font, value);
-    if (width > 27) {
-        value_font = text_w(&FONT_B, value) <= 56 ? &FONT_B :
-            width <= 56 ? &FONT_T : &FONT_XS;
-        width = text_w(value_font, value);
-        cv_text(x + (60 - width) / 2, 0, value_font, value, C_WHITE);
-        cv_rect(x + 4, 20, 52, 2, 0x3186);
-        cv_rect(x + 4 + (position + 100) * 48 / 200, 18, 4, 6, color);
-        cv_text(x + 1, 26, label_font, label, color);
+    unsigned step = (unsigned)(clamp(position, -100, 100) + 100) * 24u / 200u;
+    int bipolar = (label[0] == 'P' && label[1] == 'A' && label[2] == 'N' && !label[3]) ||
+        (label[0] == 'A' && label[1] == 'L' && label[2] == 'L' && label[3] == ' ') ||
+        (label[0] == 'T' && label[1] == 'R' && label[2] == 'A' && label[3] == 'C' && label[4] == 'K' && label[5] == ' ');
+    cv_text(x + (60 - text_w(label_font, label)) / 2, 27, label_font, label, color);
+    if (width > 24) {
+        cv_text(x + (60 - width) / 2, 1, value_font, value, C_WHITE);
+        cv_rect(x + 4, 22, 52, 3, 0x3186);
+        cv_rect(x + 4 + (int)step * 2, 19, 4, 9, color);
         return;
     }
-    int center = x + 16;
+
+    int digital = knob_style >= KNOB_NEON;
+    int center = x + (digital ? 30 : 17);
     const int cy = 14;
-    static const uint8_t rim[] = {14, 14, 14, 14, 13, 13, 13, 12, 11, 10, 9, 8, 7, 5, 2};
-    for (int row = -14; row <= 14; ++row) {
-        int distance = row < 0 ? -row : row;
-        int half = rim[distance];
-        cv_rect(center - half, cy + row, 2 * half + 1, 1,
-            row < 0 ? 0x8c71 : 0x3186);
-        if (distance < 13)
-            cv_rect(center - half + 2, cy + row, 2 * half - 3, 1,
-                row < -6 ? 0x6b6d : row < 1 ? 0x4228 : 0x2105);
+    if (!digital) {
+        static const uint8_t rim[] = {12, 12, 12, 12, 11, 11, 10, 9, 8, 7, 6, 4, 2};
+        int studio = knob_style == KNOB_STUDIO;
+        for (int row = -12; row <= 12; ++row) {
+            int half = rim[row < 0 ? -row : row];
+            uint16_t shade = row < -6 ? (studio ? 0xdefb : 0x94b2) :
+                row < 5 ? (studio ? 0x8c71 : 0x4208) : (studio ? 0x632c : 0x2104);
+            cv_rect(center - half, cy + row, 2 * half + 1, 1, shade);
+        }
+        cv_text(x + 35 + (24 - width) / 2, 7, value_font, value, C_WHITE);
+    } else {
+        cv_text(center - width / 2, 7, value_font, value, C_WHITE);
     }
-    for (unsigned tick = 0; tick <= 8; ++tick) {
-        unsigned angle = 384u + tick * 96u;
-        cv_rect(center + visual_wave(angle + 256u, 13), cy + visual_wave(angle, 13),
-            1, 1, tick == 4 ? C_WHITE : color);
+
+    unsigned origin = bipolar ? 12u : 0u;
+    unsigned low = step < origin ? step : origin;
+    unsigned high = step > origin ? step : origin;
+    unsigned spacing = knob_style == KNOB_SEGMENTED ? 3u : digital ? 1u : 2u;
+    for (unsigned tick = 0; tick <= 24u; tick += spacing) {
+        unsigned angle = 384u + tick * 32u;
+        int px = center + visual_wave(angle + 256u, 14);
+        int py = cy + visual_wave(angle, 14);
+        uint16_t ink = tick == step ? C_WHITE :
+            tick >= low && tick <= high ? color :
+            bipolar && tick == origin ? 0xa514 : 0x39e7;
+        cv_rect(px, py, digital ? 2 : 1, 2, ink);
     }
-    unsigned angle = 384u + (unsigned)(position + 100) * 768u / 200u;
-    int px = center + visual_wave(angle + 256u, 11);
-    int py = cy + visual_wave(angle, 11);
-    cv_line(center + visual_wave(angle + 256u, 4), cy + visual_wave(angle, 4), px, py, color);
-    cv_rect(px, py, 2, 2, C_WHITE);
-    cv_text(x + 33, 5, value_font, value, C_WHITE);
-    cv_text(x + 1, 26, label_font, label, color);
+    if (!digital) {
+        unsigned angle = 384u + (unsigned)(clamp(position, -100, 100) + 100) * 768u / 200u;
+        int px = center + visual_wave(angle + 256u, 10);
+        int py = cy + visual_wave(angle, 10);
+        cv_line(center + visual_wave(angle + 256u, 3), cy + visual_wave(angle, 3), px, py, color);
+        cv_rect(px, py, 2, 2, C_WHITE);
+    }
 }
 
 static void draw_home_meter(int x, int y, int width, unsigned peak, uint16_t color)
@@ -4646,7 +4676,7 @@ static void draw_signature_name(const char *name, uint16_t ink)
     }
     if (!cells) return;
     // Fit the full name before reducing its height. Leave the meter column free.
-    const int natural_width = cells * 10 / 3;
+    const int natural_width = cells * 3;
     const int width = natural_width < 224 ? natural_width : 224;
     int position = 0;
     for (int i = 0; i < count; ++i) {
@@ -4665,8 +4695,8 @@ static void draw_signature_name(const char *name, uint16_t ink)
             edges[edge] = 5 + (position + edge) * width / cells;
         for (int row = 0; row < 7; ++row) {
             unsigned bits = glyph[row] <= '9' ? glyph[row] - '0' : glyph[row] - 'A' + 10;
-            int y = 1 + row * 33 / 7;
-            int height = 1 + (row + 1) * 33 / 7 - y;
+            int y = 4 + row * 27 / 7;
+            int height = 4 + (row + 1) * 27 / 7 - y;
             for (int col = 0; col < 5;) {
                 if (!(bits & (16u >> col))) {
                     ++col;
@@ -4675,7 +4705,11 @@ static void draw_signature_name(const char *name, uint16_t ink)
                 int start = col++;
                 while (col < 5 && (bits & (16u >> col))) ++col;
                 int span = edges[col] - edges[start];
-                if (span > 0) cv_rect(edges[start], y, span, height, ink);
+                if (span <= 0) continue;
+                cv_rect(edges[start] + 1, y + 2, span, height, 0x2945);
+                int inset = (row == 0 || row == 6) && span >= 4;
+                cv_rect(edges[start] + inset, y, span - inset * 2, 1, ink);
+                cv_rect(edges[start], y + 1, span, height - 1, ink);
             }
         }
         position += 6;
@@ -5132,6 +5166,11 @@ static void draw_panel(void)
         case PREF_KEYS:
             labels[0] = "PERFECT NOTE";
             values[0] = perfect_note_off == 0u ? "ON" : perfect_note_off == 15u ? "OFF" : "MIXED"; break;
+        case PREF_KNOB_STYLE: {
+            static const char *const styles[] = {"ANALOG CLASSIC", "ANALOG STUDIO", "DIGITAL NEON", "DIGITAL SEGMENTED"};
+            labels[0] = "APPEARANCE"; values[0] = styles[knob_style];
+            break;
+        }
         case PREF_DISPLAY:
             labels[0] = "VISUALIZER"; labels[1] = "DISPLAY QUALITY";
             decimal(level, visual_index(slap_ui.visual) + 1u);
@@ -5515,7 +5554,7 @@ static void draw_panel(void)
                 number[0] = filter < 0 ? 'L' : 'H';
                 number[1] = 'P';
                 decimal(number + (filter ? 2 : 0), (unsigned)(filter < 0 ? -filter : filter));
-                draw_performance_knob(x, k ? "TRACK FILTER" : "ALL FILTER", number, filter, c);
+                draw_performance_knob(x, k ? "TRACK FILTER" : "ALL FILTER", filter ? number : "OFF", filter, c);
             }
         } else if (slap_ui.page == GLOBAL) {
 #if FM1B_CPU2 && !defined(PLAT_WEB)
@@ -5643,9 +5682,14 @@ static void draw_panel(void)
                 for (unsigned col = 0; col < 2u; ++col) {
                     unsigned i = row * 2u + col;
                     int x = 8 + (int)col * 116;
-                    cv_text(x, 1, &FONT_XS, names[i], c);
+                    static const unsigned limits[] = {155, 2, 31, 925, 775, 775};
                     decimal(number, values[i]);
-                    cv_text(x, 14, &FONT_B, i == 1u ? modes[values[i]] : number, C_WHITE);
+                    if (i == 1u) {
+                        cv_text(x, 1, &FONT_XS, names[i], c);
+                        cv_text(x, 14, &FONT_B, modes[values[i]], C_WHITE);
+                    } else {
+                        draw_performance_knob(x + 24, names[i], number, (int)(values[i] * 200u / limits[i]) - 100, c);
+                    }
                 }
                 cv_blit(0, 120 + (int)row * 40);
             }
@@ -6550,6 +6594,7 @@ int app_expect(const char *name, int *result)
     else if (name_matches(name, "midi_drops")) *result = (int)midi_drops;
     else if (name_matches(name, "midi_clock")) *result = !!midi_clock_period;
     else if (name_matches(name, "settings_section")) *result = (int)settings_section;
+    else if (name_matches(name, "knob_style")) *result = (int)knob_style;
     else if (name_matches(name, "led_active_soft")) *result = (int)led_active_soft;
     else if (name_matches(name, "resume_playback")) *result = (int)resume_playback;
     else if (name_matches(name, "output_trim")) *result = (int)output_trim;
@@ -6559,6 +6604,7 @@ int app_expect(const char *name, int *result)
     else if (name_matches(name, "worker_work_us")) *result = (int)((worker_ticks + fx_worker_ticks) / 24u);
     else if (name_matches(name, "worker_voice_peak_us")) *result = (int)(peak_voice_job_ticks / 24u);
     else if (name_matches(name, "worker_online")) *result = plat_cpu2_on();
+    else if (name_matches(name, "worker_late_source")) *result = (int)worker_late_source;
     else if (name_matches(name, "worker_overlap_us")) *result = (int)(worker_overlap_ticks / 24u);
     else if (name_matches(name, "worker_jobs")) *result = (int)worker_jobs;
     else if (name_matches(name, "worker_fallbacks")) *result = (int)worker_fallbacks;

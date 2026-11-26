@@ -1,0 +1,27 @@
+wait 6100
+expect knob_style 0
+shot knob-analog-classic.png
+tap GLO
+turn ALGO 13
+expect settings_section 13
+turn K1 1
+expect knob_style 1
+tap HOME
+wait 100
+shot knob-analog-studio.png
+tap GLO
+turn ALGO 13
+turn K1 1
+expect knob_style 2
+tap HOME
+wait 100
+shot knob-digital-neon.png
+tap GLO
+turn ALGO 13
+turn K1 1
+expect knob_style 3
+wait 700
+reboot
+wait 6100
+expect knob_style 3
+shot knob-digital-segmented.png

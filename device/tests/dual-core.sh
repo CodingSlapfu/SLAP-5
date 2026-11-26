@@ -41,7 +41,7 @@ mkdir "$tmp/fx"
     done
     printf '%s\n' 'tap HOME' 'wav fx.wav' 'tap PLAY' 'wait 5500' 'wavstop'
 } > "$tmp/fx/input.txt"
-for mode in worker single discard grace; do
+for mode in worker single discard grace timeout; do
     mkdir "$tmp/fx/$mode"
     cp "$tmp/fx/input.txt" "$tmp/fx/$mode/input.txt"
     case $mode in
@@ -49,6 +49,7 @@ for mode in worker single discard grace; do
         single) printf '%s\n' 'expect fx_worker_jobs 0' 'expect fx_worker_fallbacks 0' ;;
         discard) printf '%s\n' 'expect fx_worker_jobs 128' 'expect fx_worker_fallbacks 1' ;;
         grace) printf '%s\n' 'expect fx_worker_jobs >128' 'expect fx_worker_fallbacks 0' ;;
+        timeout) printf '%s\n' 'expect fx_worker_jobs 128' 'expect worker_late_source 2' 'expect worker_online 0' ;;
     esac >> "$tmp/fx/$mode/input.txt"
     (
         unset SLAP_TEST_SINGLE_CORE SLAP_TEST_DISCARD_WORKER SLAP_TEST_DISCARD_FX
@@ -56,6 +57,7 @@ for mode in worker single discard grace; do
             single) export SLAP_TEST_SINGLE_CORE=1 ;;
             discard) export SLAP_TEST_DISCARD_FX=1 ;;
             grace) export SLAP_TEST_FX_GRACE=1 ;;
+            timeout) export SLAP_TEST_FX_TIMEOUT=1 ;;
         esac
         build/host/slap-5_host "$tmp/fx/$mode/input.txt" "$tmp/fx/$mode"
     )
@@ -63,6 +65,7 @@ done
 python3 tests/pcm_parity.py "$tmp/fx/single/fx.wav" "$tmp/fx/worker/fx.wav"
 python3 tests/pcm_parity.py "$tmp/fx/single/fx.wav" "$tmp/fx/discard/fx.wav"
 python3 tests/pcm_parity.py "$tmp/fx/single/fx.wav" "$tmp/fx/grace/fx.wav"
+python3 tests/pcm_parity.py "$tmp/fx/single/fx.wav" "$tmp/fx/timeout/fx.wav"
 
 # Record Track 5 from a fresh boot, disarm, then let the drum-only take loop
 # with FX off. Compare the whole playback window after recording has ended.
@@ -121,6 +124,13 @@ cp tests/dual-core.txt "$tmp/persistent/input.txt"
 printf '%s\n' 'expect voice_late_jobs 3' 'expect worker_jobs >4' 'expect voice_drained_jobs 3' 'expect worker_fallbacks 3' >> "$tmp/persistent/input.txt"
 SLAP_TEST_LATE_VOICE=3 build/host/slap-5_host "$tmp/persistent/input.txt" "$tmp/persistent"
 python3 tests/pcm_parity.py "$tmp/single/dual-core.wav" "$tmp/persistent/dual-core.wav"
+
+# A voice job that cannot acknowledge by the hard deadline stays retired.
+mkdir "$tmp/voice-timeout"
+cp tests/dual-core.txt "$tmp/voice-timeout/input.txt"
+printf '%s\n' 'expect voice_late_jobs 1' 'expect voice_drained_jobs 0' 'expect worker_late_source 1' 'expect worker_online 0' >> "$tmp/voice-timeout/input.txt"
+SLAP_TEST_LATE_VOICE=1 SLAP_TEST_VOICE_TIMEOUT=1 build/host/slap-5_host "$tmp/voice-timeout/input.txt" "$tmp/voice-timeout"
+python3 tests/pcm_parity.py "$tmp/single/dual-core.wav" "$tmp/voice-timeout/dual-core.wav"
 
 # Held chord arpeggios can allocate several voices. Batch only up to their
 # next sample-accurate tick and compare with the single-core render.
