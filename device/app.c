@@ -447,6 +447,7 @@ static const char *const settings_names[] = {
 static volatile uint32_t output_trim, speaker_mode, click_trim, resume_playback, auto_level_off, auto_mix;
 static unsigned visual_quality, led_style, led_keys_on_hit, led_active_soft;
 static unsigned chroma_theme;
+static unsigned header_valid, graph_valid, home_idle_valid;
 static void chroma_select(int index);
 enum { CHROMA_SETTINGS_SHIFT = 27 };
 static volatile unsigned split_keys;
@@ -3951,7 +3952,10 @@ void app_input_only(void)
         case PREF_DISPLAY:
             slap_ui.visual = select_visual(slap_ui.visual, knob[0]);
             visual_quality = (unsigned)clamp((int)visual_quality + knob[1], 0, 1);
-            if (knob[2]) chroma_select((int)chroma_theme + knob[2]);
+            if (knob[2]) {
+                chroma_select((int)chroma_theme + knob[2]);
+                header_valid = graph_valid = home_idle_valid = 0;
+            }
             break;
         }
     } else if (slap_ui.page == VISUAL && slap_ui.visual == 6) {
@@ -4313,7 +4317,6 @@ static int note_sounding(unsigned row, unsigned step)
     return 0;
 }
 
-static unsigned header_valid, graph_valid, home_idle_valid;
 
 typedef struct {
     unsigned page, track, step, bank, mix, tempo, positions, revision, envelope, modulation, split, tuning;
