@@ -220,3 +220,32 @@ midi-room 64
 wait 50
 expect midi_pending 0
 expect midi_out 48
+press EDIT
+wait 2100
+release EDIT
+expect page 11
+expect track 5
+turn K1 1
+expect solo 1
+tap HOME
+press PLAY
+wait 12
+release PLAY
+expect midi_pending 16
+tap PLAY
+wait 50
+expect midi_pending 0
+expect midi_out 80
+press EDIT
+wait 2100
+release EDIT
+expect page 11
+key w4 down
+key w4 up
+expect mute 1
+tap HOME
+tap PLAY
+wait 50
+expect midi_pending 0
+expect midi_out 80
+tap PLAY
