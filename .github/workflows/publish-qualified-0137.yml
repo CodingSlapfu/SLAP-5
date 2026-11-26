@@ -17,7 +17,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          artifact-ids: 15099135144
+          name: SLAP-5-0.1.37-qualified-hardware-testing
           run-id: 45781972179
           github-token: ${{ github.token }}
           path: qualified
