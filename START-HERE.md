@@ -4,14 +4,24 @@ The consolidated release gate remains open. The public hardware-testing firmware
 
 ## Current continuation checkpoint
 
-Application code `74f8fb192e6de777c4fa02c110c3e90702b88366`. Integrated host/native test source `411e0608f818b5b2de42828f8adf5b5f307adb73`. The public release gate remains open.
+Application code `74f8fb192e6de777c4fa02c110c3e90702b88366`. Integrated host/native test source `7d2cff4672a31ea8e773fead78a83b9830112ea4`. The public release gate remains open.
 
 - Shared editor headers now use the selected CHROMA palette and cache the unchanged 240×48 title strip. Wider values use a full-width slider and readable text. The HOME transfer fixture retained all 60 pixel-identical captures. The DISPLAY fixture moved from 6,189,600 to 2,733,600 RGB565 pixels, about 55.8% below baseline.
 - The all-theme fixture verifies six settled editor headers and eight graph and visualizer captures for each of the twelve themes. Sound Lab compares changed FM6 routing and wavetable morph/scan graphs with changed held-note PCM. This covers these edit paths and leaves full per-operator and per-engine correspondence open.
-- The MIDI host fixtures verify independent live ownership of one pitch on the panel, USB, and TRS across release and USB reconnect. Five dense sequencer tracks fill all 24 outbound slots. The fixture blocks output and requires all scheduled Note Offs to drain after output resumes. It also verifies that solo limits the transmitted notes to the selected track and that muting that track suppresses them. Ties and the broader overdub matrix remain open.
-- Native size is 565,704 / 581,564 bytes. Static RAM is 88,520 / 98,304 bytes. Pool usage is unchanged at 335,568 / 344,064 bytes. Host/native compilation, PCM parity, package audit, interrupted OTA and v0.1.31 rollback simulation passed. The engineering package is `FM-1_7500`, SHA-256 `57a60ba3265b869d71876df78173c6b062557adbaf253d7ee987bcfb1a5add3d`. [Integrated qualification and artifact](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45780452985/artifacts/15098505418) · [Chromium and Studio on the current app source](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45779927512)
+- The MIDI host fixtures verify independent live ownership of one pitch on the panel, USB, and TRS across release and USB reconnect. Five dense sequencer tracks fill all 24 outbound slots. The fixture blocks output and requires all scheduled Note Offs to drain after output resumes. It also verifies that solo limits the transmitted notes to the selected track and that muting that track suppresses them. A separate clean-boot case verifies overlapping sequencer ties share one MIDI Note On and one final Note Off. The broader overdub matrix remains open.
+- Native size is 565,704 / 581,564 bytes. Static RAM is 88,520 / 98,304 bytes. Pool usage is unchanged at 335,568 / 344,064 bytes. Host/native compilation, PCM parity, package audit, interrupted OTA and v0.1.31 rollback simulation passed. The engineering package is `FM-1_7500`, SHA-256 `57a60ba3265b869d71876df78173c6b062557adbaf253d7ee987bcfb1a5add3d`. [Integrated qualification and artifact](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45780896755/artifacts/15098147578) · [Chromium and Studio on the current app source](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45779927512)
 - The latest package artifact expires in 30 days. GitHub refused the runner token permission to create an unpublished archival draft (HTTP 403). The attempt was removed from CI. Preserve a copy of the exact package, binary, loader, and checksums in an authorized durable destination before calling the backup gate complete. The earlier v0.1.36 durable backup remains available below.
-- Continue full typographic fit and control checks on sequencer/drums/patch/kit screens, all Sound Lab engines, expressive and legacy projects, ties and remaining MIDI/overdub permutations, LED and listening profiles, and Studio/installer deployment. The earlier 137 BPM timing observation remains open for actionable or hardware evidence. Keep the experimental installer on v0.1.31 until the integrated software gate passes.
+- Continue full typographic fit and control checks on sequencer/drums/patch/kit screens, all Sound Lab engines, expressive and legacy projects, remaining MIDI/overdub permutations, LED and listening profiles, and Studio/installer deployment. The earlier 137 BPM timing observation remains open for actionable or hardware evidence. Keep the experimental installer on v0.1.31 until the integrated software gate passes.
+
+The [latest full app comparison](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45779927589) ran dense five-track mixed-MIDI traffic. Median host wall timings are in microseconds.
+
+| Tempo | v0.1.35 P95 / P99 / peak | Current P95 / P99 / peak |
+|---|---:|---:|
+| 112 | 166.47 / 192.56 / 221.58 | 168.31 / 189.90 / 226.84 |
+| 137 | 180.38 / 213.55 / 264.09 | 180.18 / 214.06 / 263.44 |
+| 160 | 143.91 / 156.25 / 193.71 | 143.91 / 157.03 / 194.91 |
+
+This is host evidence with zero recorded deadline overruns. Native scheduling and LCD timing still require the FM-1.
 
 ## Source and backup
 
