@@ -1,0 +1,33 @@
+wait 6100
+tap SEQ
+key w2 down
+key w2 up
+expect pitch >0
+tap HOME
+tap PLAY
+tap REC
+wait 180
+expect rec_running 1
+press REC
+tap OCT+
+release REC
+press REC
+tap OCT+
+release REC
+wait 350
+expect playing 1
+expect rec_running 1
+tap SEQ
+expect pitch -1
+tap HOME
+press REC
+tap OCT-
+release REC
+wait 350
+expect playing 1
+expect rec_running 1
+tap SEQ
+expect pitch >0
+tap HOME
+tap REC
+tap PLAY
