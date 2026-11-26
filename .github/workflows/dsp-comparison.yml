@@ -56,6 +56,7 @@ jobs:
       - name: Alternate pinned trials at 112, 137 and 160 BPM
         run: |
           export SLAP_BENCH_ROOT="$RUNNER_TEMP"
+          export PYTHONPATH="$PWD/device/tests"
           cpu="$(grep Cpus_allowed_list /proc/self/status | awk '{print $2}' | cut -d, -f1 | cut -d- -f1)"
           taskset -c "$cpu" python3 - <<'PY'
           import csv
