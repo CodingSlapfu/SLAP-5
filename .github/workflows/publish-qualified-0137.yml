@@ -1,0 +1,35 @@
+name: Publish qualified SLAP-5 0.1.37
+on:
+  push:
+    branches: [slap-5-environment-recovery]
+    paths: ['.github/workflows/publish-qualified-0137.yml']
+permissions:
+  actions: read
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: v0.1.37-hardware-testing
+      CHECKPOINT: a55fdc8fdb93958514c735be354f231413a0ed4f
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          artifact-ids: 15099135144
+          run-id: 45781972179
+          github-token: ${{ github.token }}
+          path: qualified
+      - name: Publish exact audited bytes and verify public assets
+        run: |
+          cd qualified
+          sha256sum -c SHA256SUMS-0.1.37
+          printf '%s  %s\n' 0255ef443a95e909c4a93b4d0c17d0d358a418b7b2733fb0a11217047128dfe1 SLAP-5-0.1.37.fwsc | sha256sum -c -
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$CHECKPOINT" --prerelease --latest=false \
+            --title 'SLAP-5 v0.1.37 — Experimental FM-1 Hardware Testing' \
+            --notes 'Experimental firmware for compatible FM-1 units, identity FM-1_75000137. Includes 12 CHROMA themes, LCD transfer refinements, MIDI fixes and Sound Lab improvements. Native compilation, app-only package audit, interrupted update and v0.1.31 rollback simulation passed. Physical acceptance is pending. Back up projects. Use M-Flasher for this .fwsc. Confirm 1 MiB flash chip 0x856014, chip key 0x980F, a compatible V15-style application layout and application-only write range 0x4000–0x92FFF before flashing. The experimental browser installer and stable firmware remain unchanged.' \
+            SLAP-5-0.1.37.fwsc SLAP-5-0.1.37-engineering-backup.tar.gz SHA256SUMS-0.1.37
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir downloaded
+          cmp SHA256SUMS-0.1.37 downloaded/SHA256SUMS-0.1.37
+          (cd downloaded && sha256sum -c SHA256SUMS-0.1.37)
