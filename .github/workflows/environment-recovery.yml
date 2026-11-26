@@ -2,6 +2,7 @@ name: SLAP-5 environment recovery
 on:
   push:
     branches: [slap-5-environment-recovery]
+    paths: [.github/workflows/environment-recovery.yml]
 permissions:
   contents: read
 jobs:
@@ -36,4 +37,16 @@ jobs:
         run: |
           source "$RUNNER_TEMP/slap-python/bin/activate"
           sh device/build-native.sh --release 0.1.36
-          find device/build -type f -name '*.fwsc' -exec sha256sum '{}' +
+          cd device/build
+          echo '1b8f1edc80ad3ea092f7ef8c10dc6637a9e90566015155874f54618f61ad3b70  slap-5-0.1.36.fwsc' | sha256sum -c -
+          sha256sum slap-5-0.1.36.fwsc slap-5.bin loader/ota.bin > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: slap-5-0.1.36-verified-baseline
+          retention-days: 30
+          if-no-files-found: error
+          path: |
+            device/build/slap-5-0.1.36.fwsc
+            device/build/slap-5.bin
+            device/build/loader/ota.bin
+            device/build/SHA256SUMS
