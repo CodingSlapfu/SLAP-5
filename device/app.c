@@ -3588,7 +3588,8 @@ void app_input_only(void)
     }
     boot_suppressed_keys &= keys;
     int previous_page = slap_ui.page;
-    if ((slap_ui.page != RECORD && slap_ui.page != HOME) || recording ||
+    if ((slap_ui.page != RECORD && slap_ui.page != HOME) ||
+        (recording && (slap_ui.page != HOME || !rec_running)) ||
         (clear_mode && plat_ms() - clear_armed_at > 2200u)) clear_mode = 0;
     if (slap_ui.page == SEQ && (buttons & (1u << B_SEL))) {
         if (slap_ui.track == DRUMS && (pressed & (1u << B_GLO))) {
