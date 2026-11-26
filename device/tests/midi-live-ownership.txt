@@ -1,0 +1,48 @@
+wait 6100
+key 0 down
+midi USB 90 35 60
+midi TRS 90 35 65
+wait 35
+expect midi_panel_held 1
+expect midi_usb_held 1
+expect midi_trs_held 1
+key 0 up
+wait 20
+expect midi_panel_held 0
+expect midi_usb_held 1
+expect midi_trs_held 1
+midi TRS 80 35 00
+wait 20
+expect midi_usb_held 1
+expect midi_trs_held 0
+midi USB 80 35 00
+wait 35
+expect midi_usb_held 0
+key 0 down
+midi USB 90 35 60
+midi TRS 90 35 65
+wait 35
+expect midi_panel_held 1
+expect midi_usb_held 1
+expect midi_trs_held 1
+midi-usb 0
+wait 20
+expect midi_panel_held 1
+expect midi_trs_held 1
+expect midi_usb_held 0
+midi-usb 1
+wait 20
+expect midi_usb_held 0
+midi USB 90 35 60
+wait 20
+expect midi_usb_held 1
+midi USB 80 35 00
+wait 20
+expect midi_panel_held 1
+expect midi_trs_held 1
+expect midi_usb_held 0
+midi TRS 80 35 00
+key 0 up
+wait 35
+expect midi_trs_held 0
+expect midi_panel_held 0
