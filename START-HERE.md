@@ -2,6 +2,17 @@
 
 The consolidated release gate remains open. The public hardware-testing firmware is [v0.1.31](https://github.com/CodingSlapfu/SLAP-5/releases/tag/v0.1.31-hardware-testing).
 
+## Current continuation checkpoint
+
+Application code `74f8fb192e6de777c4fa02c110c3e90702b88366`. Integrated host/native test source `411e0608f818b5b2de42828f8adf5b5f307adb73`. The public release gate remains open.
+
+- Shared editor headers now use the selected CHROMA palette and cache the unchanged 240×48 title strip. Wider values use a full-width slider and readable text. The HOME transfer fixture retained all 60 pixel-identical captures. The DISPLAY fixture moved from 6,189,600 to 2,733,600 RGB565 pixels, about 55.8% below baseline.
+- The all-theme fixture verifies six settled editor headers and eight graph and visualizer captures for each of the twelve themes. Sound Lab compares changed FM6 routing and wavetable morph/scan graphs with changed held-note PCM. This covers these edit paths and leaves full per-operator and per-engine correspondence open.
+- The MIDI host fixtures verify independent live ownership of one pitch on the panel, USB, and TRS across release and USB reconnect. Five dense sequencer tracks fill all 24 outbound slots. The fixture blocks output and requires all scheduled Note Offs to drain after output resumes. It also verifies that solo limits the transmitted notes to the selected track and that muting that track suppresses them. Ties and the broader overdub matrix remain open.
+- Native size is 565,704 / 581,564 bytes. Static RAM is 88,520 / 98,304 bytes. Pool usage is unchanged at 335,568 / 344,064 bytes. Host/native compilation, PCM parity, package audit, interrupted OTA and v0.1.31 rollback simulation passed. The engineering package is `FM-1_7500`, SHA-256 `57a60ba3265b869d71876df78173c6b062557adbaf253d7ee987bcfb1a5add3d`. [Integrated qualification and artifact](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45780452985/artifacts/15098505418) · [Chromium and Studio on the current app source](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45779927512)
+- The latest package artifact expires in 30 days. GitHub refused the runner token permission to create an unpublished archival draft (HTTP 403). The attempt was removed from CI. Preserve a copy of the exact package, binary, loader, and checksums in an authorized durable destination before calling the backup gate complete. The earlier v0.1.36 durable backup remains available below.
+- Continue full typographic fit and control checks on sequencer/drums/patch/kit screens, all Sound Lab engines, expressive and legacy projects, ties and remaining MIDI/overdub permutations, LED and listening profiles, and Studio/installer deployment. The earlier 137 BPM timing observation remains open for actionable or hardware evidence. Keep the experimental installer on v0.1.31 until the integrated software gate passes.
+
 ## Source and backup
 
 - Consolidated engineering baseline `8d68d757a39acb71f3d73fe491f86f33b6a653ac` on `slap-5-consolidated`. Firmware source `1ee54631cbc1c0f1e5a8a4c2734e29942bd27bc0`.
