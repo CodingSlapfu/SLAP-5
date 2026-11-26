@@ -4634,7 +4634,9 @@ static int held_note_width(unsigned duration, unsigned step, unsigned base, unsi
 
 static void draw_performance_knob(int x, const char *label, const char *value, int position, uint16_t color)
 {
-    const felucca_font_t *label_font = text_w(&FONT_B, label) <= 58 ? &FONT_B :
+    int expanded = slap_ui.page == MIXER || slap_ui.page == HOME;
+    const felucca_font_t *label_font = expanded ? &FONT_T :
+        text_w(&FONT_B, label) <= 58 ? &FONT_B :
         text_w(&FONT_T, label) <= 58 ? &FONT_T : &FONT_XS;
     const felucca_font_t *value_font = text_w(&FONT_B, value) <= 24 ? &FONT_B : &FONT_T;
     int width = text_w(value_font, value);
@@ -4643,7 +4645,7 @@ static void draw_performance_knob(int x, const char *label, const char *value, i
         (label[0] == 'A' && label[1] == 'L' && label[2] == 'L' && label[3] == ' ') ||
         (label[0] == 'T' && label[1] == 'R' && label[2] == 'A' && label[3] == 'C' && label[4] == 'K' && label[5] == ' ');
     cv_text(x + (60 - text_w(label_font, label)) / 2,
-            (slap_ui.page == MIXER || slap_ui.page == HOME) ? 34 : 27, label_font, label, color);
+            (slap_ui.page == MIXER || slap_ui.page == HOME) ? 33 : 27, label_font, label, color);
     if (width > 24) {
         cv_text(x + (60 - width) / 2, 1, value_font, value, C_WHITE);
         cv_rect(x + 4, 22, 52, 3, 0x3186);
@@ -4652,7 +4654,6 @@ static void draw_performance_knob(int x, const char *label, const char *value, i
     }
 
     int digital = knob_style >= KNOB_NEON;
-    int expanded = slap_ui.page == MIXER || slap_ui.page == HOME;
     int center = x + (expanded || digital ? 30 : 17);
     int cy = expanded ? 21 : 14;
     int radius = expanded ? 21 : 14;

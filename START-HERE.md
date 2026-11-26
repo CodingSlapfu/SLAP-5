@@ -1,5 +1,16 @@
 # SLAP-5 environment recovery
 
+## v0.1.45 experimental firmware
+
+Application `e6c3f7498d64c0763ceaab10bb1f9fa5d4e844eb`. Firmware identity `FM-1_75000145`. [Acceptance matrix and physical test procedure](evidence/qualification-0.1.45.md). [Verified release and served installer](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45903088951).
+
+- [Experimental browser installer](https://codingslapfu.github.io/SLAP-5/flash-testing.html), [standalone firmware](https://github.com/CodingSlapfu/SLAP-5/releases/download/v0.1.45-hardware-testing/SLAP-5-0.1.45.fwsc), [engineering backup](https://github.com/CodingSlapfu/SLAP-5/releases/download/v0.1.45-hardware-testing/SLAP-5-0.1.45-engineering-backup.tar.gz), [HOME before and after](https://github.com/CodingSlapfu/SLAP-5/releases/download/v0.1.45-hardware-testing/SLAP-5-0.1.45-HOME-before-after.png), [theme and knob framebuffer evidence](https://github.com/CodingSlapfu/SLAP-5/releases/download/v0.1.45-hardware-testing/SLAP-5-0.1.45-framebuffer.zip).
+- Firmware SHA-256 `a72db8e95d7caf0f8a04f487f5376ef92a934ec39605a644095292e3ce5f21e8`. Backup SHA-256 `84c3793113aef1080d5582bf1fa223a84fe5332d04979fdeaaaef864973b4dc9`.
+- Project loads clear stale sequencer and audition voices at the audio boundary and reset mixer smoothing. The exact cause of the owner's fresh-load lag remains unconfirmed. Core 0 retains exclusive native FX ownership and the 16-voice architecture is preserved.
+- HOME shares full-size MIXER knobs. DISPLAY adds four background-only themes, the measure counter follows the active loop, and the shared utility face is larger. A post-release source adjustment addresses the lower-edge label clipping visible in the released framebuffer.
+- Preserve v0.1.44 as immediate rollback and repeat the owner stress case before physical acceptance.
+
+
 ## v0.1.44 experimental firmware
 
 Application source `da17fe35bbde5b41865c896cfbcbd98f5c2786a0`. Identity `FM-1_75000144`. [Qualification and hardware test procedure](evidence/qualification-0.1.44.md). [Verified build, release and deployed installer](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45897199511).
