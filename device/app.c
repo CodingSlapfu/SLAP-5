@@ -28,6 +28,8 @@ typedef struct {
     float attack, decay, sustain, release, drum_tune, drum_decay, glide_inc;
     float lfo_phase, lfo_inc, lfo_fade, lfo_gain, lfo_hold, lfo_depth;
     float last_sample, steal_tail;
+    float glide_rate, expression_phase, expression_rate, expression_depth, expression_fade, expression_gain;
+    uint32_t expression_delay;
     float drum_noise, drum_color, drum_body, drum_snap;
     float drum_texture_gain, drum_noise_mix, drum_tone;
     uint32_t delay, rng;
@@ -142,6 +144,7 @@ typedef struct {
 static MidiNote midi_notes[24];
 static uint8_t midi_key_chan[NKEYS], midi_key_pitch[NKEYS];
 static uint32_t record_clock;
+static unsigned midi_sample;
 static struct {
     uint16_t *duration;
     uint32_t start, step_ticks, word;
@@ -278,7 +281,11 @@ static volatile uint32_t track_peak[TRACKS], fx_cost_ticks[TRACKS];
 static Voice voices[VOICES];
 static PLAT_POOL SlapSynth synths[VOICES];
 static uint32_t track_timbre[DRUMS], track_fm_envelopes[DRUMS][7];
-enum { SOUND_LAB_MAIN = 5 };
+enum { SOUND_LAB_MAIN = 5, SOUND_LAB_EXPRESSION = 6 };
+static volatile uint32_t expression[DRUMS];
+static uint8_t expression_last_pitch[DRUMS], expression_anchor[DRUMS];
+static uint32_t expression_onset[DRUMS];
+static unsigned expression_seen;
 static unsigned edit_page, timbre_operator, patch_group[TRACKS];
 static PLAT_POOL int16_t synth_strings[VOICES][SLAP_STRING_CAPACITY];
 static volatile uint32_t tempo = 112, swing, playing, positions, sequence_epoch;
@@ -534,6 +541,8 @@ void app_init(void)
 #endif
     for (unsigned t = 0; t < DRUMS; ++t)
         arp_setup[t] = ARP_DEFAULT;
+    expression_seen = 0;
+    for (unsigned t = 0; t < DRUMS; ++t) expression[t] = 0;
     arp_cursor = arp_wait = arp_pulse = 0;
     for (unsigned i = 0; i < 16; ++i) arp_history[i] = 255;
     for (unsigned t = 0; t < DRUMS; ++t) tracks[t].lfo = 31u << 8;
@@ -696,24 +705,60 @@ static struct {
     int valid;
 } note_coefficients[DRUMS];
 
+/* Source occupies the low two bits. The other fields use five bits each,
+ * except glide mode (two bits). Zero retains factory behavior in old songs. */
+static uint32_t factory_expression(unsigned patch, unsigned engine, unsigned modern)
+{
+    if ((patch >= 73u && patch <= 77u) || patch == 10u || patch == 21u || patch == 131u)
+        return (1u << 2) | (3u << 4);
+    if (!modern) return 0;
+    if (engine == 5u) return (1u << 2) | (2u << 4) | (12u << 9) | (14u << 14) | (8u << 19) | (10u << 24);
+    if (engine == 18u) return (6u << 9) | (11u << 14) | (12u << 19) | (15u << 24);
+    if (engine == 19u || engine == 20u)
+        return (8u << 9) | (15u << 14) | (10u << 19) | (8u << 24);
+    if (engine == 21u)
+        return (11u << 9) | (14u << 14) | (9u << 19) | (10u << 24);
+    return 0;
+}
+
+static uint32_t effective_expression(unsigned track)
+{
+    uint32_t word = expression[track];
+    if (word & 3u) return (word & 3u) == 1u ? word : 0u;
+    unsigned patch = tracks[track].patch;
+    return factory_expression(patch, slap_patches[patch].engine, tracks[track].mix & MODERN_SYNTH);
+}
+
 static void trigger_voice(unsigned track, unsigned pitch, unsigned velocity, uint32_t duration,
                           int manual, unsigned origin, unsigned delay)
 {
     uint32_t started = spike_enabled ? plat_ticks24() : 0u;
     Voice *voice = &voices[0];
     float glide_start = 0.0f;
-    if (manual && track < DRUMS && !delay && !(tracks[track].harmony >> 16 & 255u)) {
-        unsigned patch = tracks[track].patch;
-        if ((patch >= 73u && patch <= 77u) || patch == 10u || patch == 21u || patch == 131u) {
+    uint32_t expression_word = track < DRUMS ? effective_expression(track) : 0;
+    unsigned glide_mode = expression_word >> 2 & 3u;
+    if (track < DRUMS && !auditioning_step && glide_mode && (expression_word >> 4 & 31u)) {
+        uint32_t onset = record_clock + midi_sample + delay;
+        unsigned flag = 1u << track;
+        if (!(expression_seen & flag) || expression_onset[track] != onset) {
+            expression_anchor[track] = expression_seen & flag ? expression_last_pitch[track] : 255u;
+            expression_onset[track] = onset;
+        }
+        unsigned anchor = expression_anchor[track];
+        if (glide_mode == 2u && anchor < 128u && anchor != pitch) {
+            glide_start = fm_exp2f(((int)anchor - (int)pitch) * (1.0f / 12.0f));
+        } else if (glide_mode == 1u) {
             unsigned held = 0;
             for (unsigned i = 0; i < VOICES; ++i) {
                 const Voice *prior = &voices[i];
-                if (!prior->age || prior->track != track || (prior->manual & MIDI_OWNER_MASK) != (unsigned)manual ||
-                    prior->releasing || prior->delay || prior->pitch == pitch) continue;
+                if (!prior->age || prior->track != track || prior->releasing ||
+                    prior->delay || prior->env <= 0.0f || prior->pitch == pitch) continue;
                 if (++held > 1u) { glide_start = 0.0f; break; }
                 glide_start = prior->glide_inc > 0.0f ? prior->glide_inc : prior->inc;
             }
         }
+        expression_last_pitch[track] = (uint8_t)pitch;
+        expression_seen |= flag;
     }
     float quietest_release = 0.0f;
     for (unsigned i = 0; i < VOICES; ++i) {
@@ -778,13 +823,6 @@ static void trigger_voice(unsigned track, unsigned pitch, unsigned velocity, uin
             voice->lfo_fade = note_coefficients[track].lfo_fade;
             voice->lfo_hold = (int16_t)(random_word() & 65535u) * (1.0f / 32768.0f);
             voice->lfo_depth = 0.027f;
-        } else if ((tracks[track].mix & MODERN_SYNTH) && patch_id >= 108u && patch_id <= 110u) {
-            // Allow the flute's attack to settle before a shallow, gradually emerging vibrato.
-            voice->lfo_wave = 1;
-            voice->lfo_inc = 5.1f / RATE;
-            voice->lfo_gain = -0.45f;
-            voice->lfo_fade = 1.0f / (0.40f * RATE);
-            voice->lfo_depth = 0.0075f;
         }
         unsigned slot = (unsigned)(voice - voices);
         slap_synth_start(&synths[slot], synth_strings[slot], patch->engine, pitch,
@@ -800,7 +838,16 @@ static void trigger_voice(unsigned track, unsigned pitch, unsigned velocity, uin
             voice->bend = fm_exp2f((float)midi_bend[manual - MIDI_USB_VOICE][track] / 49152.0f);
             synths[slot].inc = voice->inc * voice->bend;
         }
-        voice->glide_inc = glide_start;
+        voice->glide_inc = glide_mode == 2u ? glide_start * voice->inc : glide_start;
+        if (voice->glide_inc > 0.0f)
+            voice->glide_rate = 1.0f / (1.0f + (expression_word >> 4 & 31u) * (RATE * 0.0055f));
+        unsigned vibrato = expression_word >> 9 & 31u;
+        if (vibrato) {
+            voice->expression_depth = vibrato * 0.00058f;
+            voice->expression_rate = (1.5f + (expression_word >> 14 & 31u) * 0.25f) / RATE;
+            voice->expression_delay = (expression_word >> 19 & 31u) * (RATE / 40u);
+            voice->expression_fade = 1.0f / (1.0f + (expression_word >> 24 & 31u) * (RATE * 0.025f));
+        }
     } else if (tracks[DRUMS].patch >= DRUM_LEGACY_KITS) {
         voice->kit = (uint8_t)tracks[DRUMS].patch;
         unsigned hit = drum_sample_hit(pitch);
@@ -966,7 +1013,6 @@ static void midi_key_release(unsigned key)
         midi_key_chan[key] = 0;
 }
 
-static unsigned midi_sample;
 
 static void midi_sequence_note(unsigned track, unsigned word, unsigned delay, unsigned gate)
 {
@@ -1946,7 +1992,7 @@ static inline __attribute__((always_inline)) float render_voice_signal(Voice *v,
     if (v->track < DRUMS) {
         float pitch_inc = v->inc;
         if (v->glide_inc > 0.0f) {
-            pitch_inc = v->glide_inc + (v->inc - v->glide_inc) * 0.00135f;
+            pitch_inc = v->glide_inc + (v->inc - v->glide_inc) * v->glide_rate;
             if (fm_fabsf(v->inc - pitch_inc) < v->inc * 0.0002f) {
                 v->glide_inc = 0.0f;
                 pitch_inc = v->inc;
@@ -1963,6 +2009,18 @@ static inline __attribute__((always_inline)) float render_voice_signal(Voice *v,
             }
             float value = lfo_shape(v->lfo_wave, v->lfo_phase, v->lfo_hold);
             s->inc = pitch_inc * v->bend * (1.0f + v->lfo_depth * fm_maxf(0.0f, v->lfo_gain) * value);
+        }
+        if (v->expression_depth > 0.0f) {
+            float vibrato = 1.0f;
+            if (v->expression_delay) {
+                --v->expression_delay;
+            } else {
+                v->expression_gain = fm_minf(1.0f, v->expression_gain + v->expression_fade);
+                v->expression_phase += v->expression_rate;
+                if (v->expression_phase >= 1.0f) v->expression_phase -= 1.0f;
+                vibrato += slap_oscillator(v->expression_phase) * v->expression_gain * v->expression_depth;
+            }
+            s->inc = (v->lfo_wave ? s->inc : pitch_inc * v->bend) * vibrato;
         }
         s->operator_release = v->releasing;
         return slap_synth_sample(s) * v->env * v->velocity * 0.18f;
@@ -2101,7 +2159,7 @@ static void render_voice_into_bus(Voice *voice, SlapSynth *synth, unsigned muted
     // Unmodulated tonal attacks and sustains have no per-sample work
     // outside the oscillator and envelope. Stop before the gate-off sample.
     if (i < frames && track < DRUMS && voice->age && !voice->releasing &&
-        !voice->delay && !voice->lfo_wave && !voice->glide_inc && voice->steal_tail == 0.0f) {
+        !voice->delay && !voice->lfo_wave && !voice->expression_depth && !voice->glide_inc && voice->steal_tail == 0.0f) {
         const unsigned first = i;
         unsigned end = frames;
         if (!voice->manual && voice->remaining && frames - i >= voice->remaining)
@@ -2133,7 +2191,7 @@ static void render_voice_into_bus(Voice *voice, SlapSynth *synth, unsigned muted
     // A released tonal voice has a fixed envelope target until a new event.
     // Leave modulated voices, steal tails and pending starts on the general path.
     if (i < frames && track < DRUMS && voice->age && voice->releasing &&
-        !voice->delay && !voice->lfo_wave && !voice->glide_inc && voice->steal_tail == 0.0f) {
+        !voice->delay && !voice->lfo_wave && !voice->expression_depth && !voice->glide_inc && voice->steal_tail == 0.0f) {
         float env = voice->env;
         const float rate = voice->release, velocity = voice->velocity;
         float sample = voice->last_sample;
@@ -2759,6 +2817,7 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
     }
     if (recording && playing && rec_loop && !rec_start_mode && !rec_running && !quick_wait_note)
         begin_recording();
+    midi_sample = 0;
     read_notes();
     if (midi_tx_epoch != sequence_epoch || midi_link != plat_midi_out_link())
         midi_sequence_flush(record_clock, 0);
@@ -2782,7 +2841,7 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
     unsigned measure_fx = slap_ui.page == FX && slap_ui.fx_page == 4;
     const unsigned analyze = slap_ui.page == VISUAL;
     const unsigned inspect_fx = slap_ui.page == FX ||
-        (slap_ui.page == PATCH && edit_page && edit_page != SOUND_LAB_MAIN);
+        (slap_ui.page == PATCH && edit_page && edit_page < SOUND_LAB_MAIN);
     const unsigned active_effects = slap_fx_active_mask();
     const unsigned effect_mask = inspect_fx ? (1u << TRACKS) - 1u : active_effects;
     float meter_sum[2] = {0}, meter_peak[2] = {0};
@@ -3194,7 +3253,8 @@ static unsigned song_header_size(unsigned version)
 {
     return SONG5_HEADER + (version >= 10u ? sizeof(track_timbre) : 0u) +
         (version >= 11u ? sizeof(track_fm_envelopes) : 0u) +
-        (version >= 12u ? SONG_FILTER_BYTES : 0u);
+        (version >= 12u ? SONG_FILTER_BYTES : 0u) +
+        (version >= 13u ? sizeof(expression) : 0u);
 }
 
 static int prepare_sparse_song(unsigned bytes, unsigned version)
@@ -3212,7 +3272,12 @@ static int prepare_sparse_song(unsigned bytes, unsigned version)
     }
     if (version >= 12u)
         for (unsigned t = 0; t <= TRACKS; ++t)
-            if (song_bytes[header - SONG_FILTER_BYTES + t] > 200u) return 0;
+            if (song_bytes[song_header_size(12u) - SONG_FILTER_BYTES + t] > 200u) return 0;
+    if (version >= 13u)
+        for (unsigned t = 0; t < DRUMS; ++t) {
+            uint32_t word = song_get32(song_header_size(12u) + 4u * t);
+            if (word >> 29 || (word & 3u) == 3u || (word >> 2 & 3u) == 3u) return 0;
+        }
     unsigned previous = 0;
     for (unsigned at = header; at < bytes; at += stride) {
         unsigned packed = song_bytes[at] | (unsigned)song_bytes[at + 1] << 8;
@@ -3254,6 +3319,8 @@ static unsigned encode_sparse_song(unsigned version)
             for (unsigned i = 0; i < 7u; ++i, at += 4u) song_put32(at, track_fm_envelopes[track][i]);
     if (version >= 12u)
         for (unsigned t = 0; t <= TRACKS; ++t) song_bytes[at++] = (uint8_t)(performance_filter[t] + 100);
+    if (version >= 13u)
+        for (unsigned t = 0; t < DRUMS; ++t, at += 4u) song_put32(at, expression[t]);
     for (unsigned row = 0; row < (version >= 8u ? SONG_LANES : version >= 6u ? SONG7_LANES : SONG5_LANES); ++row) {
         for (unsigned step = 0; step < STEPS; ++step) {
             uint32_t word = song_event_get(row, step);
@@ -3290,7 +3357,7 @@ static int read_song(unsigned slot)
     int bytes = plat_store_load(OBJ_SONG1 + slot, song_bytes, sizeof(song_bytes));
     if (bytes < 8) return 0;
     unsigned version = song_get32(4);
-    if (version >= 5u && version <= 12u) {
+    if (version >= 5u && version <= 13u) {
         if (!prepare_sparse_song((unsigned)bytes, version)) return 0;
     } else {
         if ((unsigned)bytes > sizeof(song_io)) return 0;
@@ -3301,7 +3368,7 @@ static int read_song(unsigned slot)
     if (song_io.magic != SONG_MAGIC ||
         !((song_io.version == 2 && bytes == v2bytes) ||
           (song_io.version == 3 && bytes == v3bytes) ||
-          (song_io.version == 4 && bytes == (int)sizeof(song_io)) || (song_io.version >= 5u && song_io.version <= 12u)) ||
+          (song_io.version == 4 && bytes == (int)sizeof(song_io)) || (song_io.version >= 5u && song_io.version <= 13u)) ||
         song_io.bpm < 40 || song_io.bpm > 240 || song_io.swing > 70) return 0;
     for (unsigned t = 0; t < TRACKS; ++t) {
         uint32_t mix = song_io.track[t].mix;
@@ -3353,7 +3420,10 @@ static void load_song(unsigned slot)
     }
     for (unsigned t = 0; t <= TRACKS; ++t)
         performance_filter[t] = song_io.version >= 12u ?
-            (int8_t)((int)song_bytes[song_header_size(song_io.version) - SONG_FILTER_BYTES + t] - 100) : 0;
+            (int8_t)((int)song_bytes[song_header_size(12u) - SONG_FILTER_BYTES + t] - 100) : 0;
+    for (unsigned t = 0; t < DRUMS; ++t)
+        expression[t] = song_io.version >= 13u ? song_get32(song_header_size(12u) + 4u * t) : 0;
+    expression_seen = 0;
     tempo = song_io.bpm;
     swing = song_io.swing;
     for (unsigned t = 0; t < TRACKS; ++t) {
@@ -3480,6 +3550,8 @@ static void write_song(unsigned slot)
             if (track_fm_envelopes[t][i]) version = 11u;
     for (unsigned t = 0; t <= TRACKS; ++t)
         if (performance_filter[t]) version = 12u;
+    for (unsigned t = 0; t < DRUMS; ++t)
+        if (expression[t]) version = 13u;
     if (version < 8u) song_io.filters = (drum_filters & 63u) | ((drum_filters >> 8) & 0x3f00u);
     unsigned bytes = version > 4u ? encode_sparse_song(version) : sizeof(song_io);
     if (!bytes) { slap_ui.notice = "BANK TOO DENSE"; return; }
@@ -3935,9 +4007,15 @@ void app_input_only(void)
     else if (slap_ui.page == PATCH) {
         unsigned track = slap_ui.track;
         unsigned last = track < DRUMS && slap_patches[tracks[track].patch].engine == 0u ? 4u : 1u;
-        int page = edit_page == SOUND_LAB_MAIN ? 0 : edit_page ? (int)edit_page : (int)last + 1;
-        page = clamp(page + algorithm, 0, (int)last + 1);
-        edit_page = !page ? SOUND_LAB_MAIN : (unsigned)page <= last ? (unsigned)page : 0;
+        if (track < DRUMS && algorithm && (buttons & (1u << B_SEL))) {
+            edit_page = SOUND_LAB_EXPRESSION;
+        } else if (edit_page == SOUND_LAB_EXPRESSION) {
+            if (algorithm) edit_page = SOUND_LAB_MAIN;
+        } else {
+            int page = edit_page == SOUND_LAB_MAIN ? 0 : edit_page ? (int)edit_page : (int)last + 1;
+            page = clamp(page + algorithm, 0, (int)last + 1);
+            edit_page = !page ? SOUND_LAB_MAIN : (unsigned)page <= last ? (unsigned)page : 0;
+        }
 
     } else if (slap_ui.page == SETTINGS) {
         unsigned next = (unsigned)clamp((int)settings_section + algorithm, 0, PREF_SECTIONS - 1);
@@ -3954,7 +4032,7 @@ void app_input_only(void)
         else {
             unsigned next = (unsigned)clamp(old_patch + patch_delta, 0, SLAP_PATCHES - 1);
             if (next != (unsigned)old_patch) load_patch(slap_ui.track, next);
-            if (slap_patches[next].engine != 0u && edit_page > 1u && edit_page != SOUND_LAB_MAIN) edit_page = 1u;
+            if (slap_patches[next].engine != 0u && edit_page > 1u && edit_page < SOUND_LAB_MAIN) edit_page = 1u;
         }
     }
     int knob[4];
@@ -4064,7 +4142,26 @@ void app_input_only(void)
     } else if (slap_ui.page == PATCH) {
         unsigned t = (unsigned)slap_ui.track;
         const SlapPatch *program = t < DRUMS ? &slap_patches[tracks[t].patch] : 0;
-        if (edit_page == SOUND_LAB_MAIN) {
+        if (edit_page == SOUND_LAB_EXPRESSION && t < DRUMS) {
+            const unsigned shifted = !!(buttons & (1u << B_OCTUP));
+            uint32_t word = expression[t];
+            unsigned old_source = word & 3u;
+            if (shifted && knob[0]) {
+                unsigned source = (unsigned)clamp((int)old_source + knob[0], 0, 2);
+                if (source == 1u && !(word & ~3u))
+                    word = effective_expression(t) ? effective_expression(t) : (5u << 4) | (14u << 14);
+                word = (word & ~3u) | source;
+            }
+            for (unsigned k = shifted ? 2u : 0u; k < 4u; ++k) {
+                if (!knob[k]) continue;
+                if (!(word & ~3u)) word |= effective_expression(t);
+                unsigned shift = shifted ? 9u + k * 5u : k == 0u ? 4u : k == 1u ? 2u : k * 5u - 1u;
+                unsigned mask = !shifted && k == 1u ? 3u : 31u;
+                unsigned value = (unsigned)clamp((int)(word >> shift & mask) + knob[k], 0, mask == 3u ? 2 : 31);
+                word = ((word & ~((mask << shift) | 3u)) | (value << shift)) | 1u;
+            }
+            expression[t] = word;
+        } else if (edit_page == SOUND_LAB_MAIN) {
             slap_fx_change(t, 1, 0, knob[0]);
             slap_fx_change(t, 1, 3, knob[1]);
             if (t == DRUMS) slap_fx_change(t, 5, 0, knob[2]);
@@ -5514,9 +5611,34 @@ static void draw_panel(void)
     }
     if (slap_ui.page == PATCH) {
         cv_begin(240, 40, background);
+        if (edit_page == SOUND_LAB_EXPRESSION && selected < DRUMS) {
+            static const char *const sources[] = {"AUTO", "MANUAL", "OFF"};
+            static const char *const modes[] = {"OFF", "LEGATO", "ALWAYS"};
+            uint32_t word = effective_expression(selected);
+            cv_text(8, 1, &FONT_M, "EXPRESSION", c);
+            cv_text(165, 4, &FONT_B, sources[expression[selected] & 3u], C_WHITE);
+            cv_text(8, 27, &FONT_XS, "HOLD OCT+ FOR SOURCE / ONSET", C_WHITE);
+            cv_blit(0, 80);
+            static const char *const names[] = {"GLIDE MS", "GLIDE MODE", "VIBRATO CT", "RATE X100", "DELAY MS", "FADE MS"};
+            unsigned values[] = {(word >> 4 & 31u) * 5u, word >> 2 & 3u,
+                (word >> 9 & 31u), (word >> 9 & 31u) ? 150u + (word >> 14 & 31u) * 25u : 0u,
+                (word >> 19 & 31u) * 25u, (word >> 24 & 31u) * 25u};
+            for (unsigned row = 0; row < 3u; ++row) {
+                cv_begin(240, 40, background);
+                for (unsigned col = 0; col < 2u; ++col) {
+                    unsigned i = row * 2u + col;
+                    int x = 8 + (int)col * 116;
+                    cv_text(x, 1, &FONT_XS, names[i], c);
+                    decimal(number, values[i]);
+                    cv_text(x, 14, &FONT_B, i == 1u ? modes[values[i]] : number, C_WHITE);
+                }
+                cv_blit(0, 120 + (int)row * 40);
+            }
+            return;
+        }
         if (edit_page == SOUND_LAB_MAIN) {
             cv_text(8, 5, &FONT_B, selected == DRUMS ? "SOUND / DRUMS" : slap_engine_names[patch->engine], c);
-            cv_text(8, 25, &FONT_XS, "ALGO +1 GRAPH / PRESETS PATCH", C_WHITE);
+            cv_text(8, 25, &FONT_XS, selected < DRUMS ? "ALGO GRAPH / SEL+ALGO EXPRESSION" : "ALGO +1 GRAPH / PRESETS PATCH", C_WHITE);
             cv_blit(0, 80);
             cv_begin(240, 40, background);
             draw_sound_controls(selected, c);
@@ -6444,6 +6566,8 @@ int app_expect(const char *name, int *result)
     else if (name_matches(name, "events")) *result = (int)scheduled_events;
     else if (name_matches(name, "step")) *result = (int)positions;
     else if (name_matches(name, "arp_events")) *result = (int)arp_cursor;
+    else if (name_matches(name, "expression1")) *result = (int)expression[0];
+    else if (name_matches(name, "expression2")) *result = (int)expression[1];
     else if (name_matches(name, "arp_mode")) *result = (int)(arp_setup[0] & 255u);
     else if (name_matches(name, "arp_note")) *result = (int)arp_history[(arp_cursor - 1u) & 15u];
     else if (name_matches(name, "slot")) *result = slap_ui.slot + 1;
