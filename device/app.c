@@ -5737,7 +5737,7 @@ static void draw_panel(void)
         __builtin_memcmp(&graph, &previous_graph, sizeof graph);
     if (graph_valid) previous_graph = graph;
     const uint8_t *filter_curve = 0;
-    unsigned slice_state = 0;
+    unsigned slice_state = 0, slice_running = playing;
     SlapSlicePreview slice;
     if (slap_ui.page == FX && slap_ui.fx_page == 2) {
         slice_state = slap_fx_slicer_state(selected);
@@ -5763,12 +5763,13 @@ static void draw_panel(void)
                     unsigned hit = slap_fx_slicer_cell(selected, (unsigned)i);
                     cv_rect(8 + i * 14, 14 - offset, 12, 17, hit ? c : track_surface[selected]);
                 }
-                if (slice_state & 16u)
+                if (slice_running && (slice_state & 16u))
                     cv_rect(8 + (int)(slice_state & 15u) * 14 + (int)slice.slice_position,
                         7 - offset, 2, 26, C_WHITE);
                 if (strip == 0) cv_text(8, 0, &FONT_T, "PATTERN / PLAYHEAD", C_WHITE);
                 if (strip == 1) {
-                    const char *status = !(slice_state & 16u) ? "OFF" : (slice_state & 64u) ? "CAPTURE" :
+                    const char *status = !(slice_state & 16u) ? "OFF" : !slice_running ? "STOPPED" :
+                        (slice_state & 64u) ? "CAPTURE" :
                         (slice_state & 128u) ? "REPLAY" : (slice_state & 32u) ? "GATE OPEN" : "GATE CLOSED";
                     cv_text(8, 0, &FONT_B, status, C_WHITE);
                     cv_text(138, 3, &FONT_T, "CAPTURE BUFFER", C_WHITE);
@@ -5778,7 +5779,7 @@ static void draw_panel(void)
                 for (unsigned point = 1; point < SLAP_SLICE_PREVIEW; ++point)
                     cv_line(4 + (int)point * 4, 85 - offset - slice.wave[point - 1u] / 7,
                         8 + (int)point * 4, 85 - offset - slice.wave[point] / 7, c);
-                if (slice_state & 128u)
+                if (slice_running && (slice_state & 128u))
                     cv_rect(8 + (int)slice.replay * 4, 67 - offset, 1, 37, C_WHITE);
             } else {
                 for (unsigned i = 0; i < SLAP_FX_PLOT; ++i) {
