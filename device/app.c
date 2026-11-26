@@ -6683,6 +6683,7 @@ int app_expect(const char *name, int *result)
     else if (name_matches(name, "midi_usb")) *result = (int)midi_usb_ready;
     else if (name_matches(name, "midi_drops")) *result = (int)midi_drops;
     else if (name_matches(name, "midi_clock")) *result = !!midi_clock_period;
+    else if (name_matches(name, "background_theme")) *result = (int)background_theme;
     else if (name_matches(name, "settings_section")) *result = (int)settings_section;
     else if (name_matches(name, "knob_style")) *result = (int)knob_style;
     else if (name_matches(name, "led_active_soft")) *result = (int)led_active_soft;
