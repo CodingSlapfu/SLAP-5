@@ -106,17 +106,17 @@ jobs:
           bash vendor/fm1-base/tools/get_toolchain.sh "$RUNNER_TEMP/jieli"
           export JIELI_TOOLCHAIN="$(realpath "$RUNNER_TEMP/jieli/toolchain")"
           test "$(basename "$JIELI_TOOLCHAIN")" = jieli-linux-toolchains-20260730.1
-          export AC79_SDK="$RUNNER_TEMP/ac79"
-          if ! SDK_URL=https://gitee.com/Jieli-Tech/fw-AC79_AIoT_SDK.git timeout 140s bash vendor/fm1-base/bsp/tools/get_sdk.sh "$AC79_SDK"; then
-            export AC79_SDK="$RUNNER_TEMP/ac79-packaging"
-            tools_dir="$AC79_SDK/cpu/wl82/tools"
-            sdk_raw=https://gitee.com/Jieli-Tech/fw-AC79_AIoT_SDK/raw/d179b4484759423312073f5fbb232501aa491047/cpu/wl82/tools
-            while read -r digest file; do
-              mkdir -p "$(dirname "$tools_dir/$file")"
-              curl -fsSL --retry 2 --max-time 30 "$sdk_raw/$file" -o "$tools_dir/$file"
-              printf '%s  %s\n' "$digest" "$tools_dir/$file" | sha256sum -c -
-            done < evidence/sdk.sha256
-          fi
+          # This candidate uses neither the vendor BLE nor Wi-Fi stack.
+          grep -qx 'ble = false' device/fm1.toml
+          ! grep -Eq '^wifi[[:space:]]*=[[:space:]]*true' device/fm1.toml
+          export AC79_SDK="$RUNNER_TEMP/ac79-packaging"
+          tools_dir="$AC79_SDK/cpu/wl82/tools"
+          sdk_raw=https://raw.githubusercontent.com/amitv87/fw-AC79_AIoT_SDK/d179b4484759423312073f5fbb232501aa491047/cpu/wl82/tools
+          while read -r digest file; do
+            mkdir -p "$(dirname "$tools_dir/$file")"
+            curl -fsSL --retry 2 --max-time 30 "$sdk_raw/$file" -o "$tools_dir/$file"
+            printf '%s  %s\n' "$digest" "$tools_dir/$file" | sha256sum -c -
+          done < evidence/sdk.sha256
           git restore vendor/fm1-base/host/plat_host.c
           sh device/build-native.sh
           printf 'AC79_SDK=%s\n' "$AC79_SDK" >> "$GITHUB_ENV"
