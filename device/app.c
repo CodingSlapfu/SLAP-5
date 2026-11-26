@@ -1199,7 +1199,7 @@ static SnapshotLane snapshot_lane(unsigned track, unsigned lane)
 static void undo_recording(unsigned track)
 {
     UndoState *undo = &take_undo[track];
-    if (recording || rec_running || !undo->ready) return;
+    if (!undo->ready) return;
     undo->ready = 0;
     if (pattern_revision[track] != undo->after) return;
     monitored_next_step[track] = 0;
@@ -1291,7 +1291,7 @@ static struct {
 static unsigned clear_mode, clear_track;
 static uint32_t clear_armed_at;
 /* Foreground publishes one request. The audio callback owns pattern mutation. */
-enum { PATTERN_UNDO = 1, PATTERN_CLEAR_LOOP, PATTERN_CLEAR_TRACK, PATTERN_CLEAR_LEGACY };
+enum { PATTERN_UNDO = 1, PATTERN_CLEAR_LOOP, PATTERN_CLEAR_TRACK, PATTERN_CLEAR_LEGACY, PATTERN_LIVE = 128 };
 static volatile uint32_t pattern_action;
 
 static unsigned drum_step_locked(unsigned lane, unsigned step)
@@ -1331,11 +1331,17 @@ static void apply_generated_drums(void)
 static void apply_pattern_action(void)
 {
     uint32_t request = pattern_action;
-    if (!request || recording || rec_running) return;
+    if (!request || ((recording || rec_running) && !(request & PATTERN_LIVE))) return;
     unsigned track = request >> 8;
-    unsigned action = request & 255u;
+    unsigned action = request & (PATTERN_LIVE - 1u);
+    unsigned active_take = rec_running && track == rec_track;
+    if (active_take) {
+        for (unsigned slot = 0; slot < VOICES; ++slot) finish_record_note(slot, record_clock);
+        if (action == PATTERN_UNDO) finish_snapshot(track);
+    }
     if (action == PATTERN_UNDO) {
         undo_recording(track);
+        if (active_take) snapshot_take(track, rec_length);
     } else {
         unsigned length = action == PATTERN_CLEAR_LEGACY ? STEPS :
             action == PATTERN_CLEAR_TRACK ? LIVE_LOOP_MAX : pattern_length(tracks[track].mix);
@@ -1344,6 +1350,7 @@ static void apply_pattern_action(void)
         monitored_next_step[track] = 0;
         finish_snapshot(track);
     }
+    if (active_take) rec_begin_events = recorded_events;
     pattern_action = 0;
 }
 
@@ -1371,7 +1378,7 @@ static void confirm_clear(unsigned track, unsigned all)
     if (!pattern_action) {
         unsigned command = all ? PATTERN_CLEAR_TRACK : PATTERN_CLEAR_LOOP;
         if (all && track_has_hidden_events(track)) command = PATTERN_CLEAR_LEGACY;
-        pattern_action = (track << 8) | command;
+        pattern_action = (track << 8) | command | (!all && slap_ui.page == HOME ? PATTERN_LIVE : 0u);
     }
 }
 
@@ -2791,7 +2798,7 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
                 end_recording(record_clock + i);
                 recording = 0;
             }
-            if (pattern_action && !recording && !rec_running) {
+            if (pattern_action) {
                 apply_pattern_action();
                 for (unsigned t = 0; t < TRACKS; ++t)
                     mix[t] = (mix[t] & ~LENGTH_MASK) | (tracks[t].mix & LENGTH_MASK);
@@ -3685,6 +3692,13 @@ void app_input_only(void)
                     ++sequence_epoch;
                 }
                 recording = 0;
+            } else if (rec_running && slap_ui.page == HOME && !pattern_action) {
+                unsigned track = (unsigned)slap_ui.track;
+                if (modifiers & (1u << B_OCTDN)) {
+                    if (track == rec_track || take_undo[track].ready)
+                        pattern_action = PATTERN_LIVE | PATTERN_UNDO | track << 8;
+                    clear_mode = 0;
+                } else if (modifiers & (1u << B_OCTUP)) confirm_clear(track, 0);
             } else if (!recording && !rec_running && !pattern_action) {
                 if (modifiers & (1u << B_OCTDN)) {
                     if (take_undo[slap_ui.track].ready) pattern_action = PATTERN_UNDO | (unsigned)slap_ui.track << 8;
