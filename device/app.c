@@ -981,13 +981,14 @@ static void midi_sequence_note(unsigned track, unsigned word, unsigned delay, un
     ++midi_drops;
 }
 
-static void midi_sequence_flush(uint32_t now, unsigned pass)
+static unsigned midi_sequence_flush(uint32_t now, unsigned pass)
 {
     uint32_t options = midi_options;
     unsigned link = plat_midi_out_link();
     unsigned changed = link != midi_link || !midi_usb_ready;
     unsigned flush = changed || midi_tx_epoch != sequence_epoch || !playing ||
         (options & (MIDI_CUSTOM | MIDI_TX)) != (MIDI_CUSTOM | MIDI_TX);
+    unsigned due_on = 0;
     for (unsigned i = 0; i < sizeof midi_notes / sizeof midi_notes[0]; ++i) {
         MidiNote *note = &midi_notes[i];
         if (!note->state) continue;
@@ -1001,7 +1002,11 @@ static void midi_sequence_flush(uint32_t now, unsigned pass)
             if (midi_has_output_owner(note->channel, note->pitch, note, NKEYS) ||
                 midi_send_checked(0x8008u | address)) { note->state = 0; --midi_pending; }
         } else if (!pass && note->state == 1u && muted) { note->state = 0; --midi_pending; }
-        else if (pass && note->state == 1u && (int32_t)(now - note->on) >= 0) {
+        else if (note->state == 1u && (int32_t)(now - note->on) >= 0) {
+            if (!pass) {
+                due_on = 1;
+                continue;
+            }
             if (midi_has_output_owner(note->channel, note->pitch, note, NKEYS) ||
                 midi_send_checked(0x9009u | address | (uint32_t)note->velocity << 24))
                 note->state = 2;
@@ -1014,6 +1019,7 @@ static void midi_sequence_flush(uint32_t now, unsigned pass)
     }
     midi_link = link;
     midi_tx_epoch = sequence_epoch;
+    return due_on;
 }
 
 static void schedule_event(unsigned track, unsigned row, unsigned step, uint32_t word)
@@ -2939,10 +2945,10 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
     }
     record_clock += frames;
     // Release expired gates before clock and transport consume USB room.
-    if (midi_pending) midi_sequence_flush(record_clock, 0);
+    unsigned due_on = midi_pending && midi_sequence_flush(record_clock, 0);
     if ((midi_options & MIDI_CUSTOM) || midi_sent_run) midi_transport_out(frames);
-    if (midi_pending) midi_sequence_flush(record_clock, 1);
-    else {
+    if (due_on) midi_sequence_flush(record_clock, 1);
+    else if (!midi_pending) {
         midi_link = plat_midi_out_link();
         midi_tx_epoch = sequence_epoch;
     }
