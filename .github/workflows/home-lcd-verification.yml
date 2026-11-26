@@ -2,7 +2,7 @@ name: SLAP-5 HOME LCD verification
 on:
   push:
     branches: [slap-5-environment-recovery]
-    paths: [.github/workflows/home-lcd-verification.yml, device/app.c, device/visuals.h, device/tests/midi-live-ownership.txt, device/tests/sound-graph-audio.py, device/tests/midi-saturation.txt, device/tests/midi-tied-gates.txt]
+    paths: [.github/workflows/home-lcd-verification.yml, device/app.c, device/visuals.h, 'device/tests/**']
 permissions:
   contents: read
 jobs:
