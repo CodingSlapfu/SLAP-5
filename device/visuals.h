@@ -7,51 +7,15 @@ static void slap_wordmark(int center, int y)
     cv_text(center - text_w(&FONT_L, "SLAP-5") / 2, y, &FONT_L, "SLAP-5", C_WHITE);
 }
 
-static const char *const chroma_names[] = {
-    "CHROMA", "ACID", "PLASMA", "NEON", "EMBER", "GLACIER",
-    "SOLAR", "OCEAN", "VAPOR", "PHOSPHOR", "MONOLITH", "COSMIC"
+static const uint16_t track_color[TRACKS] = {
+    RGB(0,180,255), RGB(155,48,255), RGB(255,100,0), RGB(255,220,0), RGB(0,255,46)
 };
-
-static const uint8_t chroma_colors[][TRACKS][3] = {
-    {{0,180,255}, {155,48,255}, {255,100,0}, {255,220,0}, {0,255,46}},
-    {{190,255,0}, {65,220,30}, {245,255,105}, {0,205,170}, {255,163,36}},
-    {{182,106,255}, {255,81,230}, {255,127,160}, {139,151,255}, {103,225,255}},
-    {{22,239,255}, {255,55,183}, {159,113,255}, {253,225,39}, {90,255,179}},
-    {{255,103,74}, {255,162,46}, {255,206,112}, {244,104,156}, {216,141,104}},
-    {{94,201,255}, {163,179,255}, {139,249,248}, {218,238,255}, {107,208,176}},
-    {{255,218,45}, {255,173,43}, {255,239,147}, {210,241,103}, {255,139,116}},
-    {{0,230,197}, {96,172,255}, {127,240,255}, {100,221,164}, {160,155,255}},
-    {{255,122,174}, {163,145,255}, {104,226,236}, {255,185,137}, {177,244,214}},
-    {{118,255,119}, {191,255,134}, {68,209,160}, {229,255,163}, {95,184,102}},
-    {{232,232,232}, {168,168,168}, {255,255,255}, {202,202,202}, {140,140,140}},
-    {{167,115,255}, {116,151,255}, {216,126,243}, {93,218,255}, {201,202,255}}
+static const uint16_t track_surface[TRACKS] = {
+    RGB(0,35,73), RGB(45,20,79), RGB(77,27,5), RGB(65,53,4), RGB(10,54,30)
 };
-
-static uint16_t track_color[TRACKS], track_surface[TRACKS], track_rule[TRACKS];
-static uint16_t chroma_gradient[TRACKS][8];
-
-static void chroma_select(int index)
-{
-    chroma_theme = (unsigned)clamp(index, 0, sizeof(chroma_names) / sizeof(*chroma_names) - 1u);
-    static const uint16_t original_surface[TRACKS] = {
-        RGB(0,35,73), RGB(45,20,79), RGB(77,27,5), RGB(65,53,4), RGB(10,54,30)
-    };
-    static const uint16_t original_rule[TRACKS] = {
-        RGB(0,86,161), RGB(94,45,155), RGB(156,56,8), RGB(140,115,6), RGB(17,112,53)
-    };
-    for (unsigned t = 0; t < TRACKS; ++t) {
-        const uint8_t *color = chroma_colors[chroma_theme][t];
-        unsigned r = color[0], g = color[1], b = color[2];
-        track_color[t] = RGB(r, g, b);
-        track_surface[t] = chroma_theme ? RGB(r / 5, g / 5, b / 5) : original_surface[t];
-        track_rule[t] = chroma_theme ? RGB(r / 2, g / 2, b / 2) : original_rule[t];
-        if (chroma_theme)
-            for (unsigned band = 0; band < 8u; ++band) {
-                unsigned shade = 16u - band;
-                chroma_gradient[t][band] = RGB(r * shade / 64u, g * shade / 64u, b * shade / 64u);
-            }
-    }
-}
+static const uint16_t track_rule[TRACKS] = {
+    RGB(0,86,161), RGB(94,45,155), RGB(156,56,8), RGB(140,115,6), RGB(17,112,53)
+};
 
 static int visual_wave(unsigned phase, int amplitude)
 {
