@@ -1888,6 +1888,9 @@ static void next_step(const uint32_t *mix)
         uint32_t word = tracks[t].steps[step];
         unsigned monitored = monitored_next_step[t];
         monitored_next_step[t] = 0;
+        // A mixer mute takes effect before scheduling new sequenced voices.
+        // Existing voices and FX tails retain their normal release behavior.
+        if (mix[t] & (1u << 24)) continue;
         if (t < DRUMS) {
             if (!(monitored & 1u)) schedule_event(t, pattern_row(t, 0), step, word);
             for (unsigned lane = 1; lane < MELODIC_LANES; ++lane)
@@ -4527,20 +4530,21 @@ static void draw_home_sequences(void)
             cv_blit(190, lane_y + 5);
             continue;
         }
-        cv_begin(240, 35, C_BLACK);
+        cv_begin(240, 35, track_surface[t]);
         if (focused) {
             uint16_t outline = pulse ? color : track_rule[t];
-            cv_rect(5, 0, 231, 34, outline);
+            cv_rect(5, 0, 231, 35, outline);
             if (chroma_theme) {
                 for (unsigned band = 0; band < 8u; ++band)
                     cv_rect(28, 1 + (int)band * 4, 207, 4, chroma_gradient[t][band]);
             } else cv_rect(28, 1, 207, 32, track_surface[t]);
         }
-        cv_rect(5, 0, 24, 34, focused && pulse ? color : track_rule[t]);
-        if (focused) cv_rect(5, 0, 2, 34, color);
+        cv_rect(5, 0, 24, 35, focused && pulse ? color : track_rule[t]);
+        if (focused) cv_rect(5, 0, 2, 35, color);
         decimal(number, t + 1u);
-        cv_text(12, 9, &FONT_B, number, focused && pulse ? C_BLACK : C_WHITE);
-        cv_text(34, 0, text_w(&FONT_B, name) <= 148 ? &FONT_B : &FONT_S, name, C_WHITE);
+        cv_text(17 - text_w(&FONT_M, number) / 2, 6, &FONT_M, number, focused && pulse ? C_BLACK : C_WHITE);
+        cv_text(34, 0, text_w(&FONT_M, name) <= 148 ? &FONT_M :
+            text_w(&FONT_B, name) <= 148 ? &FONT_B : &FONT_S, name, C_WHITE);
         cv_rect(190, 5, 44, 7, track_surface[t]);
         draw_home_meter(190, 5, meter, peak, color);
         int playhead = run ? 58 : 34;
@@ -4554,9 +4558,9 @@ static void draw_home_sequences(void)
             if (++grid_index == length) grid_index = 0;
             int x = origin + col * 12;
             int start = clamp(x, 34, 226), end = clamp(x + 11, 34, 226);
-            if (end > start) cv_rect(start, 17, end - start, 17, track_surface[t]);
+            if (end > start) cv_rect(start, 22, end - start, 12, track_surface[t]);
             if (!(index & 3u) && x >= 34 && x < 225)
-                cv_rect(x, 17, (index & 15u) ? 1 : 2, 17, track_rule[t]);
+                cv_rect(x, 22, (index & 15u) ? 1 : 2, 12, track_rule[t]);
         }
         unsigned base = RATE * 15u / bpm;
         unsigned swing_samples = base * swing / 200u;
@@ -4572,7 +4576,7 @@ static void draw_home_sequences(void)
                 unsigned span = index & 1u ? base - swing_samples : base + swing_samples;
                 unsigned gate = duration ? duration * NOTE_DURATION_UNIT : span * ((word >> 16) & 255u) / 192u;
                 int x = origin + col * 12 + (int)(timing * 12u / 16u);
-                int y = 31 - (int)((word & NOTES) % 12u);
+                int y = 32 - (int)(((word & NOTES) % 12u) * 10u / 11u);
                 int width = held_note_width(gate, index, base, span * timing / 16u) * 12 / 14;
                 uint16_t ink = color;
                 unsigned id = 1u + row * STEPS + index;
@@ -4583,7 +4587,7 @@ static void draw_home_sequences(void)
             }
             if (++index == length) index = 0;
         }
-        if (run) cv_rect(playhead, 17, 1, 17, C_WHITE);
+        if (run) cv_rect(playhead, 22, 1, 12, C_WHITE);
         cv_blit(0, lane_y);
     }
     if (redraw_footer) {
