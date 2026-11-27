@@ -2815,6 +2815,18 @@ static float startup_sound(void)
            0.19f * slap_sine(startup_phase * 2.0f));
 }
 
+static float silent_decay(float coefficient, unsigned frames)
+{
+    float factor = 1.0f;
+    float power = 1.0f - coefficient;
+    while (frames) {
+        if (frames & 1u) factor *= power;
+        power *= power;
+        frames >>= 1;
+    }
+    return factor;
+}
+
 void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
 {
     uint32_t audio_started = plat_ticks24();
@@ -3103,13 +3115,21 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
             sleeping_mix = 0;
             unsigned signal_tracks = voice_span_tracks | effect_mask | low_filter_mask | high_filter_mask;
             if (scope_track < TRACKS) signal_tracks |= 1u << scope_track;
+            float envelope_decay = 0.0f, meter_decay = 0.0f;
             for (unsigned t = 0; t < TRACKS; ++t) {
-                if ((signal_tracks & (1u << t)) || mixer_gain[t] != 1.0f ||
+                if ((signal_tracks & (1u << t)) || mixer_gain[t] != 1.0f || gain_goal[t] != 1.0f ||
                     (t < DRUMS && (duck_depth[t] > 0.0f || duck_amount[t] > 0.0f))) continue;
                 if (mixer_envelope[t] < 0.0000001f && energy_smooth[t] < 0.0000001f) {
                     mixer_envelope[t] = energy_smooth[t] = 0.0f;
-                    sleeping_mix |= 1u << t;
+                } else {
+                    if (envelope_decay == 0.0f) {
+                        envelope_decay = silent_decay(0.00018f, batch_end - i);
+                        meter_decay = silent_decay(0.0015f, batch_end - i);
+                    }
+                    mixer_envelope[t] *= envelope_decay;
+                    energy_smooth[t] *= meter_decay;
                 }
+                sleeping_mix |= 1u << t;
             }
             mix_count = 0;
             for (unsigned t = 0; t < TRACKS; ++t)
