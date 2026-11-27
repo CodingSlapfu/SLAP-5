@@ -1,5 +1,15 @@
 # SLAP-5 environment recovery
 
+## v0.1.46 experimental firmware
+
+Application `e5e7f371a13f74dcee242a806962df61ffed7cea`. Firmware `FM-1_75000146`. [Qualification and acceptance matrix](evidence/qualification-0.1.46.md). [Verified release and live installer audit](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45932228132).
+
+- [Installer](https://codingslapfu.github.io/SLAP-5/flash-testing.html), [standalone firmware](https://github.com/CodingSlapfu/SLAP-5/releases/download/v0.1.46-hardware-testing/SLAP-5-0.1.46.fwsc), [engineering backup](https://github.com/CodingSlapfu/SLAP-5/releases/download/v0.1.46-hardware-testing/SLAP-5-0.1.46-engineering-backup.tar.gz), [framebuffer comparison](https://github.com/CodingSlapfu/SLAP-5/releases/download/v0.1.46-hardware-testing/SLAP-5-0.1.46-HOME-before-after.png).
+- Firmware SHA-256 `2c295b18f69a93e8064cfd55fccd300445b54d8131dfdd433177c9920ff993a5`. Engineering backup SHA-256 `f0d781d820ee24b715cf2cfe4fa12d7f1dc29d5623e5a78f5fcea049945f68be`.
+- FX holds its live state on Core 0 and uses less repeated coefficient and ring math. The mixer skips inactive-track scans inside the sample loop. Physical JUNGLE deadlines and peak lag remain open.
+- Black CHROMA, 12/14 px utility glyphs, full-size dials, updated orbit/tilt and loop metering, and MIXER SELECT-shift controls are included. Keep v0.1.45 available as rollback.
+
+
 ## v0.1.45 experimental firmware
 
 Application `e6c3f7498d64c0763ceaab10bb1f9fa5d4e844eb`. Firmware identity `FM-1_75000145`. [Acceptance matrix and physical test procedure](evidence/qualification-0.1.45.md). [Verified release and served installer](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45903088951).
