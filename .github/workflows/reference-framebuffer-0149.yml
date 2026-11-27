@@ -9,13 +9,25 @@ permissions:
 jobs:
   reference:
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 8
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
       - name: Compare exact-source rendered pixels with the pinned reference
         run: |
-          gh run download 45964624868 --repo "$GITHUB_REPOSITORY" --name SLAP-5-0.1.49-engineering-checkpoint-unpublished --dir "$RUNNER_TEMP/verified"
+          for attempt in $(seq 1 40); do
+            run="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/qualification-0149.yml/runs?head_sha=$GITHUB_SHA" --jq '.workflow_runs[0].id // empty')"
+            if [ -n "$run" ]; then
+              state="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq '.status + ":" + (.conclusion // "")')"
+              case "$state" in
+                completed:success) break ;;
+                completed:*) echo "Native qualification $run ended with $state"; exit 1 ;;
+              esac
+            fi
+            sleep 8
+          done
+          test "${state:-}" = completed:success
+          gh run download "$run" --repo "$GITHUB_REPOSITORY" --name SLAP-5-0.1.49-engineering-checkpoint-unpublished --dir "$RUNNER_TEMP/verified"
           (cd "$RUNNER_TEMP/verified" && sha256sum -c SHA256SUMS-0.1.49)
           python3 -m venv "$RUNNER_TEMP/python"
           "$RUNNER_TEMP/python/bin/pip" install Pillow==11.3.0
