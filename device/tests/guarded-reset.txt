@@ -1,0 +1,34 @@
+wait 6100
+tap SEQ
+key w2 down
+key w2 up
+expect pitch >0
+tap HOME
+press OCT-
+press REC
+wait 600
+release REC
+release OCT-
+tap SEQ
+expect pitch >0
+tap HOME
+press REC
+press OCT-
+wait 1800
+shot guarded-clear.png
+wait 300
+release OCT-
+release REC
+tap SEQ
+expect pitch -1
+tap HOME
+turn K4 60
+expect swing 60
+press OCT+
+press REC
+wait 5100
+release REC
+release OCT+
+expect swing 0
+expect tempo 112
+expect playing 0

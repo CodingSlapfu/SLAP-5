@@ -118,6 +118,7 @@ static const char *const rec_quant_labels[] = {
 };
 static unsigned rec_track, rec_length, rec_start_mode, rec_quant_setting, rec_overwrite, rec_loop;
 static unsigned rec_pressed_at, rec_gesture;
+static unsigned reset_chord, reset_track, reset_since, reset_countdown, pending_octave;
 static volatile unsigned rec_follow_track, quick_wait_note;
 static uint32_t edit_pressed_at, glo_pressed_at;
 static unsigned edit_pending, glo_pending;
@@ -477,6 +478,27 @@ static unsigned knob_style;
 static unsigned header_valid, graph_valid, home_idle_valid;
 static volatile unsigned split_keys;
 
+static void set_song_defaults(void)
+{
+    for (unsigned t = 0; t < DRUMS; ++t)
+        arp_setup[t] = ARP_DEFAULT;
+    expression_seen = 0;
+    for (unsigned t = 0; t < DRUMS; ++t) expression[t] = 0;
+    arp_cursor = arp_wait = arp_pulse = 0;
+    for (unsigned i = 0; i < 16; ++i) arp_history[i] = 255;
+    for (unsigned t = 0; t < DRUMS; ++t) tracks[t].lfo = 31u << 8;
+    for (unsigned t = 0; t < TRACKS; ++t) {
+        tracks[t].mix = 16u | (128u << 8) | ((t == DRUMS ? 196u : 170u) << 16);
+        mixer_proc[t] = 255;
+        mixer_gain[t] = mix_share_gain[t] = 1.0f;
+        if (t < DRUMS) duck_amount[t] = 0.0f;
+    }
+    static const uint8_t defaults[] = {67, 0, 78, 37};
+    for (unsigned t = 0; t < DRUMS; ++t)
+        load_patch(t, defaults[t]);
+    tracks[DRUMS].patch = DRUM_LEGACY_KITS;
+}
+
 void app_init(void)
 {
     uint32_t settings[5];
@@ -568,23 +590,7 @@ void app_init(void)
     plat_cpu2_set(getenv("SLAP_TEST_SINGLE_CORE") == 0);
 #endif
 #endif
-    for (unsigned t = 0; t < DRUMS; ++t)
-        arp_setup[t] = ARP_DEFAULT;
-    expression_seen = 0;
-    for (unsigned t = 0; t < DRUMS; ++t) expression[t] = 0;
-    arp_cursor = arp_wait = arp_pulse = 0;
-    for (unsigned i = 0; i < 16; ++i) arp_history[i] = 255;
-    for (unsigned t = 0; t < DRUMS; ++t) tracks[t].lfo = 31u << 8;
-    for (unsigned t = 0; t < TRACKS; ++t) {
-        tracks[t].mix = 16u | (128u << 8) | ((t == DRUMS ? 196u : 170u) << 16);
-        mixer_proc[t] = 255;
-        mixer_gain[t] = mix_share_gain[t] = 1.0f;
-        if (t < DRUMS) duck_amount[t] = 0.0f;
-    }
-    static const uint8_t defaults[] = {67, 0, 78, 37};
-    for (unsigned t = 0; t < DRUMS; ++t)
-        load_patch(t, defaults[t]);
-    tracks[DRUMS].patch = DRUM_LEGACY_KITS;
+    set_song_defaults();
 }
 
 static float slap_sine(float phase) { return fm_sinf(phase * 6.2831853f); }
@@ -1376,7 +1382,7 @@ static unsigned clear_mode, clear_track;
 static uint32_t clear_armed_at;
 static volatile uint32_t live_edit_at, live_edit_notice;
 /* Foreground publishes one request. The audio callback owns pattern mutation. */
-enum { PATTERN_UNDO = 1, PATTERN_CLEAR_LOOP, PATTERN_CLEAR_TRACK, PATTERN_CLEAR_LEGACY, PATTERN_LIVE = 128 };
+enum { PATTERN_UNDO = 1, PATTERN_CLEAR_LOOP, PATTERN_CLEAR_TRACK, PATTERN_CLEAR_LEGACY, PATTERN_RESET_SONG, PATTERN_LIVE = 128 };
 static volatile uint32_t pattern_action;
 
 static unsigned drum_step_locked(unsigned lane, unsigned step)
@@ -1419,6 +1425,29 @@ static void apply_pattern_action(void)
     if (!request || ((recording || rec_running) && !(request & PATTERN_LIVE))) return;
     unsigned track = request >> 8;
     unsigned action = request & (PATTERN_LIVE - 1u);
+    if (action == PATTERN_RESET_SONG) {
+        playing = recording = 0;
+        for (unsigned slot = 0; slot < VOICES; ++slot)
+            finish_record_note(slot, record_clock);
+        for (unsigned t = 0; t < TRACKS; ++t) {
+            clear_events(t, STEPS);
+            take_undo[t].ready = 0;
+            monitored_next_step[t] = 0;
+            tracks[t].harmony = 0;
+            if (t < DRUMS) mixer_duck[t] = 0;
+            performance_filter[t] = 0;
+        }
+        performance_filter[TRACKS] = 0;
+        drum_filters = mixer_solo = live_fx_word = 0;
+        tempo = 112;
+        swing = 0;
+        slap_fx_init();
+        set_song_defaults();
+        ++sequence_epoch;
+        ++project_epoch;
+        pattern_action = 0;
+        return;
+    }
     unsigned active_take = rec_running && track == rec_track;
     if (active_take) {
         for (unsigned slot = 0; slot < VOICES; ++slot) finish_record_note(slot, record_clock);
@@ -3946,6 +3975,45 @@ void app_input_only(void)
                         slap_ui.lane && (buttons & (1u << B_SEL)));
         rec_pressed_at = plat_ms();
     }
+    const unsigned track_clear = 1u << B_OCTDN, song_reset = 1u << B_OCTUP;
+    const unsigned octave_buttons = track_clear | song_reset;
+    unsigned held_octave = buttons & octave_buttons;
+    if (slap_ui.page == HOME) {
+        pending_octave |= pressed & octave_buttons;
+        pressed &= ~octave_buttons;
+        if ((buttons & rec_button) && (held_octave == track_clear || held_octave == song_reset) && !reset_chord) {
+            reset_chord = held_octave;
+            reset_track = slap_ui.track;
+            reset_since = gesture_now;
+            rec_gesture = 0;
+            pending_octave = 0;
+        }
+        if (reset_chord && reset_chord != octave_buttons) {
+            unsigned duration = reset_chord == track_clear ? 2000u : 5000u;
+            unsigned elapsed = gesture_now - reset_since;
+            if (!(buttons & rec_button) || held_octave != reset_chord || reset_track != (unsigned)slap_ui.track) {
+                // Keep deliberate legacy tap gestures, but cancel an abandoned hold.
+                if ((buttons & rec_button) && !held_octave && elapsed < 350u)
+                    pressed |= reset_chord;
+                reset_chord = octave_buttons;
+            } else if (elapsed >= duration) {
+                if (!pattern_action) {
+                    unsigned action = reset_chord == track_clear ? PATTERN_CLEAR_LEGACY : PATTERN_RESET_SONG;
+                    pattern_action = PATTERN_LIVE | (reset_track << 8) | action;
+                }
+                reset_chord = octave_buttons;
+            }
+            reset_countdown = reset_chord == octave_buttons ? 0u :
+                (duration - elapsed + 999u) / 1000u | (reset_chord == song_reset ? 8u : 0u);
+        }
+        if (!reset_chord && !(buttons & rec_button)) {
+            pressed |= pending_octave & ~held_octave;
+            pending_octave &= held_octave;
+        }
+        if (!(buttons & (rec_button | octave_buttons))) reset_chord = pending_octave = 0;
+    } else {
+        reset_chord = pending_octave = reset_countdown = 0;
+    }
     if (slap_ui.page == HOME && (buttons & rec_button)) {
         unsigned modifiers = pressed & ((1u << B_OCTDN) | (1u << B_OCTUP) | (1u << B_SEL) | (1u << B_ARP));
         if (modifiers) {
@@ -4900,6 +4968,7 @@ static void draw_home_sequences(void)
     unsigned full = !home_idle_valid;
     unsigned notice = clear_mode == 1u ? (clear_track + 1u) | 32u :
         plat_ms() - live_edit_at < 1200u ? live_edit_notice : 0u;
+    if (reset_countdown) notice = 64u | reset_countdown;
     unsigned redraw_header = full || last_bar != bar || last_bpm != bpm ||
         last_battery != battery || last_notice != notice || last_status != status || last_beat != beat ||
         last_mix != selected_mix;
@@ -4924,7 +4993,12 @@ static void draw_home_sequences(void)
         cv_text(145, 5, &FONT_T, "BPM", 0xad55);
         cv_text(169, 0, &FONT_M, number, C_WHITE);
         char label[] = { 'T', (char)('0' + (notice & 7u)), 0 };
-        if (notice) {
+        if (notice & 64u) {
+            char prompt[16] = "CLEAR TRACK 0S";
+            if (notice & 8u) __builtin_memcpy(prompt, "RESET SONG  0S", sizeof prompt - 1u);
+            prompt[12] = (char)('0' + (notice & 7u));
+            cv_text(93, 14, &FONT_T, prompt, C_WHITE);
+        } else if (notice) {
             cv_text(94, 0, &FONT_XS, notice & 32u ? "CLEAR?" : notice & 8u ? "UNDO" : "CLEARED", C_WHITE);
             cv_text(211, 0, &FONT_XS, label, C_WHITE);
         } else {
