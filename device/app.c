@@ -4881,9 +4881,9 @@ static void draw_performance_knob(int x, const char *label, const char *value, i
         value_font = &FONT_T;
         width = text_w(value_font, value);
     }
-    int center = x + (external ? 16 : 30);
+    int center = x + (external && !expanded ? 16 : 30);
     int cy = expanded ? 20 : 13;
-    int radius = expanded && !external ? 20 : 13;
+    int radius = expanded ? 20 : 13;
     int body = radius - 4;
     unsigned step = (unsigned)(clamp(position, -100, 100) + 100) * 24u / 200u;
     int bipolar = (label[0] == 'P' && label[1] == 'A' && label[2] == 'N' && !label[3]) ||
@@ -4900,7 +4900,7 @@ static void draw_performance_knob(int x, const char *label, const char *value, i
         uint16_t face = digital ? (theme == KNOB_NEON ? 0x08a7 : 0x1084) :
             row < -body / 2 ? (studio ? 0xbe18 : 0x528a) :
             row < body / 3 ? (studio ? 0x7bcf : 0x2945) : (studio ? 0x4a69 : 0x18c3);
-        uint16_t bevel = row < 0 ? (studio ? 0xef7d : 0x526b) : 0x1082;
+        uint16_t bevel = row < 0 ? (studio ? 0xef7d : digital ? 0x2948 : 0x526b) : 0x1082;
         cv_rect(center - half, cy + row, 2 * half + 1, 1, bevel);
         if (half > 2)
             cv_rect(center - half + 1, cy + row, 2 * half - 1, 1, face);
@@ -4929,7 +4929,7 @@ static void draw_performance_knob(int x, const char *label, const char *value, i
         cv_line(center + arc[step][0] * (body - 5) / 127, cy + arc[step][1] * (body - 5) / 127,
                 center + arc[step][0] * body / 127, cy + arc[step][1] * body / 127, color);
     cv_rect(center + arc[step][0] * radius / 127, cy + arc[step][1] * radius / 127, 2, 2, C_WHITE);
-    int value_x = external ? x + 58 - width : center - width / 2;
+    int value_x = external && !expanded ? x + 58 - width : center - width / 2;
     int value_y = cy - (int)value_font->h / 2;
     cv_text(value_x + 1, value_y + 1, value_font, value, C_BLACK);
     cv_text(value_x, value_y, value_font, value, C_WHITE);
@@ -5193,7 +5193,7 @@ static void draw_home_sequences(void)
         for (const char *p = full_name; *p && n < 8u; ++p)
             if (size <= 8u || *p != ' ') name[n++] = *p;
         name[n] = 0;
-        draw_signature_name(name, name_ink[t], 143, 3, 17);
+        draw_signature_name(name, name_ink[t], 124, 3, 16);
         if (run) {
             cv_rect(playhead - 1, 0, 3, 32, home_shade(name_ink[t], 22));
             for (int dot = 0; dot < 25; dot += 5)
