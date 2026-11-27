@@ -2954,7 +2954,7 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
 #ifdef PLAT_HOST
     unsigned fx_batch_end = 0, fx_mask = 0;
     if (host_legacy_fx_worker && !fx_worker_cooldown && !voice_recovery_jobs && !measure_fx &&
-        (active_effects & (active_effects - 1u)) && plat_cpu2_on())
+        (effect_mask & (effect_mask - 1u)) && plat_cpu2_on())
         fx_mask = select_fx_worker_tracks();
     if (fx_worker_cooldown) --fx_worker_cooldown;
 #endif
@@ -4741,8 +4741,10 @@ static void draw_performance_knob(int x, const char *label, const char *value, i
     unsigned step = (unsigned)(clamp(position, -100, 100) + 100) * 24u / 200u;
     int bipolar = (label[0] == 'P' && label[1] == 'A' && label[2] == 'N' && !label[3]) ||
         (slap_ui.page == MIXER && x >= 120);
-    cv_text(x + (60 - text_w(label_font, label)) / 2,
-            expanded ? 40 : 27, label_font, label, color);
+    const int label_x = x + (60 - text_w(label_font, label)) / 2;
+    const int label_y = expanded ? 40 : 27;
+    cv_text(label_x + 1, label_y + 1, label_font, label, 0x18c3);
+    cv_text(label_x, label_y, label_font, label, expanded ? C_WHITE : color);
     if (width > (expanded ? 32 : 24)) {
         cv_text(x + (60 - width) / 2, 1, value_font, value, C_WHITE);
         cv_rect(x + 4, 22, 52, 3, 0x3186);
@@ -4774,6 +4776,8 @@ static void draw_performance_knob(int x, const char *label, const char *value, i
         }
         if (!expanded) cv_text(x + 35 + (24 - width) / 2, 7, value_font, value, C_WHITE);
     } else {
+        cv_rect(center - width / 2 - 2, cy - 8, width + 4, 17, knob_style == KNOB_NEON ? 0x08a7 : 0x1084);
+        cv_text(center - width / 2 + 1, cy - 6, value_font, value, C_BLACK);
         cv_text(center - width / 2, cy - 7, value_font, value, C_WHITE);
     }
 
@@ -4788,10 +4792,10 @@ static void draw_performance_knob(int x, const char *label, const char *value, i
         uint16_t ink = tick == step ? C_WHITE :
             tick >= low && tick <= high ? color :
             bipolar && tick == origin ? 0xa514 : 0x39e7;
-        cv_rect(px, py, digital ? 2 : 1, 2, ink);
+        cv_rect(px, py, digital ? 2 : 1, knob_style == KNOB_SEGMENTED ? 3 : 2, ink);
         if (digital && tick >= low && tick <= high)
             cv_rect(center + visual_wave(angle + 256u, radius - 2),
-                    cy + visual_wave(angle, radius - 2), 1, 1, knob_style == KNOB_NEON ? 0xfcb4 : color);
+                    cy + visual_wave(angle, radius - 2), 1, 1, knob_style == KNOB_NEON ? 0x5fff : color);
     }
     if (!digital) {
         unsigned angle = 384u + (unsigned)(clamp(position, -100, 100) + 100) * 768u / 200u;
@@ -4801,7 +4805,10 @@ static void draw_performance_knob(int x, const char *label, const char *value, i
         int py = cy + visual_wave(angle, pointer);
         cv_line(center + visual_wave(angle + 256u, inner), cy + visual_wave(angle, inner), px, py, color);
         cv_rect(px, py, 2, 2, C_WHITE);
-        if (expanded) cv_text(center - width / 2, cy - 7, value_font, value, C_WHITE);
+        if (expanded) {
+            cv_text(center - width / 2 + 1, cy - 6, value_font, value, C_BLACK);
+            cv_text(center - width / 2, cy - 7, value_font, value, C_WHITE);
+        }
     }
 }
 
@@ -4921,10 +4928,10 @@ static void draw_home_sequences(void)
             cv_text(94, 0, &FONT_XS, notice & 32u ? "CLEAR?" : notice & 8u ? "UNDO" : "CLEARED", C_WHITE);
             cv_text(211, 0, &FONT_XS, label, C_WHITE);
         } else {
-            cv_text(94, 0, &FONT_XS, "USB", status & 1u ? C_WHITE : 0x9cd3);
-            cv_text(117, 0, &FONT_XS, "IN", status & 2u ? 0x8ff3 : 0x9cd3);
-            cv_text(94, 10, &FONT_XS, "OUT", status & 4u ? 0x8ff3 : 0x9cd3);
-            cv_text(119, 14, &FONT_T, "EDIT 1S MIXER", C_WHITE);
+            cv_text(93, 0, &FONT_XS, "USB", status & 1u ? C_WHITE : 0x9cd3);
+            cv_text(114, 0, &FONT_XS, "IN", status & 2u ? 0x8ff3 : 0x9cd3);
+            cv_text(128, 0, &FONT_XS, "OUT", status & 4u ? 0x8ff3 : 0x9cd3);
+            cv_text(93, 14, &FONT_T, "EDIT 1S MIXER", C_WHITE);
         }
         if (battery_status >= 0 && battery_status < 4) {
             const uint16_t battery_ink = 0xfd20;
@@ -5028,6 +5035,7 @@ static void draw_home_sequences(void)
                 unsigned id = 1u + row * STEPS + index;
                 for (unsigned v = 0; v < count; ++v)
                     if (active[v] == id) { ink = C_WHITE; break; }
+                if (beat_flash && x <= playhead && x + width > playhead) ink = C_WHITE;
                 int start = clamp(x, 2, 232), end = clamp(x + (width > 2 ? width : 2), 2, 232);
                 if (end > start) cv_rect(start, y, end - start, 3, ink);
             }
@@ -5041,7 +5049,7 @@ static void draw_home_sequences(void)
         for (const char *p = full_name; *p && n < 8u; ++p)
             if (size <= 8u || *p != ' ') name[n++] = *p;
         name[n] = 0;
-        draw_signature_name(name, name_ink[t], 218, 4, 22);
+        draw_signature_name(name, name_ink[t], 174, 6, 18);
         if (run) {
             cv_rect(playhead - 1, 0, 3, 32, home_shade(name_ink[t], 22));
             for (int dot = 0; dot < 32; dot += 5)
@@ -5337,7 +5345,7 @@ static void draw_panel(void)
         case PREF_AUDIO:
             labels[0] = "OUTPUT"; labels[1] = "LISTENING"; labels[2] = "AUTO LEVEL"; labels[3] = "AUTO MIX";
             decimal(level, 100u - output_trim * 20u);
-            values[0] = level; values[1] = speaker_mode ? "FM-1 SPEAKER" : "HEADPHONES / AUDIO OUT";
+            values[0] = level; values[1] = speaker_mode ? "FM-1 SPEAKER" : "HEADPHONES";
             values[2] = auto_level_off ? "OFF" : "ON"; values[3] = auto_mix ? "ON" : "OFF";
             break;
         case PREF_METRO:
