@@ -28,7 +28,7 @@ jobs:
           s = p.read_text()
           assert s.count("static uint32_t blits;") == s.count("    blits++;") == 1
           s = s.replace("static uint32_t blits;", "static uint32_t blits, meter_blits;\nstatic unsigned long long blit_pixels;")
-          s = s.replace("    blits++;", "    blits++;\n    blit_pixels += w * h;\n    if (w == 8 && (h == 30 || h == 31)) ++meter_blits;")
+          s = s.replace("    blits++;", "    blits++;\n    blit_pixels += w * h;\n    if (w == 8 && (h == 25 || h == 30 || h == 31)) ++meter_blits;")
           mark = '    printf("host: %u ms simulated'
           assert s.count(mark) == 1
           s = s.replace(mark, '    printf("LCD_PIXELS %llu METER_BLITS %u\\n", blit_pixels, meter_blits);\n' + mark)
@@ -76,7 +76,7 @@ jobs:
                   with Image.open(root / "candidate" / image.name) as capture:
                       assert capture.size == (240, 240), image.name
                       # The bottom row of every lane is painted, including the gutter.
-                      for y in (64, 95, 126, 157, 187):
+                      for y in (82, 107, 132, 157, 182):
                           assert capture.convert("RGB").getpixel((2, y)) != (0, 0, 0), (image.name, y)
               assert pixels[1] < pixels[0]
               print("60 full-height LOOPER lane captures. Pixels avoided:", pixels[0] - pixels[1])
