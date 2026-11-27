@@ -1,5 +1,15 @@
 # SLAP-5 environment recovery
 
+## v0.1.47 experimental firmware
+
+Application `64b528982d45b01ab4da2fd094d5352b71798ac8`. Identity `FM-1_75000147`. [Qualification, acceptance matrix and owner retest](evidence/qualification-0.1.47.md). [Verified package and live installer audit](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45936534502).
+
+- [Installer](https://codingslapfu.github.io/SLAP-5/flash-testing.html), [firmware](https://github.com/CodingSlapfu/SLAP-5/releases/download/v0.1.47-hardware-testing/SLAP-5-0.1.47.fwsc), [engineering backup](https://github.com/CodingSlapfu/SLAP-5/releases/download/v0.1.47-hardware-testing/SLAP-5-0.1.47-engineering-backup.tar.gz), [HOME comparison](https://github.com/CodingSlapfu/SLAP-5/releases/download/v0.1.47-hardware-testing/SLAP-5-0.1.47-HOME-before-after.png).
+- Firmware SHA-256 `e9b284de383d387d5a5116d1210fde4a265d19211838fd6194824003ff226235`. Backup SHA-256 `453753205fac500311d5a4e149528ce438225328163a67f9385cea69dff12044`.
+- Sustained native DSP load can shift eligible work to Core 1 and reclaim an already quiet release tail. The handoff, Core 0 FX ownership and 16 voice slots remain intact. Physical headroom and the actual JUNGLE peak remain open.
+- HOME and MIXER separate full-size knob labels, shared BAR/LOOP rendering covers Digital VU, and SETTINGS uses the HOME glyphs. Direct MIXER mappings are LEVEL, DUCK, ALL and TRK. Hold SELECT for K2 source; ARP toggles SOLO. v0.1.46 remains the immediate rollback.
+
+
 ## v0.1.46 experimental firmware
 
 Application `e5e7f371a13f74dcee242a806962df61ffed7cea`. Firmware `FM-1_75000146`. [Qualification and acceptance matrix](evidence/qualification-0.1.46.md). [Verified release and live installer audit](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45932228132).
