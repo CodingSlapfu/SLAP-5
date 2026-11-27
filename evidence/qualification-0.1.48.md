@@ -66,3 +66,7 @@ The [release workflow](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45942
 | HOME comparison | `accd55d3e0c16d39bc0b6e8c8ae94ad38de83ba284f06a10c694aa8f4ece33f8` |
 
 [Experimental installer](https://codingslapfu.github.io/SLAP-5/flash-testing-0.1.48.html) · [Website](https://codingslapfu.github.io/SLAP-5/#v0148) · [Release and assets](https://github.com/CodingSlapfu/SLAP-5/releases/tag/v0.1.48-hardware-testing). The primary installer remains on its prior v0.1.18 testing distribution. Verified Pages staging revision: `5f4b80fbe25d881650ce78803a3956c9a950a7ec`. Prior Pages revision: `a10a62a54be2b1f8e4fb2c1492d868e625966e68`.
+
+The [expanded Pages verification](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45942938917) confirmed the live primary installer HTML and its linked v0.1.18 checksum, the v0.1.48 installer and firmware checksum, and all hosted images byte-for-byte at Pages revision `efa956451c0fb77bc730b4e72320b678179b4bdd`. The gallery includes eight SETTINGS panels, four MIXER knob styles, and three visualizers. Desktop/mobile layout checks of the deployed landing page and continuous animation evidence remain open.
+
+The published candidate has a migration edge case for legacy hit-only key lighting: changing brightness can leave idle white keys dark until reboot. The persisted group levels reload correctly. Hardware brightness and appearance still require the FM-1 check.
