@@ -1,0 +1,35 @@
+wait 6100
+expect length 16
+tap PLAY
+wait 1250
+expect step >7
+shot progress-home-16.png
+tap PLAY
+turn K2 1
+expect length 32
+tap PLAY
+wait 2480
+expect step >15
+shot progress-home-32.png
+tap PLAY
+turn K2 1
+expect length 64
+turn ALGO 43
+expect tempo 155
+turn K4 60
+expect swing 60
+tap PLAY
+wait 3440
+expect step >30
+shot progress-home-64.png
+tap HOME
+expect page 6
+turn SELECT 4
+wait 150
+shot progress-digital-vu-64.png
+tap HOME
+expect page 0
+expect playing 1
+expect length 64
+tap PLAY
+expect playing 0

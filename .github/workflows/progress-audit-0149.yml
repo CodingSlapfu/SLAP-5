@@ -1,0 +1,26 @@
+name: SLAP-5 transport progress capture matrix
+on:
+  push:
+    branches: [slap-5-environment-recovery]
+    paths: ['.github/workflows/progress-audit-0149.yml','device/tests/transport-progress.txt']
+permissions:
+  contents: read
+jobs:
+  progress:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify 16, 32 and 64-step playback and capture both progress displays
+        run: |
+          python3 -m venv "$RUNNER_TEMP/python"
+          source "$RUNNER_TEMP/python/bin/activate"
+          pip install Pillow==11.3.0 fonttools==4.59.2
+          python3 vendor/fm1-base/tools/build.py device --host
+          mkdir "$RUNNER_TEMP/progress"
+          device/build/host/slap-5_host device/tests/transport-progress.txt "$RUNNER_TEMP/progress"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HOME-and-Digital-VU-progress-matrix
+          path: ${{ runner.temp }}/progress
+          if-no-files-found: error
