@@ -32,3 +32,13 @@ release OCT+
 expect swing 0
 expect tempo 112
 expect playing 0
+press OCT-
+press OCT+
+press REC
+wait 5200
+release REC
+release OCT-
+release OCT+
+expect page 0
+expect recording 0
+expect playing 0

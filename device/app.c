@@ -3991,7 +3991,10 @@ void app_input_only(void)
     if (slap_ui.page == HOME) {
         pending_octave |= pressed & octave_buttons;
         pressed &= ~octave_buttons;
-        if ((buttons & rec_button) && (held_octave == track_clear || held_octave == song_reset) && !reset_chord) {
+        if ((buttons & rec_button) && held_octave == octave_buttons) {
+            reset_chord = octave_buttons;
+            pending_octave = reset_countdown = rec_gesture = 0;
+        } else if ((buttons & rec_button) && held_octave && !reset_chord) {
             reset_chord = held_octave;
             reset_track = slap_ui.track;
             reset_since = gesture_now;
