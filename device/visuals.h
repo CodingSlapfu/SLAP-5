@@ -63,15 +63,16 @@ static void dancer_draw(unsigned time)
         energy += track_energy[track] + note_activity[track] * 2u;
     unsigned active = playing;
     unsigned accent = playing && dancer_reactivity && energy > 12u;
-    unsigned cycle = ((positions & 31u) * 15u + step_progress) / 16u;
+    unsigned beat_phase = (positions & 31u) * 14u + step_progress;
+    unsigned subdiv = dancer_pattern ? 2u : 1u;
+    unsigned cycle = beat_phase / (56u / subdiv);
+    unsigned bass_accent = dancer_reactivity && note_activity[0] > 10u && track_energy[0] > 4u;
     unsigned recovery = time / 260u % 10u;
-    unsigned pose = active ? (cycle * (1u + dancer_lighting) + dancer_pattern * 8u +
-        note_activity[1] / 8u + note_activity[3] / 12u) % 24u :
+    unsigned pose = active ? (cycle * (dancer_pattern == 2u ? 2u : 1u) + bass_accent) % 24u :
         24u + (recovery <= 5u ? recovery : 10u - recovery);
     unsigned light_track = ((positions >> 2) + dancer_pattern) % TRACKS;
-    int amplitude = dancer_outline ? 9 : 3;
-    if (dancer_reactivity) amplitude += (int)((track_energy[0] + track_energy[2]) / 44u);
-    int sway = active ? visual_wave(time * (dancer_pattern + 2u), amplitude) : visual_wave(time * 2u, 1);
+    int amplitude = dancer_outline ? 2 + (int)bass_accent : 0;
+    int sway = active ? visual_wave(beat_phase * 9u, amplitude) : visual_wave(time * 2u, 1);
     unsigned now = plat_ms();
     static unsigned started, prior_bucket, prior_pose, previous_pose, was_active, last_draw;
     static int prior_sway, previous_sway;
@@ -105,7 +106,7 @@ static void dancer_draw(unsigned time)
     int trail_first = dancer_first_rows[previous_pose];
     for (int sy = 0; sy < 240; sy += 40) {
         cv_begin(240, 40, C_BLACK);
-        if (accent) {
+        if (accent && dancer_lighting) {
             int spread = 16 + (int)(active ? note_activity[DRUMS] / 2u : 3u);
             int sweep = visual_wave(time * 3u, 28);
             cv_line(38, 9 - sy, 120 - spread + sweep, 218 - sy, track_rule[light_track]);

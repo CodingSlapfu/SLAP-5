@@ -87,6 +87,7 @@ static const uint8_t lane_pitch[DRUM_LANES] = {36,38,42,37,39,49,35,40,46,44,45,
 #include "drum_patterns.h"
 static unsigned gen_style, gen_hit = 76, gen_groove = 35, gen_var = 28;
 static unsigned gen_bars;
+static volatile uint8_t pending_steps[TRACKS];
 static unsigned gen_enabled = 1, gen_confirm;
 static volatile unsigned gen_count, gen_queued;
 static volatile uint32_t gen_applied_at;
@@ -1393,6 +1394,22 @@ static unsigned drum_step_locked(unsigned lane, unsigned step)
         (drum_step_locks[lane][step / 32u] & (1u << (step & 31u)));
 }
 
+static void apply_step_lengths(uint32_t now, uint32_t *mix)
+{
+    for (unsigned t = 0; t < TRACKS; ++t) {
+        unsigned length = pending_steps[t];
+        if (!length) continue;
+        pending_steps[t] = 0;
+        if (recording && rec_track == t) {
+            if (rec_running)
+                for (unsigned slot = 0; slot < VOICES; ++slot) finish_record_note(slot, now);
+            rec_length = length;
+        }
+        track_setting(t, 0, length);
+        mix[t] = (mix[t] & ~LENGTH_MASK) | (tracks[t].mix & LENGTH_MASK);
+    }
+}
+
 static void apply_generated_drums(void)
 {
     if (!gen_queued) return;
@@ -1509,7 +1526,7 @@ static void confirm_clear(unsigned track, unsigned all)
 static void begin_recording(void)
 {
     unsigned track = rec_track;
-    snapshot_take(track, rec_length);
+    snapshot_take(track, rec_loop && rec_length < LIVE_LOOP_MAX ? LIVE_LOOP_MAX : rec_length);
     if (rec_overwrite) clear_events(track, rec_length);
     track_setting(track, 0, rec_length);
     rec_begin_events = recorded_events;
@@ -2973,6 +2990,7 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
     if (!recording) rec_countdown = midi_count_in_substep = 0;
     if (!playing) {
         apply_pattern_action();
+        apply_step_lengths(record_clock, mix);
         apply_generated_drums();
     }
     if (recording && playing && rec_loop && !rec_start_mode && !rec_running && !quick_wait_note)
@@ -3071,6 +3089,7 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
                 for (unsigned t = 0; t < TRACKS; ++t)
                     mix[t] = (mix[t] & ~LENGTH_MASK) | (tracks[t].mix & LENGTH_MASK);
             }
+            if (!(step_number & 15u)) apply_step_lengths(record_clock + i, mix);
             if (!recording || rec_running) {
                 if (!(step_number & 15u) && gen_queued) {
                     apply_generated_drums();
@@ -4145,7 +4164,8 @@ void app_input_only(void)
     if (pressed & (1u << B_SEQ)) {
         if (slap_ui.page == SEQ && slap_ui.track == DRUMS) {
             slap_ui.page = GEN_DRUMS;
-            gen_bars = (unsigned)clamp((int)((pattern_length(tracks[DRUMS].mix) + 15u) / 16u), 1, 4);
+            unsigned steps = pattern_length(tracks[DRUMS].mix);
+            gen_bars = steps <= 16u ? 1u : steps <= 32u ? 2u : 4u;
             gen_confirm = 0;
         } else {
             slap_ui.page = SEQ;
@@ -4393,7 +4413,10 @@ void app_input_only(void)
         gen_hit = (unsigned)clamp((int)gen_hit + knob[1], 0, 100);
         if (buttons & (1u << B_OCTUP))
             gen_groove = (unsigned)clamp((int)gen_groove + knob[2], 0, 100);
-        else gen_bars = (unsigned)clamp((int)gen_bars + knob[2], 1, 4);
+        else if (knob[2]) {
+            int length_index = gen_bars <= 1u ? 0 : gen_bars <= 2u ? 1 : 2;
+            gen_bars = 1u << clamp(length_index + knob[2], 0, 2);
+        }
         gen_var = (unsigned)clamp((int)gen_var + knob[3], 0, 100);
         if (pressed & (1u << B_ARP)) gen_enabled ^= 1u;
         if ((pressed & (1u << B_SEL)) && !knob[2]) generate_drums();
@@ -4625,13 +4648,16 @@ void app_input_only(void)
         tracks[slap_ui.track].envelope = env;
     } else if (slap_ui.page == HOME) {
         if (knob[0]) track_setting(slap_ui.track, 16, level_after_turn((mix >> 16) & 255u, knob[0]));
-        if (knob[1] && !recording && !rec_running) {
-            unsigned old_length = pattern_length(mix);
+        if (knob[1]) {
+            unsigned old_length = pending_steps[slap_ui.track];
+            if (!old_length) old_length = pattern_length(mix);
             int index = old_length <= 16u ? 0 : old_length <= 32u ? 1 : 2;
             if (old_length == 16u || old_length == 32u || old_length == 64u)
                 index = clamp(index + knob[1], 0, 2);
-            if (old_length <= 64u || knob[1] < 0)
-                track_setting(slap_ui.track, 0, 16u << index);
+            if (old_length <= 64u || knob[1] < 0) {
+                if (playing || recording || rec_running) pending_steps[slap_ui.track] = 16u << index;
+                else track_setting(slap_ui.track, 0, 16u << index);
+            }
         }
         if (knob[2]) track_setting(slap_ui.track, 8, pan_after_turn((mix >> 8) & 255u, knob[2]));
         swing = (unsigned)clamp((int)swing + knob[3], 0, 70);
@@ -4986,24 +5012,12 @@ static void draw_signature_name(const char *name, uint16_t ink, unsigned limit, 
                     int left = (int)((x + start) * scale >> 8);
                     int right = (int)((x + end) * scale >> 8);
                     if (right > left)
-                        cv_rect(6 + left + !pass * 2, y + (int)(row * height / 22u) + !pass * 2, right - left, 1,
+                        cv_rect(6 + left + !pass * 2, y + (int)(row * height / 22u) + !pass * 3, right - left, 1,
                                 pass ? ink : BLACK_CHROMA);
                 }
             }
             x += glyph->width + 1u;
         }
-    }
-}
-
-static void draw_home_headline(int x, const char *label, unsigned width)
-{
-    unsigned original = (unsigned)text_w(&FONT_L, label);
-    cv_text(x, -3, &FONT_L, label, C_WHITE);
-    if (!original || original >= width) return;
-    for (unsigned y = 0; y < 25u; ++y) {
-        uint16_t *line = cv_px + y * cv_w + (unsigned)x;
-        for (unsigned px = width; px-- > 0;)
-            line[px] = line[px * original / width];
     }
 }
 
@@ -5056,11 +5070,11 @@ static void draw_home_sequences(void)
     if (redraw_header) {
         cv_begin(240, 44, header);
         decimal(number, bpm);
-        draw_home_headline(3, "LOOPER", 111);
-        unsigned tempo_width = bpm >= 100u ? 46u : 32u;
+        cv_text(3, -3, &FONT_L, "LOOPER", C_WHITE);
+        unsigned tempo_width = (unsigned)text_w(&FONT_L, number);
         int tempo_x = 237 - (int)tempo_width;
         cv_text(tempo_x - text_w(&FONT_B, "BPM") - 3, 9, &FONT_B, "BPM", 0xad55);
-        draw_home_headline(tempo_x, number, tempo_width);
+        cv_text(tempo_x, -3, &FONT_L, number, C_WHITE);
         cv_text(3, 25, &FONT_B, "USB", status & 1u ? C_WHITE : 0x9cd3);
         cv_text(41, 25, &FONT_B, "IN", status & 2u ? 0x8ff3 : 0x9cd3);
         cv_text(66, 25, &FONT_B, "OUT", status & 4u ? 0x8ff3 : 0x9cd3);
@@ -5074,14 +5088,15 @@ static void draw_home_sequences(void)
             hint = notice & 32u ? "CLEAR?" : notice & 8u ? "UNDO" : "CLEARED";
         }
         cv_text(237 - text_w(&FONT_B, hint), 25, &FONT_B, hint, C_WHITE);
-        if (battery_status >= 0 && battery_status < 4) {
-            const uint16_t battery_ink = 0xfd20;
-            int x = 117;
+        {
+            const uint16_t battery_ink = battery_status < 0 || battery_status >= 4 ? 0x9cf3 : 0xfd20;
+            int x = 7 + text_w(&FONT_L, "LOOPER");
             cv_rect(x, 4, 10, 19, battery_ink);
             cv_rect(x + 2, 2, 6, 2, battery_ink);
             cv_rect(x + 1, 5, 8, 17, header);
-            for (int cell = 0; cell < battery_status; ++cell)
+            for (int cell = 0; cell < battery_status && battery_status < 4; ++cell)
                 cv_rect(x + 2, 18 - cell * 5, 6, 4, battery_ink);
+            if (battery_status < 0 || battery_status >= 4) cv_rect(x + 3, 13, 4, 1, battery_ink);
         }
         cv_blit(0, 0);
     }
@@ -5145,7 +5160,7 @@ static void draw_home_sequences(void)
                     home_shade(base_ink[t], (unsigned)clamp(20 + (int)(pulse + rise) * 2, 0, 32)));
         }
         cv_rect(0, 0, 232, 1, color);
-        int playhead = run ? 166 : 4;
+        int playhead = 134;
         int origin = playhead - (int)cursor;
         int first_column = run ? -10 : 0;
         int wrapped_column = ((int)first + first_column) % (int)length;
@@ -5175,12 +5190,12 @@ static void draw_home_sequences(void)
                 int x = origin + col * 12 + (int)(timing * 12u / 16u);
                 int y = 22 - (int)(((word & NOTES) % 12u) * 19u / 11u);
                 int width = held_note_width(gate, index, base, span * timing / 16u) * 12 / 14;
-                uint16_t ink = color;
+                uint16_t ink = t == 2u ? 0xff30 : color;
                 unsigned id = 1u + row * STEPS + index;
                 for (unsigned v = 0; v < count; ++v)
                     if (active[v] == id) { ink = C_WHITE; break; }
                 if (beat_flash && x <= playhead && x + width > playhead) ink = C_WHITE;
-                int start = clamp(x, 2, 232), end = clamp(x + (width > 2 ? width : 2), 2, 232);
+                int start = clamp(x, 134, 232), end = clamp(x + (width > 2 ? width : 2), 134, 232);
                 if (end > start) cv_rect(start, y, end - start, 3, ink);
             }
             if (++index == length) index = 0;
@@ -5195,9 +5210,8 @@ static void draw_home_sequences(void)
         name[n] = 0;
         draw_signature_name(name, name_ink[t], 124, 3, 16);
         if (run) {
-            cv_rect(playhead - 1, 0, 3, 32, home_shade(name_ink[t], 22));
-            for (int dot = 0; dot < 25; dot += 5)
-                cv_rect(playhead, dot, 1, 2, beat_flash ? C_WHITE : 0xbdf7);
+            for (int dash = 0; dash < 24; dash += 7)
+                cv_rect(playhead, dash, 1, 4, beat_flash ? C_WHITE : 0x7bef);
             if (!t) {
                 cv_rect(playhead - 3, 1, 7, 1, C_WHITE);
                 cv_rect(playhead - 2, 2, 5, 1, C_WHITE);
@@ -5205,6 +5219,7 @@ static void draw_home_sequences(void)
             }
         }
         draw_home_meter(232, 0, meter, peak, color);
+        cv_rect(0, 24, 240, 1, C_BLACK);
         cv_blit(0, lane_y);
     }
     if (redraw_footer) {

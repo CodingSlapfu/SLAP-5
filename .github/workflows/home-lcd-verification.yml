@@ -76,8 +76,9 @@ jobs:
                   with Image.open(root / "candidate" / image.name) as capture:
                       assert capture.size == (240, 240), image.name
                       # The bottom row of every lane is painted, including the gutter.
-                      for y in (82, 107, 132, 157, 182):
+                      for y in (81, 106, 131, 156, 181):
                           assert capture.convert("RGB").getpixel((2, y)) != (0, 0, 0), (image.name, y)
+                      assert capture.convert("RGB").getpixel((2, y + 1)) == (0, 0, 0), (image.name, y + 1)
               assert pixels[1] < pixels[0]
               print("60 full-height LOOPER lane captures. Pixels avoided:", pixels[0] - pixels[1])
               gallery = Path(os.environ["RUNNER_TEMP"]) / "looper-captures"
