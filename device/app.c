@@ -5287,10 +5287,10 @@ static void draw_panel(void)
             group = slap_fx_value(selected, 1, 0) | slap_fx_value(selected, 1, 3) << 8 |
                 decay << 16 | slap_fx_value(selected, 8, 0) << 24;
         }
-        unsigned animated = selected < DRUMS && edit_page == SOUND_LAB_MAIN && track_energy[selected] > 2u;
+        unsigned animated = edit_page == SOUND_LAB_MAIN && track_energy[selected] > 2u;
         if (!animated && browser_valid && selected == browser_track && patch == browser_patch &&
             group == browser_group && tempo == browser_tempo && edit_page == browser_page) return;
-        browser_valid = 1;
+        browser_valid = !animated;
         browser_track = selected; browser_patch = patch; browser_group = group; browser_tempo = tempo; browser_page = edit_page;
     } else browser_valid = 0;
 
@@ -5913,7 +5913,7 @@ static void draw_panel(void)
                 if (selected < DRUMS && patch->engine == 0u) {
                     uint32_t config = track_timbre[selected];
                     draw_fm_routing(selected, graph_fm_algorithm(patch, config), config, c, y - 156);
-                } else if (selected < DRUMS) {
+                } else {
                     cv_rect(8, 30, 224, 1, track_rule[selected]);
                     for (unsigned i = 1; i < SLAP_FX_PLOT; ++i)
                         cv_line(5 + (int)i * 3, 65 - (y - 160) - visible_scope(selected, i - 1u) / 2,
