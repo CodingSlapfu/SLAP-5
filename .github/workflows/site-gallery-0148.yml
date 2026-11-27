@@ -34,7 +34,7 @@ jobs:
           asset=SLAP-5-0.1.48-framebuffer.zip
           gh release download v0.1.48-hardware-testing --repo "$GITHUB_REPOSITORY" --pattern "$asset" --dir "$RUNNER_TEMP"
           printf '%s  %s\n' aaaf1fb1f46cbad8d2dd6fd0cf2c28c96d71169ed40e8065b8217fae4960caa1 "$RUNNER_TEMP/$asset" | sha256sum -c -
-          unzip -j -o "$RUNNER_TEMP/$asset" 'knob-*.png' gravity-rings.png solar-system.png digital-vu.png -d "$RUNNER_TEMP/captures"
+          unzip -j -o "$RUNNER_TEMP/$asset" knob-analog-classic.png knob-analog-studio.png knob-digital-neon.png knob-digital-segmented.png gravity-rings.png solar-system.png digital-vu.png -d "$RUNNER_TEMP/captures"
           python3 - <<'PY'
           import os
           from pathlib import Path
