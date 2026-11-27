@@ -25,3 +25,18 @@ The [historical archive through v0.1.48](https://github.com/CodingSlapfu/SLAP-5/
 The Dancer afterimage now samples rendered pose and position, holds in place, then fades. Under DSP pressure it uses sparser scanlines. Leaving and re-entering the visualizer resets the trail after a frame gap.
 
 The drum Sound Lab uses the same visible audio snapshot as melodic live-signal pages, with an idle redraw when activity stops.
+
+## Verified engineering package and website preview
+
+| Resource | v0.1.48 | v0.1.49 | Delta |
+| --- | ---: | ---: | ---: |
+| Application flash | 576,856 B | 577,776 B | +920 B |
+| Static RAM | 87,992 B | 88,056 B | +64 B |
+| Memory pool | 335,208 B | 335,208 B | 0 B |
+
+[Native package, rollback and framebuffer checks](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45956039967) · [Host LCD and worker regressions](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45955978342) · [Studio/browser regressions](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45956107948).
+
+- [Engineering package and visual comparison](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45956039967/artifacts/15178946600). Firmware SHA-256 `b84455e7a6d85c3b802e1b0f3d0dbd97ddbfb6e76f0d11c24e6575a03144fe35`; backup SHA-256 `d8aad43463657fd27bcb4a41bafe084beee62fbfeb8fcbe519d1e3272d50e59a`. The package includes a 480×240 paired HOME comparison with the pinned SVG on the left and the host framebuffer on the right, plus captures of all four HOME and MIXER knob themes and the live drum Sound Lab.
+- [Current-only website and Studio preview](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45956107778/artifacts/15178587685). [Preview audit](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45956107778) checked mobile and desktop landing/install layouts, gallery URLs, installer metadata and package digest, and Studio. It contains one firmware package. The Pages branch remains at `efa956451c0fb77bc730b4e72320b678179b4bdd`. Deployment, cleanup, and physical flashing await release acceptance.
+
+The HOME comparison is engineering evidence. Full alignment of proportions, type hierarchy and dial geometry with the reference remains open. The six original handoff knob PNGs were not available for inspection in this session. Global design audit, guarded REC reset gestures, remaining transport boundaries, drum dynamics, Dancer control overlays, wider compatibility tests and complete firmware comparison remain open. Release promotion requires both the physical test and resolution of the remaining release acceptance items.
