@@ -100,7 +100,7 @@ jobs:
           tap FX
           turn SELECT -4
           turn ALGO -8
-          expect fx_page 0
+          expect fx_page 1
           turn K1 50
           expect fx_k1 50
           turn K2 8
