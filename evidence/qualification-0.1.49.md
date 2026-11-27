@@ -1,6 +1,6 @@
 # SLAP-5 v0.1.49 engineering qualification
 
-Source checkpoint: `25ad8641165374df42911969157fff8a7260e46d`. Candidate identity: `FM-1_75000149`. Public promotion is gated on physical playback across pages and the remaining release acceptance items in Issue #8.
+Source checkpoint: `7fd92a81fc5f684d0aa591de8e7e59114d36ced1`. Candidate identity: `FM-1_75000149`. Public promotion is gated on physical playback across pages and the remaining release acceptance items in Issue #8.
 
 ## Audio and UI scheduling
 
@@ -17,3 +17,9 @@ The platform exposes a coarse battery gauge. Its USB-powered state does not prov
 ## Owner physical test
 
 Use an untouched copy of the saved five-track JUNGLE project. Start from a cold boot at 155 BPM and 60% swing. Observe equal windows at HOME, Sound Lab entry and live graph on OCTAVE SUB, FX pages with the same wet chain, MIXER and visualizers. Capture GLOBAL, Core 1, DISPATCH, spike, and DMA summaries with frame cadence, overhead and page transitions. Repeat with recording and overdub. The public gate requires clean audio, productive Core 1, zero new deadline misses or DMA XRUNs, and peak callback below 5,804 µs with headroom. Host captures and package audits do not answer this test.
+
+## Historical recovery
+
+The [historical archive through v0.1.48](https://github.com/CodingSlapfu/SLAP-5/releases/tag/historical-firmware-through-0.1.48) contains 122 assets across 33 releases and the complete Pages tree at `efa956451c0fb77bc730b4e72320b678179b4bdd`. [Archive audit](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45952474629) re-downloaded and extracted the published archive, verified the nested checksum manifest, and ran loader rollback and interruption simulations. Archive SHA-256: `cd3c24eccc7dba13899a56af482af723b6bdc23df429d9ea6e35183181d6a67a`. The site and Studio deployment are pending the public qualification gate.
+
+The Dancer afterimage now samples rendered pose and position, holds in place, then fades. Under DSP pressure it uses sparser scanlines. Leaving and re-entering the visualizer resets the trail after a frame gap.

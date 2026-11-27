@@ -14,11 +14,11 @@ jobs:
     timeout-minutes: 12
     env:
       GH_TOKEN: ${{ github.token }}
-      CHECKPOINT: 25ad8641165374df42911969157fff8a7260e46d
+      CHECKPOINT: 7fd92a81fc5f684d0aa591de8e7e59114d36ced1
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 25ad8641165374df42911969157fff8a7260e46d
+          ref: 7fd92a81fc5f684d0aa591de8e7e59114d36ced1
       - name: Build and audit the versioned native package
         run: |
           python3 -m venv "$RUNNER_TEMP/slap-python"
