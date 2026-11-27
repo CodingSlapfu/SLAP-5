@@ -1,3 +1,14 @@
+# SLAP-5 next build
+
+## v0.1.54 resource recovery and remaining work
+
+- The native packed image uses 565,172 of 581,564 bytes. The v0.1.53 image used 580,032 bytes. Startup expands the 15,508-byte load records into 30,368 bytes of executable RAM and initialized data. The round-trip and flash-only decoder linkage checks passed. Static RAM remains 88,104 of 98,304 bytes. The pool remains 335,208 of 344,064 bytes. The 64 KiB flash and pool and 16 KiB RAM goals remain open.
+- Start the next resource pass from the linked ELF section and symbol report in the verified backup. Measure each large reservation before changing it. Prioritize a sparse or packed in-memory sequencer and undo representation with exact round-trip coverage of the legacy 512-step drum data, fine timing, long melodic notes, held recordings and schema-13 projects. Keep on-disk serialization compatible. Prove simultaneous FX operation and full release tails before overlaying delay, chorus, reverb or rollback storage. Relocate losslessly encoded assets only after verifying resource-region ownership, migration, OTA boundaries and power-loss recovery.
+- The native firmware package and host checks provide no new FM-1 audio timing evidence. The reported VHS SAW / DEEP DUB overload remains open. First collect matched on-device callback and DMA traces from the original session, including wet FX, SLICER, recording and visible animation. Compare v0.1.53 and v0.1.54 with identical settings. Use the traces to choose one processing change and require bitwise comparison or defined PCM tolerances where appropriate.
+- The four persistent knob themes and the v0.1.53 ROLE generator carry over. Reference-based LCD redesign and expanded generator coverage remain open. Compare the seven original references against real-size RGB565 captures, then qualify all styles and roles on four melodic tracks through generation, editing, save/load and undo. Do not interpret the existing gallery as a new redesign.
+
+---
+
 # SLAP-5 v0.1.50 testing and next build
 
 This testing sprint preserves the existing primary release and the owner's positive v0.1.49 project creation, FX and save report. Physical JUNGLE quantitative qualification remains open.

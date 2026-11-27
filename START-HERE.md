@@ -1,5 +1,9 @@
 # SLAP-5 environment recovery
 
+## v0.1.54 hardware-testing checkpoint
+
+Source `1239f4a2b0bdf16b7415c5849a09d5e22fd16786`, identity `FM-1_75000154`. [Direct installer](https://codingslapfu.github.io/SLAP-5/flash-testing-0.1.54.html) · [Matching Studio](https://codingslapfu.github.io/SLAP-5/testing-0.1.54/studio.html) · [Qualification and remaining work](evidence/qualification-0.1.54.md) · [Staged public promotion and rollback](PROMOTE-0.1.54.md). The public release remains active pending explicit owner acceptance.
+
 ## v0.1.49 engineering checkpoint
 
 Current application source `52205e50319090a6ca5e252eb84f220ba776076e`. [Engineering package](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45968164469/artifacts/15183872891) and [matching single-release site audit](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45968164511). The public installer and recovery archive remain in service while software acceptance stays open.
