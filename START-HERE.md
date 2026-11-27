@@ -1,5 +1,13 @@
 # SLAP-5 environment recovery
 
+## v0.1.48 experimental FM-1 candidate
+
+Source `4e405ddaecc740254a7ca33dca1641f581c23120`. Identity `FM-1_75000148`. [Qualification and FM-1 acceptance procedure](evidence/qualification-0.1.48.md). [Exact-source native packaging, rollback and deployed installer](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45942568719).
+
+- [Experimental installer](https://codingslapfu.github.io/SLAP-5/flash-testing-0.1.48.html) · [Release and engineering backup](https://github.com/CodingSlapfu/SLAP-5/releases/tag/v0.1.48-hardware-testing) · [HOME comparison](https://github.com/CodingSlapfu/SLAP-5/releases/download/v0.1.48-hardware-testing/SLAP-5-0.1.48-HOME-before-after.png).
+- Firmware SHA-256 `9bcf3b342c0e376ab831e6439683c53a78390020cb6d352f7aa7eb248cb97fbe`. Backup SHA-256 `8faf8a267d2804487fc46b5e6ce226c26dbccb237320bda0f748119fef4f6247`.
+- Main promotion requires documented owner FM-1 JUNGLE acceptance. Keep an untouched legacy project for rollback. The candidate package and site revision can be audited independently.
+
 ## v0.1.47 experimental firmware
 
 Application `64b528982d45b01ab4da2fd094d5352b71798ac8`. Identity `FM-1_75000147`. [Qualification, acceptance matrix and owner retest](evidence/qualification-0.1.47.md). [Verified package and live installer audit](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45936534502).

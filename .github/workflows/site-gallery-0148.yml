@@ -1,0 +1,103 @@
+name: SLAP-5 v0.1.48 website gallery and installer audit
+on:
+  push:
+    branches: [slap-5-environment-recovery]
+    paths: ['.github/workflows/site-gallery-0148.yml']
+permissions:
+  contents: write
+  pages: write
+jobs:
+  gallery:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 4e405ddaecc740254a7ca33dca1641f581c23120
+      - name: Capture settings from the candidate source
+        run: |
+          python3 -m venv "$RUNNER_TEMP/python"
+          source "$RUNNER_TEMP/python/bin/activate"
+          pip install Pillow==11.3.0 fonttools==4.59.2
+          python3 vendor/fm1-base/tools/build.py device --host
+          mkdir "$RUNNER_TEMP/captures"
+          {
+            printf '%s\n' 'wait 6100' 'tap GLO' 'expect page 15'
+            for page in $(seq 0 7); do
+              if [ "$page" -gt 0 ]; then printf '%s\n' 'turn ALGO 1'; fi
+              printf 'expect settings_section %s\nshot settings-%s.png\n' "$page" "$page"
+            done
+          } > "$RUNNER_TEMP/gallery.txt"
+          device/build/host/slap-5_host "$RUNNER_TEMP/gallery.txt" "$RUNNER_TEMP/captures"
+          asset=SLAP-5-0.1.48-framebuffer.zip
+          gh release download v0.1.48-hardware-testing --repo "$GITHUB_REPOSITORY" --pattern "$asset" --dir "$RUNNER_TEMP"
+          printf '%s  %s\n' aaaf1fb1f46cbad8d2dd6fd0cf2c28c96d71169ed40e8065b8217fae4960caa1 "$RUNNER_TEMP/$asset" | sha256sum -c -
+          unzip -j -o "$RUNNER_TEMP/$asset" 'knob-*.png' gravity-rings.png solar-system.png digital-vu.png -d "$RUNNER_TEMP/captures"
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          from PIL import Image
+          for path in (Path(os.environ["RUNNER_TEMP"]) / "captures").glob("*.png"):
+              with Image.open(path) as source:
+                  assert source.size == (240, 240), path
+          PY
+      - name: Expand the website gallery
+        run: |
+          git fetch --no-tags origin gh-pages
+          git worktree add --detach "$RUNNER_TEMP/pages" FETCH_HEAD
+          cd "$RUNNER_TEMP/pages"
+          git diff --exit-code a10a62a54be2b1f8e4fb2c1492d868e625966e68 HEAD -- flash.html
+          cp "$RUNNER_TEMP/captures/"*.png screens/v0.1.48/
+          python3 - <<'PY'
+          from html import escape
+          from pathlib import Path
+
+          page = Path("index.html")
+          site = page.read_text()
+          anchor = "<p>Native-resolution captures from the firmware’s host renderer.</p>"
+          assert site.count(anchor) == 1
+          folder = Path("screens/v0.1.48")
+          groups = [
+              ("Settings", [(p, "SETTINGS page " + str(i + 1)) for i, p in enumerate(sorted(folder.glob("settings-*.png")))]),
+              ("Knob styles", [(p, p.stem.removeprefix("knob-").replace("-", " ").title()) for p in sorted(folder.glob("knob-*.png"))]),
+              ("Visualizers", [(folder / file, label) for file, label in (
+                  ("gravity-rings.png", "Gravity Rings"), ("solar-system.png", "Solar System"),
+                  ("digital-vu.png", "Digital VU"))]),
+          ]
+          sections = []
+          for label, items in groups:
+              assert items
+              figures = []
+              for path, caption in items:
+                  assert path.is_file()
+                  caption = escape(caption)
+                  figures.append(f'<figure><img width="240" height="240" style="max-width:100%;height:auto;image-rendering:pixelated" loading="lazy" src="{path.as_posix()}" alt="{caption} firmware framebuffer"><figcaption>{caption}</figcaption></figure>')
+              sections.append(f'<details><summary>{label}</summary><div style="display:flex;flex-wrap:wrap;gap:1rem">{"".join(figures)}</div></details>')
+          page.write_text(site.replace(anchor, anchor + "\n      " + "\n      ".join(sections)))
+          PY
+          git add index.html screens/v0.1.48
+          git -c user.name=github-actions -c user.email=github-actions@users.noreply.github.com commit -m 'Add candidate Settings, knob and visualizer framebuffers'
+          git push origin HEAD:refs/heads/gh-pages
+          gh api --method POST "repos/$GITHUB_REPOSITORY/pages/builds" || echo 'Pages request deferred'
+      - name: Verify both published installers and all new images
+        run: |
+          base=https://codingslapfu.github.io/SLAP-5
+          for attempt in $(seq 1 24); do
+            if curl -fsSL --max-time 15 "$base/?verify=$GITHUB_RUN_ID-$attempt" -o "$RUNNER_TEMP/live.html" &&
+              grep -Fq 'settings-7.png' "$RUNNER_TEMP/live.html"; then break; fi
+            sleep 8
+          done
+          grep -Fq 'settings-7.png' "$RUNNER_TEMP/live.html"
+          curl -fsSL "$base/flash.html" -o "$RUNNER_TEMP/main.html"
+          cmp "$RUNNER_TEMP/main.html" "$RUNNER_TEMP/pages/flash.html"
+          curl -fsSL https://github.com/CodingSlapfu/SLAP-5/releases/download/v0.1.18-testing/SLAP-5-0.1.18.fwsc -o "$RUNNER_TEMP/main.fwsc"
+          printf '%s  %s\n' 7b617de2c653e0507eeec342a1564d479b8dee9f4271da421910ef1889170c7e "$RUNNER_TEMP/main.fwsc" | sha256sum -c -
+          curl -fsSL "$base/flash-testing-0.1.48.html" | grep 'flash-0.1.48.js'
+          curl -fsSL "$base/SLAP-5-0.1.48.fwsc" -o "$RUNNER_TEMP/candidate.fwsc"
+          printf '%s  %s\n' 9bcf3b342c0e376ab831e6439683c53a78390020cb6d352f7aa7eb248cb97fbe "$RUNNER_TEMP/candidate.fwsc" | sha256sum -c -
+          for frame in "$RUNNER_TEMP/pages/screens/v0.1.48/"*.png; do
+            curl -fsSL "$base/screens/v0.1.48/${frame##*/}" -o "$RUNNER_TEMP/frame.png"
+            cmp "$frame" "$RUNNER_TEMP/frame.png"
+          done

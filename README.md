@@ -2,7 +2,7 @@
 
 SLAP-5 is an original five-track groovebox for the M-VAVE FM-1. Copyright (C) 2026 Ziao.
 
-**Development branch.** The public installer and recovery links are listed on [SLAP FLASH](https://slap-5.jminie66.chatgpt.site/flash). The [v0.1.21 hardware-testing release](https://github.com/CodingSlapfu/SLAP-5/releases/tag/v0.1.21-hardware-testing) is the owner-tested audio baseline for this branch. Check the engineering record before flashing a newer package.
+**Development branch.** See the [official SLAP-5 site](https://codingslapfu.github.io/SLAP-5/) for controls, native-resolution firmware screenshots and the primary download. [v0.1.48 experimental installer](https://codingslapfu.github.io/SLAP-5/flash-testing-0.1.48.html) and [qualification record](evidence/qualification-0.1.48.md). Main promotion awaits the FM-1 JUNGLE audio test.
 
 ## Performance controls
 
