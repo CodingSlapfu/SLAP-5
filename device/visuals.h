@@ -72,23 +72,31 @@ static void dancer_draw(unsigned time)
     int amplitude = dancer_outline ? 9 : 3;
     if (dancer_reactivity) amplitude += (int)((track_energy[0] + track_energy[2]) / 44u);
     int sway = active ? visual_wave(time * (dancer_pattern + 2u), amplitude) : visual_wave(time * 2u, 1);
-    static unsigned started, prior_bucket, prior_pose, previous_pose, was_active;
-    if (!active || !was_active) {
+    static unsigned started, prior_bucket, prior_pose, previous_pose, was_active, last_draw;
+    static int prior_sway, previous_sway;
+    if (!active || !was_active || time - last_draw > 250u) {
         started = time;
         prior_pose = previous_pose = pose;
+        prior_sway = previous_sway = sway;
         prior_bucket = time / 500u;
     }
     was_active = active;
+    last_draw = time;
     unsigned bucket = time / 500u;
     if (bucket != prior_bucket) {
         previous_pose = prior_pose;
+        previous_sway = prior_sway;
         prior_pose = pose;
+        prior_sway = sway;
         prior_bucket = bucket;
     }
     unsigned trail_phase = (time - started) % 5000u;
-    const uint8_t *trail = active && !dsp_pressure && trail_phase < 2500u ? dancer_frames[previous_pose] : 0;
-    int spread_trail = trail_phase < 2000u ? 12 : 12 + (int)(trail_phase - 2000u) / 8;
-    if (light_track & 1u) spread_trail = -spread_trail;
+    unsigned opacity = trail_phase < 2000u ? 24u : trail_phase < 3400u ?
+        (3400u - trail_phase) * 24u / 1400u : 0u;
+    const uint16_t hue = track_color[light_track];
+    const uint16_t trail_ink = (uint16_t)((((hue >> 11) * opacity >> 5) << 11) |
+        (((hue >> 5 & 63u) * opacity >> 5) << 5) | ((hue & 31u) * opacity >> 5));
+    const uint8_t *trail = active && trail_ink ? dancer_frames[previous_pose] : 0;
     const uint8_t *span = dancer_frames[pose];
     enum { DANCER_LIFT = 14 };
     int source_row = 0;
@@ -120,8 +128,8 @@ static void dancer_draw(unsigned time)
         if (active) cv_rect(15, 218 - sy, 210, 2, track_rule[light_track]);
         for (int y = 0; y < 40 && source_row < DANCER_HEIGHT; ++y) {
             const uint8_t *next_trail = trail;
-            if (trail && !(y & 1))
-                next_trail = dancer_row(trail, y, sway + spread_trail, track_color[light_track]);
+            if (trail && !(y & (dsp_pressure ? 3 : 1)))
+                next_trail = dancer_row(trail, y, previous_sway, trail_ink);
             if (dancer_outline)
                 dancer_row(span, y, sway, active ? track_rule[light_track] : RGB(23, 14, 35));
             const uint8_t *next = dancer_row(span, y, sway, 0);
