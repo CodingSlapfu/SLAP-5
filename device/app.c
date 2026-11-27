@@ -4730,12 +4730,12 @@ static void draw_transport_progress(unsigned position, unsigned fraction, unsign
     cv_text(3, 0, &FONT_T, "BAR", C_WHITE);
     cv_text(27, 0, &FONT_T, text, C_WHITE);
     cv_text(125, 0, &FONT_T, "LOOP", C_WHITE);
-    cv_rect(57, 3, 58, 8, 0x322e);
-    cv_rect(158, 3, 78, 8, 0x322e);
+    cv_rect(57, 3, 58, 8, 0x2124);
+    cv_rect(158, 3, 78, 8, 0x2124);
     unsigned bar = ((step & 15u) * 14u + phase) * 27u / 224u * 2u;
     unsigned loop = (step * 14u + phase) * 38u / (length * 14u) * 2u;
     if (bar) cv_rect(57, 3, (int)bar, 8, 0xe73c);
-    if (loop) cv_rect(158, 3, (int)loop, 8, ink);
+    if (loop) cv_rect(158, 3, (int)loop, 8, ink ? 0xe73c : 0x2124);
 }
 
 #include "visuals.h"
@@ -4969,6 +4969,18 @@ static void draw_signature_name(const char *name, uint16_t ink, unsigned limit, 
     }
 }
 
+static void draw_home_headline(int x, const char *label, unsigned width)
+{
+    unsigned original = (unsigned)text_w(&FONT_L, label);
+    cv_text(x, -3, &FONT_L, label, C_WHITE);
+    if (!original || original >= width) return;
+    for (unsigned y = 0; y < 25u; ++y) {
+        uint16_t *line = cv_px + y * cv_w + (unsigned)x;
+        for (unsigned px = width; px-- > 0;)
+            line[px] = line[px * original / width];
+    }
+}
+
 static void draw_home_sequences(void)
 {
     unsigned position = positions, run = playing, fraction = step_progress;
@@ -5018,14 +5030,11 @@ static void draw_home_sequences(void)
     if (redraw_header) {
         cv_begin(240, 44, header);
         decimal(number, bpm);
-        const felucca_font_t *headline = &FONT_L;
-        if (text_w(headline, "LOOPER") + text_w(headline, number) + text_w(&FONT_B, "BPM") + 30 > 240)
-            headline = &FONT_M;
-        int title_y = headline == &FONT_L ? -3 : 1;
-        cv_text(3, title_y, headline, "LOOPER", C_WHITE);
-        int tempo_x = 237 - text_w(headline, number);
-        cv_text(tempo_x - text_w(&FONT_B, "BPM") - 3, 6, &FONT_B, "BPM", 0xad55);
-        cv_text(tempo_x, title_y, headline, number, C_WHITE);
+        draw_home_headline(3, "LOOPER", 111);
+        unsigned tempo_width = bpm >= 100u ? 46u : 32u;
+        int tempo_x = 237 - (int)tempo_width;
+        cv_text(tempo_x - text_w(&FONT_B, "BPM") - 3, 9, &FONT_B, "BPM", 0xad55);
+        draw_home_headline(tempo_x, number, tempo_width);
         cv_text(3, 25, &FONT_B, "USB", status & 1u ? C_WHITE : 0x9cd3);
         cv_text(41, 25, &FONT_B, "IN", status & 2u ? 0x8ff3 : 0x9cd3);
         cv_text(66, 25, &FONT_B, "OUT", status & 4u ? 0x8ff3 : 0x9cd3);
@@ -5041,7 +5050,7 @@ static void draw_home_sequences(void)
         cv_text(237 - text_w(&FONT_B, hint), 25, &FONT_B, hint, C_WHITE);
         if (battery_status >= 0 && battery_status < 4) {
             const uint16_t battery_ink = 0xfd20;
-            int x = 7 + text_w(headline, "LOOPER");
+            int x = 117;
             cv_rect(x, 4, 10, 19, battery_ink);
             cv_rect(x + 2, 2, 6, 2, battery_ink);
             cv_rect(x + 1, 5, 8, 17, header);
@@ -5101,12 +5110,14 @@ static void draw_home_sequences(void)
             cv_blit(232, lane_y);
             continue;
         }
-        static const uint16_t base_ink[] = {0x047b, 0x691d, 0xfa00, 0xc580, 0x04eb};
+        static const uint16_t base_ink[] = {0x045b, 0x91fc, 0xfbe2, 0xd640, 0x056a};
         static const uint16_t name_ink[] = {0xdfff, 0xf6ff, 0xff7a, 0xfffa, 0xdff9};
         cv_begin(240, lane_height, 0);
-        for (unsigned band = 0; band < 8u; ++band)
-            cv_rect(0, 1 + (int)band * 3, 232, 3,
-                    home_shade(base_ink[t], 11u + pulse * 4u + band / 2u));
+        for (unsigned band = 0; band < 10u; ++band) {
+            unsigned rise = band < 5u ? band : 9u - band;
+            cv_rect((int)band * 24, 1, 24, 24,
+                    home_shade(base_ink[t], (unsigned)clamp(20 + (int)(pulse + rise) * 2, 0, 32)));
+        }
         cv_rect(0, 0, 232, 1, color);
         int playhead = run ? 166 : 4;
         int origin = playhead - (int)cursor;
