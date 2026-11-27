@@ -17,14 +17,26 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
         with:
-          ref: 4f2048879e930a9091d1bb3ef73f8346daca6643
+          ref: c945e09252d9af06d4fb28e5c6a374f4e4429294
           path: firmware-source
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
       - name: Download the exact-source firmware and captures
         run: |
-          gh run download 45956039967 --name SLAP-5-0.1.49-engineering-checkpoint-unpublished --dir "$RUNNER_TEMP/verified"
+          for attempt in $(seq 1 40); do
+            run="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/qualification-0149.yml/runs?head_sha=$GITHUB_SHA" --jq '.workflow_runs[0].id // empty')"
+            if [ -n "$run" ]; then
+              state="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq '.status + ":" + (.conclusion // "")')"
+              case "$state" in
+                completed:success) break ;;
+                completed:*) echo "Native qualification $run ended with $state"; exit 1 ;;
+              esac
+            fi
+            sleep 8
+          done
+          test "${state:-}" = completed:success
+          gh run download "$run" --name SLAP-5-0.1.49-engineering-checkpoint-unpublished --dir "$RUNNER_TEMP/verified"
           (cd "$RUNNER_TEMP/verified" && sha256sum -c SHA256SUMS-0.1.49)
       - name: Build matching Studio and stage current pages
         run: |

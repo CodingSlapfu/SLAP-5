@@ -29,6 +29,9 @@ screens = [
     ("knob-digital-segmented.png", "MIXER Digital Segmented"),
     ("gravity-rings.png", "Gravity Rings"),
     ("digital-vu.png", "Digital VU"),
+    ("filter.png", "FX filter response"),
+    ("slicer.png", "Slicer"),
+    ("guarded-clear.png", "Track-clear countdown"),
 ]
 import zipfile
 with zipfile.ZipFile(candidate / "SLAP-5-0.1.49-framebuffer.zip") as archive:
@@ -63,6 +66,7 @@ archive_link = ("https://github.com/CodingSlapfu/SLAP-5/releases/tag/"
 <ul><li>HOME opens the looper. Press again for visualizers. SELECT chooses a track.</li>
 <li>HOME K1–K4 adjust level, pattern length, stereo pan and swing.</li>
 <li>Tap REC to start or finish a take. Recording preferences set overdub or replace and count-in behavior.</li>
+<li>On HOME, hold REC + OCT− for two seconds to clear the selected track. Hold REC + OCT+ for five seconds to reset the working song. Release early to cancel. Saved songs and system preferences remain available.</li>
 <li>Tap EDIT for Sound Lab. Hold EDIT for one second for MIXER.</li>
 <li>MIXER K1–K4 adjust level, duck, all-track filter and selected-track filter. ARP toggles solo, and SELECT + K2 changes the duck source.</li>
 <li>In SETTINGS → DISPLAY, use SELECT to highlight KNOB THEME and turn K1.</li></ul>
@@ -70,6 +74,7 @@ archive_link = ("https://github.com/CodingSlapfu/SLAP-5/releases/tag/"
 <p>25 synthesis engines, 128 factory patches, 25 factory drum kits with 16 sounds each, 16/32/64-step patterns, LIVE FX, SLICER and USB audio/MIDI. The firmware uses 256-frame audio callbacks and a 240×240 RGB565 display. Studio runs the matching firmware source in a browser simulation.</p>
 <h2>Firmware gallery</h2><p>240×240 captures from the v0.1.49 firmware host renderer.</p>
 <div class="gallery">{gallery}</div>
+<h2>Using the FM-1</h2><p>Use a USB data cable and close other MIDI apps before connecting. Check the project backup and firmware identity before installing. If the browser cannot connect, verify USB MIDI access and use the download link with the desktop flasher if needed.</p>
 <h2>Release notes</h2><p>FX inspection now follows active track FX and samples the visible track. Rendering uses a 20 FPS cap with coalescing under load. HOME gains a dotted playhead, vertical battery gauge and a clearer tempo and shortcut header. The Dancer trail fades in place.</p>
 <p><a href="https://github.com/CodingSlapfu/SLAP-5/issues">Support</a> · <a href="{archive_link}">Recovery archive</a></p>
 """), encoding="utf-8")
