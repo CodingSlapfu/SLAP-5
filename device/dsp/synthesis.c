@@ -161,9 +161,26 @@ static SLAP_SYNTH_SRAM float additive(float p, float brightness)
             brightness * brightness * (0.28f * sine(3*p) + 0.16f * sine(5*p))) * 0.54f;
 }
 
+static inline SLAP_SYNTH_INLINE float fm_operator_ratio(uint32_t config, unsigned index)
+{
+    unsigned ratio = (config >> (index * 3u)) & 7u;
+    return 0.5f + (float)ratio * 0.5f;
+}
+
+static inline SLAP_SYNTH_INLINE float fm_operator_level(uint32_t config, unsigned index)
+{
+    return (float)((config >> (18u + index * 2u)) & 3u) * (1.0f / 3.0f);
+}
+
 void slap_synth_timbre(SlapSynth *synth, uint32_t settings)
 {
     synth->timbre = settings;
+    if (synth->engine == 0u && settings) {
+        for (unsigned op = 0; op < 6u; ++op) {
+            synth->fm_ratio[op] = fm_operator_ratio(settings, op);
+            synth->fm_level[op] = fm_operator_level(settings, op);
+        }
+    }
     if (!settings || synth->engine != 2u) return;
     synth->color = (settings & 127u) * (1.0f / 127.0f);
     synth->motion = (settings >> 8 & 127u) * (1.0f / 127.0f);
@@ -191,17 +208,6 @@ void slap_synth_fm_envelopes(SlapSynth *s, const uint32_t *operators, unsigned f
 static inline SLAP_SYNTH_INLINE float fm_envelope(const SlapSynth *s, unsigned op)
 {
     return s->operator_mask & (1u << op) ? s->operators[op].gain : 1.0f;
-}
-
-static inline SLAP_SYNTH_INLINE float fm_operator_ratio(uint32_t config, unsigned index)
-{
-    unsigned ratio = (config >> (index * 3u)) & 7u;
-    return 0.5f + (float)ratio * 0.5f;
-}
-
-static inline SLAP_SYNTH_INLINE float fm_operator_level(uint32_t config, unsigned index)
-{
-    return (float)((config >> (18u + index * 2u)) & 3u) * (1.0f / 3.0f);
 }
 
 /* Both rendering cores interpolate these tables in the audio callback. */
@@ -293,33 +299,33 @@ SLAP_SYNTH_SRAM float slap_synth_sample(SlapSynth *s)
             }
             float attack = s->strike;
             float six = sine(s->pole + s->feedback * s->operator_feedback);
-            if (config) six *= fm_operator_level(config, 5);
+            if (config) six *= s->fm_level[5];
             if (s->operator_mask) six *= fm_envelope(s, 5);
             float five = sine(s->slow_inc + six * (0.10f + 0.23f * m) * attack);
-            if (config) five *= fm_operator_level(config, 4);
+            if (config) five *= s->fm_level[4];
             if (s->operator_mask) five *= fm_envelope(s, 4);
             float four = sine(t + five * (algorithm == 0u ? 0.35f : 0.11f));
-            if (config) four *= fm_operator_level(config, 3);
+            if (config) four *= s->fm_level[3];
             if (s->operator_mask) four *= fm_envelope(s, 3);
             float three = sine(y + (algorithm == 1u ? six : four) * c * attack * 0.24f);
-            if (config) three *= fm_operator_level(config, 2);
+            if (config) three *= s->fm_level[2];
             if (s->operator_mask) three *= fm_envelope(s, 2);
             float two = sine(x + three * (0.12f + 0.31f * c));
-            if (config) two *= fm_operator_level(config, 1);
+            if (config) two *= s->fm_level[1];
             if (s->operator_mask) two *= fm_envelope(s, 1);
             float one = sine(p + two * (0.035f + 0.25f * c) + (algorithm == 2u ? five * 0.09f : 0.0f));
-            if (config) one *= fm_operator_level(config, 0);
+            if (config) one *= s->fm_level[0];
             if (s->operator_mask) one *= fm_envelope(s, 0);
             out = algorithm == 0u ? one * 0.78f :
                 one * 0.65f + (algorithm == 1u ? four : three) * (0.08f + 0.14f * attack);
             s->feedback = six;
             if (config) {
-                s->pole = wrap_advance(s->pole + d * fm_operator_ratio(config, 5));
-                s->slow_inc = wrap_advance(s->slow_inc + d * fm_operator_ratio(config, 4));
-                s->slow = wrap_advance(t + d * fm_operator_ratio(config, 3));
-                next_y = y + d * fm_operator_ratio(config, 2);
-                next_x = x + d * fm_operator_ratio(config, 1);
-                s->phase = wrap_advance(p + d * fm_operator_ratio(config, 0));
+                s->pole = wrap_advance(s->pole + d * s->fm_ratio[5]);
+                s->slow_inc = wrap_advance(s->slow_inc + d * s->fm_ratio[4]);
+                s->slow = wrap_advance(t + d * s->fm_ratio[3]);
+                next_y = y + d * s->fm_ratio[2];
+                next_x = x + d * s->fm_ratio[1];
+                s->phase = wrap_advance(p + d * s->fm_ratio[0]);
                 s->second = wrap_advance(next_x);
                 s->third = wrap_advance(next_y);
                 s->strike *= 0.99962f + 0.00032f * m;

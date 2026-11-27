@@ -4522,11 +4522,15 @@ void app_input_only(void)
         for (unsigned t = 0; t < TRACKS; ++t)
             if (!(tracks[t].mix & (1u << 24))) key_lights |= 1u << save_keys[t];
     }
+    for (unsigned i = 0; i < sizeof live_black_keys / sizeof live_black_keys[0]; ++i)
+        key_lights &= ~(1u << live_black_keys[i]);
     unsigned priority_lights = context | (lights & (LED_PLAY_GREEN | (1u << B_REC)));
     unsigned ordinary_lights = lights & ~priority_lights;
     uint32_t bright_buttons = priority_lights | ordinary_lights;
     uint32_t dim_buttons = ((1u << NB) - 1u) & ~bright_buttons;
     uint32_t normal_keys = ((1u << NKEYS) - 1u) & ~key_lights;
+    for (unsigned i = 0; i < sizeof live_black_keys / sizeof live_black_keys[0]; ++i)
+        normal_keys &= ~(1u << live_black_keys[i]);
     if (slap_ui.page == MIXER || led_keys_on_hit) normal_keys = 0;
     plat_lights(led_active_soft ? 0u : bright_buttons, led_active_soft ? 0u : key_lights,
         dim_buttons, 0, led_style == 2u ? 2 : led_style == 1u ? 0 : 1);
@@ -4891,6 +4895,7 @@ static void draw_home_sequences(void)
             cv_text(132, 0, &FONT_XS, "USB", status & 1u ? C_WHITE : 0x9cd3);
             cv_text(172, 0, &FONT_XS, "IN", status & 2u ? 0x8ff3 : 0x9cd3);
             cv_text(199, 0, &FONT_XS, "OUT", status & 4u ? 0x8ff3 : 0x9cd3);
+            cv_text(158, 12, &FONT_T, "EDIT 2S MIXER", 0x9cd3);
         }
         if (battery_status >= 0 && battery_status < 4) {
             uint16_t battery_ink = low_battery ? track_color[3] : C_WHITE;
@@ -5127,8 +5132,10 @@ static void draw_fm_routing(unsigned track, unsigned algorithm, uint32_t config,
             int nx = sx + (tx - sx) * i / 8;
             int ny = sy + (ty - sy) * i / 8 - i * (8 - i) / 2;
             cv_line(px, py, nx, ny - offset, ink);
-            if (energy[source] && (unsigned)i == 1u + clock % 8u)
+            if (energy[source] && (unsigned)i == 1u + (clock + edge * 3u) % 8u) {
+                cv_rect(nx - 2, ny - offset - 2, 5, 5, accent);
                 cv_rect(nx - 1, ny - offset - 1, 3, 3, C_WHITE);
+            }
             px = nx;
             py = ny - offset;
         }
@@ -5143,7 +5150,9 @@ static void draw_fm_routing(unsigned track, unsigned algorithm, uint32_t config,
         int carrier = !op || (algorithm == 1u && op == 3u) || (algorithm == 2u && op == 2u);
         int cx = x[op], cy = y[op] - offset;
         uint16_t outer = op == timbre_operator ? C_WHITE : carrier ? accent : track_rule[track];
+        cv_rect(cx - 17, cy - 9, 34, 18, track_rule[track]);
         cv_rect(cx - 14, cy - 12, 28, 24, outer);
+        if (carrier) cv_rect(cx - 9, cy + 13, 18, 2, accent);
         cv_rect(cx - 13, cy - 11, 26, 22, C_BLACK);
         cv_rect(cx - 12, cy + 8, energy[op], 2, accent);
         char label[] = {(char)('1' + op), 0};
@@ -5239,7 +5248,8 @@ static void draw_panel(void)
             group = slap_fx_value(selected, 1, 0) | slap_fx_value(selected, 1, 3) << 8 |
                 decay << 16 | slap_fx_value(selected, 8, 0) << 24;
         }
-        if (browser_valid && selected == browser_track && patch == browser_patch &&
+        unsigned animated = selected < DRUMS && edit_page == SOUND_LAB_MAIN && track_energy[selected] > 2u;
+        if (!animated && browser_valid && selected == browser_track && patch == browser_patch &&
             group == browser_group && tempo == browser_tempo && edit_page == browser_page) return;
         browser_valid = 1;
         browser_track = selected; browser_patch = patch; browser_group = group; browser_tempo = tempo; browser_page = edit_page;
@@ -5390,10 +5400,10 @@ static void draw_panel(void)
                 cv_rect(4, 4, 2, 27, focused ? c : 0x2945);
                 cv_rect(12, 33, 216, 1, 0x18c3);
                 uint16_t ink = C_WHITE;
-                draw_signature_name(labels[row], ink, 130, 8, 18);
+                draw_signature_name(labels[row], focused ? c : ink, 142, 5, 22);
                 const char *value = values[row];
                 const felucca_font_t *font = text_w(&FONT_B, value) <= 94 ? &FONT_B : &FONT_XS;
-                cv_text(229 - text_w(font, value), 10, font, value, focused ? c : 0xbdf7);
+                cv_text(229 - text_w(font, value), 10, font, value, focused ? C_WHITE : 0xbdf7);
             }
             cv_blit(0, 96 + row * 36);
         }
@@ -5474,7 +5484,13 @@ static void draw_panel(void)
                     int peak = (int)track_peak[t] * 92 / 160;
                     cv_rect(x, 4-strip*36, 36, 96, track_surface[t]);
                     if (t == selected) cv_rect(x+1, 4-strip*36, 1, 96, C_WHITE);
-                    cv_rect(x+4, 99-h-strip*36, 28, h, track_color[t]);
+                    for (int band = 4; band <= h; band += 6)
+                        cv_rect(x + 4, 99 - band - strip * 36, 28, 4, track_color[t]);
+                    int filter = performance_filter[t];
+                    int marker = 99 - (filter + 100) * 94 / 200 - strip * 36;
+                    cv_rect(x + 31, marker, 4, 2, C_WHITE);
+                    if (t < DRUMS && mixer_duck[t])
+                        cv_rect(x + 2, 99 - (int)mixer_duck[t] * 92 / 100 - strip * 36, 3, 2, track_color[mixer_duck_source]);
                     if (peak) cv_rect(x+4, 99-peak-strip*36, 28, 2, C_WHITE);
                     if (strip == 0) cv_text(x+6, 8, &FONT_XS,
                         (tracks[t].mix & (1u << 24)) ? "MUTE" : (mixer_solo & (1u << t)) ? "SOLO" :

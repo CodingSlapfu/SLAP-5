@@ -120,8 +120,8 @@ static void dancer_draw(unsigned time)
         if (active) cv_rect(15, 218 - sy, 210, 2, track_rule[light_track]);
         for (int y = 0; y < 40 && source_row < DANCER_HEIGHT; ++y) {
             const uint8_t *next_trail = trail;
-            if (trail && !(y & 3))
-                next_trail = dancer_row(trail, y, sway + spread_trail, track_rule[light_track]);
+            if (trail && !(y & 1))
+                next_trail = dancer_row(trail, y, sway + spread_trail, track_color[light_track]);
             if (dancer_outline)
                 dancer_row(span, y, sway, active ? track_rule[light_track] : RGB(23, 14, 35));
             const uint8_t *next = dancer_row(span, y, sway, 0);
@@ -232,8 +232,8 @@ static void visualizer_draw(unsigned kind, unsigned time, unsigned intro)
             break;
         case 2: {
             unsigned tilt_phase = (time % 1920000u) * tempo / 1875u;
-            int tilt = visual_wave(tilt_phase * 3u, 43);
-            int opening = 49 + visual_wave(tilt_phase * 3u + 256u, 26);
+            int tilt = visual_wave(tilt_phase * 4u, 48);
+            int opening = 49 + visual_wave(tilt_phase * 4u + 256u, 28);
             for (unsigned t = 0; t < TRACKS; ++t) {
                 int radius = 24 + (int)t*17 + energy[t]/5;
                 int depth = 14 + (int)(levels[0] * 13);
@@ -269,7 +269,7 @@ static void visualizer_draw(unsigned kind, unsigned time, unsigned intro)
             int mids = (int)(100.0f * fm_maxf(levels[2], levels[3]));
             int highs = (int)(80.0f * fm_maxf(levels[5], levels[6]));
             for (unsigned star = 0; star < 22; ++star) {
-                int brightness = 38 + (int)((star * 23u + time / 19u) % 20u) + highs;
+                int brightness = clamp(25 + (int)((star * 23u + time / 19u) % 20u) + highs * 2 + energy[star % TRACKS] / 2, 0, 230);
                 cv_rect((int)(star * 71u % 233u), 33 + (int)((star * 93u + time / (12u - star % 3u)) % 200u)-sy,
                         highs > 35 ? 2 : 1, 1, RGB(brightness, brightness, brightness + 25));
             }

@@ -21,6 +21,7 @@ typedef struct {
         } piano;
     };
     float operator_feedback;
+    float fm_ratio[6], fm_level[6];
     uint32_t rng, timbre;
     uint8_t operator_mask, operator_tick, operator_decay, operator_release;
     uint16_t length, index, pickup;
