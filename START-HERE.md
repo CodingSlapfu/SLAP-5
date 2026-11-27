@@ -240,3 +240,8 @@ Physical validation after software qualification uses the owner’s FM-1 and a b
 ## v0.1.50 hardware testing
 
 [Qualification and precise next-build notes](evidence/qualification-0.1.50.md).
+
+
+## v0.1.53 testing
+
+[Qualification and outstanding gates](evidence/qualification-0.1.53.md).

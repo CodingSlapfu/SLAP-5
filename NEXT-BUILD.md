@@ -12,3 +12,13 @@ This testing sprint preserves the existing primary release and the owner's posit
 ## v0.1.52 follow-up
 
 The FM-1 platform reports 0–3 battery bars on battery power and returns a USB-powered sentinel when configured. Its source documents no charger line. This explains the gray dash on USB. Preserve the orange battery indication and neutral USB state. Verify a charge-state signal and trustworthy USB-powered level readings on hardware before enabling green or reporting a level on USB. Physical LCD and saved-JUNGLE stress acceptance remain open. The dial redesign uses the available concept descriptions and native layout. Verify finish and contrast on the actual display.
+
+# v0.1.53 qualification and next build
+
+Physical saved projects and the latest diagnostic screenshots were unavailable. VHS SAW with SLICER and DEEP DUB with reverb/drive remain the priority physical reproduction. Capture GLOBAL, DISPATCH, CORE 1, SPIKE PROFILE and DMA TRACE at the recurring peak with the full arrangement, individual tracks and controlled FX bypass. Restore the intended settings before acceptance. The sprint does not claim a proven bottleneck or a physical callback improvement.
+
+ROLE GENERATOR stores editable 1/2/4-bar patterns on any melodic track, using track key/scale and an undo snapshot. Press SEQ twice while stopped. K1 role, K2 style, K3 bars, SEL generate or confirm replacement. Live generation was deferred to avoid adding bulk writes at the audio boundary. Next build: add staged revision-checked publishing with a measured callback budget, then test live overdub and save/load. Musical acceptance across all 22 presets is pending.
+
+The seven-image ZIP was identified but not materialized for inspection. Dial rendering changes preserve the shared dimensions; native comparison against the actual seven images and FM-1 visual approval remain open. The green outline denotes USB power only; the dash stays until charge level is known.
+
+Keep the existing primary release and archive until both projects pass. Require clean audio, productive Core 1, zero misses/XRUNs, and peak below 5,804 µs with headroom. Archive extension and current-only primary deployment remain gated.
