@@ -2963,8 +2963,15 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
     unsigned measure_fx = slap_ui.page == FX && slap_ui.fx_page == 4;
     const unsigned analyze = slap_ui.page == VISUAL;
     const unsigned effect_mask = slap_fx_active_mask();
-    const unsigned scope_track = slap_ui.page == FX ||
-        (slap_ui.page == PATCH && edit_page) ? slap_ui.track : TRACKS;
+    unsigned scope_track = TRACKS;
+    if (slap_ui.page == FX && slap_ui.fx_page != 1 && slap_ui.fx_page != 2) {
+        scope_track = slap_ui.track;
+    } else if (slap_ui.page == PATCH && edit_page && edit_page != SOUND_LAB_EXPRESSION) {
+        unsigned track = slap_ui.track;
+        unsigned engine = track < DRUMS ? slap_patches[tracks[track].patch].engine : 255u;
+        if (engine != 0u && (edit_page == SOUND_LAB_MAIN || (track < DRUMS && engine != 2u)))
+            scope_track = track;
+    }
     if (scope_track != scope_owner) {
         for (unsigned p = 0; p < SLAP_FX_PLOT; ++p) scope_samples[p] = 0;
         scope_head = 0;
