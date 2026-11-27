@@ -4,6 +4,7 @@ id_prefix = "FM-1_75"
 usb_manufacturer = "ZIAO"
 usb_product = "SLAP-5 FM-1"
 ble = false
+boot_pack = true
 cpu2 = true
 cpu2_fallback = true
 repo = "https://github.com/CodingSlapfu/SLAP-5"

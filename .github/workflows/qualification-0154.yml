@@ -1,0 +1,171 @@
+name: SLAP-5 v0.1.54 native package and HOME reference audit
+on:
+  push:
+    branches: [slap-5-environment-recovery]
+    paths: ['.github/workflows/qualification-0154.yml']
+permissions:
+  actions: read
+  contents: read
+concurrency:
+  group: slap-5-0.1.54-hardware-testing
+jobs:
+  qualify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CHECKPOINT: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Build and audit the versioned native package
+        run: |
+          python3 -m venv "$RUNNER_TEMP/slap-python"
+          source "$RUNNER_TEMP/slap-python/bin/activate"
+          pip install Pillow==11.3.0 fonttools==4.59.2 CairoSVG==2.8.2
+          bash vendor/fm1-base/tools/get_toolchain.sh "$RUNNER_TEMP/jieli"
+          export JIELI_TOOLCHAIN="$(realpath "$RUNNER_TEMP/jieli/toolchain")"
+          test "$(basename "$JIELI_TOOLCHAIN")" = jieli-linux-toolchains-20260730.1
+          # This candidate uses neither the vendor BLE nor Wi-Fi stack.
+          grep -qx 'ble = false' device/fm1.toml
+          ! grep -Eq '^wifi[[:space:]]*=[[:space:]]*true' device/fm1.toml
+          export AC79_SDK="$RUNNER_TEMP/ac79-packaging"
+          tools_dir="$AC79_SDK/cpu/wl82/tools"
+          sdk_raw=https://raw.githubusercontent.com/amitv87/fw-AC79_AIoT_SDK/d179b4484759423312073f5fbb232501aa491047/cpu/wl82/tools
+          while read -r digest file; do
+            mkdir -p "$(dirname "$tools_dir/$file")"
+            curl -fsSL --retry 2 --max-time 30 "$sdk_raw/$file" -o "$tools_dir/$file"
+            printf '%s  %s\n' "$digest" "$tools_dir/$file" | sha256sum -c -
+          done < evidence/sdk.sha256
+          sh device/build-native.sh --release 0.1.54
+          pkg=device/build/slap-5-0.1.54.fwsc
+          python3 tools/audit-package.py --sdk "$AC79_SDK" --app device/build/slap-5.bin \
+            --loader device/build/loader/ota.bin --package "$pkg" --identity FM-1_75000154
+          rollback="$RUNNER_TEMP/SLAP-5-0.1.31.fwsc"
+          curl -fsSL --retry 3 -o "$rollback" https://github.com/CodingSlapfu/SLAP-5/releases/download/v0.1.31-hardware-testing/SLAP-5-0.1.31.fwsc
+          printf '%s  %s\n' 36676ae153435f065c99c2106bdccf43917f7cd57f65fb702e0144d0055ef8be "$rollback" | sha256sum -c -
+          cc -O2 -o "$RUNNER_TEMP/ldr-test" vendor/fm1-base/tests/ldr_test.c
+          "$RUNNER_TEMP/ldr-test" "$rollback" "$pkg" --interrupt
+          "$RUNNER_TEMP/ldr-test" "$pkg" "$rollback"
+          previous="$RUNNER_TEMP/SLAP-5-0.1.53.fwsc"
+          curl -fsSL --retry 3 -o "$previous" https://codingslapfu.github.io/SLAP-5/SLAP-5-0.1.53.fwsc
+          printf '%s  %s\n' b8141b03d288688a902867a4cb1747bbb00f0fe1890e0658a41b3c250cc4a9cd "$previous" | sha256sum -c -
+          "$RUNNER_TEMP/ldr-test" "$previous" "$pkg" --interrupt
+          "$RUNNER_TEMP/ldr-test" "$pkg" "$previous"
+          mkdir -p "$RUNNER_TEMP/release" "$RUNNER_TEMP/components"
+          cp "$pkg" "$RUNNER_TEMP/release/SLAP-5-0.1.54.fwsc"
+          readelf -W -S -s device/build/slap-5.elf > "$RUNNER_TEMP/components/application-layout.txt"
+          cp device/build/slap-5.bin device/build/loader/ota.bin "$RUNNER_TEMP/components/"
+          git archive --format=tar.gz --prefix=SLAP-5/ "$CHECKPOINT" > "$RUNNER_TEMP/components/source.tar.gz"
+          cp START-HERE.md "$RUNNER_TEMP/components/"
+          cp "$RUNNER_TEMP/release/SLAP-5-0.1.54.fwsc" "$RUNNER_TEMP/components/"
+          (cd "$RUNNER_TEMP/components" && sha256sum SLAP-5-0.1.54.fwsc slap-5.bin ota.bin source.tar.gz START-HERE.md application-layout.txt > SHA256SUMS && sha256sum -c SHA256SUMS)
+          tar -C "$RUNNER_TEMP/components" -czf "$RUNNER_TEMP/release/SLAP-5-0.1.54-engineering-backup.tar.gz" .
+          mkdir -p "$RUNNER_TEMP/framebuffer"
+          python3 vendor/fm1-base/tools/build.py device --host
+          cat > "$RUNNER_TEMP/role.txt" <<'FIXTURE'
+          wait 6100
+          tap SEQ
+          tap SEQ
+          expect page 16
+          turn K1 2
+          turn K2 21
+          turn K3 2
+          tap SEL
+          expect length 64
+          shot role-generator.png
+          tap SEQ
+          expect page 1
+          expect pitch >0
+          tap HOME
+          tap PLAY
+          wait 2000
+          expect events >1
+          expect length 64
+          expect playing 1
+          FIXTURE
+          device/build/host/slap-5_host "$RUNNER_TEMP/role.txt" "$RUNNER_TEMP/framebuffer"
+          device/build/host/slap-5_host device/tests/guarded-reset.txt "$RUNNER_TEMP/framebuffer"
+          device/build/host/slap-5_host device/tests/live-step-length.txt "$RUNNER_TEMP/framebuffer"
+          device/build/host/slap-5_host device/tests/gen-drums.txt "$RUNNER_TEMP/framebuffer"
+          device/build/host/slap-5_host device/tests/track-activity.txt "$RUNNER_TEMP/framebuffer"
+          device/build/host/slap-5_host device/tests/transport-progress.txt "$RUNNER_TEMP/framebuffer"
+          device/build/host/slap-5_host device/tests/graph-navigation.txt "$RUNNER_TEMP/framebuffer"
+          motion="$RUNNER_TEMP/dancer-motion.txt"
+          cp device/tests/transport-mixer.txt "$motion"
+          printf '%s\n' 'tap PLAY' 'key w0 down' >> "$motion"
+          for frame in $(seq 1 12); do printf 'wait 280\nshot dancer-%02d.png\n' "$frame" >> "$motion"; done
+          printf '%s\n' 'key w0 up' 'tap PLAY' >> "$motion"
+          mkdir "$RUNNER_TEMP/dancer-after"
+          device/build/host/slap-5_host "$motion" "$RUNNER_TEMP/dancer-after"
+          cp "$RUNNER_TEMP/dancer-after/"dancer*.png "$RUNNER_TEMP/framebuffer/"
+          fixture="$RUNNER_TEMP/looper-reference-comparison.txt"
+          awk '{print} /^expect worker_fallbacks 0$/ {print "shot looper-jungle-240.png"}' device/tests/jungle-155.txt > "$fixture"
+          device/build/host/slap-5_host "$fixture" "$RUNNER_TEMP/framebuffer"
+          drum="$RUNNER_TEMP/drum-sound-lab.txt"
+          awk '!done && /^expect peak_voices 16$/ {print; print "tap EDIT\nexpect page 3\nwait 150\nshot drum-sound-lab.png\ntap HOME"; done=1; next} {print}' device/tests/jungle-155.txt > "$drum"
+          device/build/host/slap-5_host "$drum" "$RUNNER_TEMP/framebuffer"
+          stress="$RUNNER_TEMP/track1-peak.txt"
+          cp device/tests/jungle-155.txt "$stress"
+          cat >> "$stress" <<'FIXTURE'
+          tap FX
+          turn SELECT -4
+          turn ALGO -8
+          expect fx_page 1
+          turn K1 50
+          expect fx_k1 50
+          turn K2 8
+          turn K3 8
+          turn K4 70
+          turn ALGO 1
+          turn K1 20
+          tap HOME
+          tap PLAY
+          wait 3200
+          expect worker_online 1
+          expect worker_fallbacks 0
+          expect peak_voices 16
+          shot heavy-track1-home.png
+          tap PLAY
+          FIXTURE
+          device/build/host/slap-5_host "$stress" "$RUNNER_TEMP/framebuffer"
+          styles="$RUNNER_TEMP/looper-knob-compare.txt"
+          awk '/^shot knob-/ { name=$2; pending=1 } { print } /^tap HOME$/ && pending { sub(/^knob-/, "home-knob-", name); print "wait 100"; print "shot " name; pending=0 }' device/tests/knob-style.txt > "$styles"
+          device/build/host/slap-5_host "$styles" "$RUNNER_TEMP/framebuffer"
+          test "$(git hash-object design/owner-approved-home-v0.1.49.svg)" = 4b7ef09c3d043b443f05e82fcf2a220eea75122f
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          from PIL import Image
+
+          folder = Path(os.environ["RUNNER_TEMP"]) / "framebuffer"
+          native = folder / "looper-jungle-240.png"
+          with Image.open(native) as capture:
+              assert capture.size == (240, 240)
+              capture.resize((960, 960), Image.Resampling.NEAREST).save(folder / "looper-jungle-960.png")
+          import cairosvg
+          reference_path = folder / "owner-approved-home-240.png"
+          cairosvg.svg2png(url="design/owner-approved-home-v0.1.49.svg", write_to=str(reference_path),
+                           output_width=240, output_height=240)
+          with Image.open(reference_path) as reference, Image.open(native) as actual:
+              compare = Image.new("RGB", (480, 240))
+              compare.paste(reference, (0, 0))
+              compare.paste(actual, (240, 0))
+              compare.save(folder / "looper-before-after-480.png")
+          for home in sorted(folder.glob("home-knob-*.png")):
+              with Image.open(home) as left, Image.open(folder / home.name.removeprefix("home-")) as right:
+                  compare = Image.new("RGB", (480, 240))
+                  compare.paste(left, (0, 0))
+                  compare.paste(right, (240, 0))
+                  compare.save(folder / home.name.replace("home-knob-", "home-mixer-"))
+          PY
+          (cd "$RUNNER_TEMP/framebuffer" && zip -q "$RUNNER_TEMP/release/SLAP-5-0.1.54-framebuffer.zip" ./*.png)
+          cp "$RUNNER_TEMP/framebuffer/looper-before-after-480.png" "$RUNNER_TEMP/release/SLAP-5-0.1.54-HOME-reference-comparison.png"
+          cd "$RUNNER_TEMP/release"
+          sha256sum SLAP-5-0.1.54.fwsc SLAP-5-0.1.54-engineering-backup.tar.gz SLAP-5-0.1.54-framebuffer.zip SLAP-5-0.1.54-HOME-reference-comparison.png | tee SHA256SUMS-0.1.54
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SLAP-5-0.1.54-engineering-checkpoint-unpublished
+          path: ${{ runner.temp }}/release
+          if-no-files-found: error
