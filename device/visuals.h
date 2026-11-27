@@ -148,9 +148,20 @@ static void dancer_draw(unsigned time)
                 source_row = next_row;
             }
         }
-        if (sy == 0) cv_text(8, 5, &FONT_B, "DANCER", C_WHITE);
+        if (sy == 0) {
+            cv_text(8, 5, &FONT_B, "DANCER", C_WHITE);
+            if (dancer_control_at && time - dancer_control_at < 1200u) {
+                static const char *const labels[] = {"REACT", "GROOVE", "SWAY", "LIGHT"};
+                unsigned levels[] = {dancer_reactivity, dancer_pattern, dancer_outline, dancer_lighting};
+                char readout[] = "0";
+                readout[0] += levels[dancer_last_control];
+                cv_rect(148, 3, 88, 21, 0x1084);
+                cv_text(153, 6, &FONT_B, labels[dancer_last_control], C_WHITE);
+                cv_text(223, 6, &FONT_B, readout, C_WHITE);
+            }
+        }
         if (sy == 200) {
-            cv_text(8, 23, &FONT_T, "K1 ENERGY  K2 GROOVE  K3 AMP  K4 POSE", C_WHITE);
+            cv_text(8, 23, &FONT_T, "K1 REACT  K2 GROOVE  K3 SWAY  K4 LIGHT", C_WHITE);
         }
         cv_blit(0, sy);
     }

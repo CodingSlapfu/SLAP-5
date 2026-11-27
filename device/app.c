@@ -311,6 +311,7 @@ static volatile uint32_t arp_cursor;
 static uint32_t arp_pulse, arp_wait, arp_last_track = TRACKS, arp_stamp, arp_arrival[NKEYS];
 static float master_gain, energy_smooth[TRACKS];
 static volatile uint32_t track_energy[TRACKS], visual_notes[TRACKS];
+static unsigned dancer_last_control, dancer_control_at;
 static unsigned note_activity[TRACKS], dancer_pattern, dancer_outline = 1, dancer_lighting = 1, dancer_reactivity = 1;
 #if FM1B_CPU2 && defined(PLAT_HOST) && !defined(PLAT_WEB)
 static int host_discard_worker_result, host_discard_fx_result, host_late_voice, host_fx_grace, host_voice_timeout, host_fx_timeout;
@@ -4321,6 +4322,8 @@ void app_input_only(void)
             break;
         }
     } else if (slap_ui.page == VISUAL && slap_ui.visual == 6) {
+        for (unsigned k = 0; k < 4u; ++k)
+            if (knob[k]) { dancer_last_control = k; dancer_control_at = gesture_now; }
         dancer_reactivity = (unsigned)clamp((int)dancer_reactivity + knob[0], 0, 1);
         dancer_pattern = (unsigned)clamp((int)dancer_pattern + knob[1], 0, 2);
         dancer_outline = (unsigned)clamp((int)dancer_outline + knob[2], 0, 1);
@@ -4691,12 +4694,12 @@ static void draw_transport_progress(unsigned position, unsigned fraction, unsign
     cv_text(3, 0, &FONT_T, "BAR", C_WHITE);
     cv_text(27, 0, &FONT_T, text, C_WHITE);
     cv_text(125, 0, &FONT_T, "LOOP", C_WHITE);
-    cv_rect(57, 4, 54, 4, 0x322e);
-    cv_rect(158, 4, 76, 4, 0x322e);
+    cv_rect(57, 3, 58, 8, 0x322e);
+    cv_rect(158, 3, 78, 8, 0x322e);
     unsigned bar = ((step & 15u) * 14u + phase) * 27u / 224u * 2u;
     unsigned loop = (step * 14u + phase) * 38u / (length * 14u) * 2u;
-    if (bar) cv_rect(57, 4, (int)bar, 4, 0x7e9f);
-    if (loop) cv_rect(158, 4, (int)loop, 4, ink);
+    if (bar) cv_rect(57, 3, (int)bar, 8, 0xe73c);
+    if (loop) cv_rect(158, 3, (int)loop, 8, ink);
 }
 
 #include "visuals.h"
@@ -4842,6 +4845,10 @@ static void draw_performance_knob(int x, const char *label, const char *value, i
                     cv_rect(center - half + 1, cy + row, 2, 1, 0x526c);
             }
         }
+        if (expanded) {
+            cv_rect(center - 9, cy - 8, 18, 16, knob_style == KNOB_STUDIO ? 0x3186 : 0x0861);
+            cv_rect(center - 7, cy - 8, 14, 1, knob_style == KNOB_STUDIO ? 0x9cf3 : 0x526b);
+        }
         if (!expanded) cv_text(x + 35 + (24 - width) / 2, 7, value_font, value, C_WHITE);
     } else {
         cv_rect(center - width / 2 - 2, cy - 8, width + 4, 17, knob_style == KNOB_NEON ? 0x08a7 : 0x1084);
@@ -4861,6 +4868,9 @@ static void draw_performance_knob(int x, const char *label, const char *value, i
             tick >= low && tick <= high ? color :
             bipolar && tick == origin ? 0xa514 : 0x39e7;
         cv_rect(px, py, digital ? 2 : 1, knob_style == KNOB_SEGMENTED ? 3 : 2, ink);
+        if (expanded && !digital && tick % 6u == 0u)
+            cv_rect(center + visual_wave(angle + 256u, radius - 2),
+                    cy + visual_wave(angle, radius - 2), 1, 2, ink);
         if (digital && tick >= low && tick <= high)
             cv_rect(center + visual_wave(angle + 256u, radius - 2),
                     cy + visual_wave(angle, radius - 2), 1, 1, knob_style == KNOB_NEON ? 0x5fff : color);
@@ -4890,13 +4900,13 @@ static uint16_t home_shade(uint16_t color, unsigned amount)
 
 static void draw_home_meter(int x, int y, unsigned width, unsigned peak, uint16_t color)
 {
-    cv_rect(x, y, 8, 34, 0x0841);
-    unsigned lit = (width + 3u) / 4u;
-    unsigned marker = (unsigned)(fm_sqrtf(peak * (1.0f / 160.0f)) * 7.0f);
-    for (unsigned segment = 0; segment < 8u; ++segment) {
+    cv_rect(x, y, 8, 25, 0x0841);
+    unsigned lit = ((width + 3u) / 4u) * 3u / 4u;
+    unsigned marker = (unsigned)(fm_sqrtf(peak * (1.0f / 160.0f)) * 5.0f);
+    for (unsigned segment = 0; segment < 6u; ++segment) {
         uint16_t ink = segment < lit ? (segment >= 5u ? 0xd7a6 : 0x47ea) : home_shade(color, 5);
         if (peak && segment == marker) ink = 0xe7d9;
-        cv_rect(x + 1, y + 30 - (int)segment * 4, 6, 3, ink);
+        cv_rect(x + 1, y + 21 - (int)segment * 4, 6, 3, ink);
     }
 }
 
@@ -4987,33 +4997,33 @@ static void draw_home_sequences(void)
     const uint16_t header = BLACK_CHROMA;
     const uint16_t progress_surface = BLACK_PANEL;
     if (redraw_header) {
-        cv_begin(240, 23, header);
-        cv_text(4, 0, &FONT_M, "LOOPER", C_WHITE);
+        cv_begin(240, 44, header);
+        cv_text(3, 1, &FONT_M, "LOOPER", C_WHITE);
         decimal(number, bpm);
-        cv_text(145, 5, &FONT_T, "BPM", 0xad55);
-        cv_text(169, 0, &FONT_M, number, C_WHITE);
-        char label[] = { 'T', (char)('0' + (notice & 7u)), 0 };
+        int tempo_x = 237 - text_w(&FONT_M, number);
+        cv_text(tempo_x - text_w(&FONT_B, "BPM") - 3, 6, &FONT_B, "BPM", 0xad55);
+        cv_text(tempo_x, 1, &FONT_M, number, C_WHITE);
+        cv_text(3, 25, &FONT_B, "USB", status & 1u ? C_WHITE : 0x9cd3);
+        cv_text(41, 25, &FONT_B, "IN", status & 2u ? 0x8ff3 : 0x9cd3);
+        cv_text(66, 25, &FONT_B, "OUT", status & 4u ? 0x8ff3 : 0x9cd3);
+        const char *hint = "EDIT 1S MIXER";
+        char prompt[] = "CLEAR TRACK 0S";
         if (notice & 64u) {
-            char prompt[16] = "CLEAR TRACK 0S";
-            if (notice & 8u) __builtin_memcpy(prompt, "RESET SONG  0S", sizeof prompt - 1u);
+            if (notice & 8u) __builtin_memcpy(prompt, "RESET SONG  0S", sizeof prompt);
             prompt[12] = (char)('0' + (notice & 7u));
-            cv_text(93, 14, &FONT_T, prompt, C_WHITE);
+            hint = prompt;
         } else if (notice) {
-            cv_text(94, 0, &FONT_XS, notice & 32u ? "CLEAR?" : notice & 8u ? "UNDO" : "CLEARED", C_WHITE);
-            cv_text(211, 0, &FONT_XS, label, C_WHITE);
-        } else {
-            cv_text(93, 0, &FONT_XS, "USB", status & 1u ? C_WHITE : 0x9cd3);
-            cv_text(114, 0, &FONT_XS, "IN", status & 2u ? 0x8ff3 : 0x9cd3);
-            cv_text(128, 0, &FONT_XS, "OUT", status & 4u ? 0x8ff3 : 0x9cd3);
-            cv_text(93, 14, &FONT_T, "EDIT 1S MIXER", C_WHITE);
+            hint = notice & 32u ? "CLEAR?" : notice & 8u ? "UNDO" : "CLEARED";
         }
+        cv_text(237 - text_w(&FONT_B, hint), 25, &FONT_B, hint, C_WHITE);
         if (battery_status >= 0 && battery_status < 4) {
             const uint16_t battery_ink = 0xfd20;
-            cv_rect(78, 4, 10, 16, battery_ink);
-            cv_rect(80, 2, 6, 2, battery_ink);
-            cv_rect(79, 5, 8, 14, header);
+            int x = 7 + text_w(&FONT_M, "LOOPER");
+            cv_rect(x, 4, 10, 19, battery_ink);
+            cv_rect(x + 2, 2, 6, 2, battery_ink);
+            cv_rect(x + 1, 5, 8, 17, header);
             for (int cell = 0; cell < battery_status; ++cell)
-                cv_rect(80, 16 - cell * 4, 6, 3, battery_ink);
+                cv_rect(x + 2, 18 - cell * 5, 6, 4, battery_ink);
         }
         cv_blit(0, 0);
     }
@@ -5022,9 +5032,9 @@ static void draw_home_sequences(void)
     unsigned loop_fill = run ? ((loop_step * 14u + phase) * 38u / (length * 14u)) * 2u : 0;
     static unsigned last_bar_fill, last_loop_fill, last_loop_selection, last_loop_length, last_progress_bar;
     if (full || bar != last_progress_bar || bar_fill != last_bar_fill || loop_fill != last_loop_fill || selection != last_loop_selection || length != last_loop_length) {
-        cv_begin(240, 11, progress_surface);
+        cv_begin(240, 14, progress_surface);
         draw_transport_progress(position, fraction, length, run, track_color[selection]);
-        cv_blit(0, 23);
+        cv_blit(0, 44);
         last_progress_bar = bar;
         last_bar_fill = bar_fill;
         last_loop_fill = loop_fill;
@@ -5060,8 +5070,8 @@ static void draw_home_sequences(void)
         if (meter_only && last_lane[t].meter == (unsigned)meter && last_lane[t].peak == peak) continue;
         last_lane[t] = (__typeof__(last_lane[t])){cursor + 16u * beat_flash, first, patch, mix, revision,
             (unsigned)meter, peak, focused, pulse, sounding};
-        int lane_y = 34 + (int)t * 31;
-        int lane_height = t == DRUMS ? 30 : 31;
+        int lane_y = 58 + (int)t * 25;
+        int lane_height = 25;
         if (meter_only) {
             cv_begin(8, lane_height, C_BLACK);
             draw_home_meter(0, 0, meter, peak, color);
@@ -5071,11 +5081,11 @@ static void draw_home_sequences(void)
         static const uint16_t base_ink[] = {0x047b, 0x691d, 0xfa00, 0xc580, 0x04eb};
         static const uint16_t name_ink[] = {0xdfff, 0xf6ff, 0xff7a, 0xfffa, 0xdff9};
         cv_begin(240, lane_height, 0);
-        for (unsigned band = 0; band < 10u; ++band)
-            cv_rect(0, 1 + (int)band * 3, 232, band == 10u ? 1 : 3,
+        for (unsigned band = 0; band < 8u; ++band)
+            cv_rect(0, 1 + (int)band * 3, 232, 3,
                     home_shade(base_ink[t], 11u + pulse * 4u + band / 2u));
         cv_rect(0, 0, 232, 1, color);
-        int playhead = run ? 129 : 4;
+        int playhead = run ? 166 : 4;
         int origin = playhead - (int)cursor;
         int first_column = run ? -10 : 0;
         int wrapped_column = ((int)first + first_column) % (int)length;
@@ -5103,7 +5113,7 @@ static void draw_home_sequences(void)
                 unsigned span = index & 1u ? base - swing_samples : base + swing_samples;
                 unsigned gate = duration ? duration * NOTE_DURATION_UNIT : span * ((word >> 16) & 255u) / 192u;
                 int x = origin + col * 12 + (int)(timing * 12u / 16u);
-                int y = 31 - (int)(((word & NOTES) % 12u) * 27u / 11u);
+                int y = 22 - (int)(((word & NOTES) % 12u) * 19u / 11u);
                 int width = held_note_width(gate, index, base, span * timing / 16u) * 12 / 14;
                 uint16_t ink = color;
                 unsigned id = 1u + row * STEPS + index;
@@ -5123,10 +5133,10 @@ static void draw_home_sequences(void)
         for (const char *p = full_name; *p && n < 8u; ++p)
             if (size <= 8u || *p != ' ') name[n++] = *p;
         name[n] = 0;
-        draw_signature_name(name, name_ink[t], 174, 6, 18);
+        draw_signature_name(name, name_ink[t], 143, 3, 17);
         if (run) {
             cv_rect(playhead - 1, 0, 3, 32, home_shade(name_ink[t], 22));
-            for (int dot = 0; dot < 32; dot += 5)
+            for (int dot = 0; dot < 25; dot += 5)
                 cv_rect(playhead, dot, 1, 2, beat_flash ? C_WHITE : 0xbdf7);
             if (!t) {
                 cv_rect(playhead - 3, 1, 7, 1, C_WHITE);
@@ -5143,19 +5153,17 @@ static void draw_home_sequences(void)
         int pan = pan_percent((selected_mix >> 8) & 255u);
         int knob_positions[] = {(int)values[0] * 2 - 100, length <= 16 ? -100 : length <= 32 ? 0 : 100,
                           pan, (int)swing * 200 / 70 - 100};
-        uint16_t accent = track_color[selection];
-        cv_begin(240, 52, header);
+        cv_begin(240, 57, header);
         for (unsigned i = 0; i < 4u; ++i) {
             int x = (int)i * 60;
-            cv_rect(x + 1, 1, 58, 50, progress_surface);
             decimal(number, values[i]);
             if (i == 2u) {
                 number[0] = pan < 0 ? 'L' : 'R';
                 decimal(number + 1, (unsigned)(pan < 0 ? -pan : pan));
             }
-            draw_performance_knob(x, labels[i], i == 2u && !pan ? "CTR" : number, knob_positions[i], accent);
+            draw_performance_knob(x, labels[i], i == 2u && !pan ? "CTR" : number, knob_positions[i], track_color[i]);
         }
-        cv_blit(0, 188);
+        cv_blit(0, 183);
     }
     home_idle_valid = 1;
 }
