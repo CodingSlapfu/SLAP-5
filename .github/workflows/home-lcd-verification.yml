@@ -186,6 +186,12 @@ jobs:
             curl -fsSL --retry 3 -o "$RUNNER_TEMP/$name" "$latest_release/$name"
             printf '%s  %s\n' "$digest" "$RUNNER_TEMP/$name" | sha256sum -c -
           done
+          previous=https://github.com/CodingSlapfu/SLAP-5/releases/download/v0.1.45-hardware-testing
+          for entry in 'a72db8e95d7caf0f8a04f487f5376ef92a934ec39605a644095292e3ce5f21e8 SLAP-5-0.1.45.fwsc' '84c3793113aef1080d5582bf1fa223a84fe5332d04979fdeaaaef864973b4dc9 SLAP-5-0.1.45-engineering-backup.tar.gz'; do
+            read -r digest name <<< "$entry"
+            curl -fsSL --retry 3 "$previous/$name" -o "$RUNNER_TEMP/$name"
+            printf '%s  %s\n' "$digest" "$RUNNER_TEMP/$name" | sha256sum -c -
+          done
           rollback="$RUNNER_TEMP/SLAP-5-0.1.31.fwsc"
           curl -fsSL --retry 3 -o "$rollback" \
             https://github.com/CodingSlapfu/SLAP-5/releases/download/v0.1.31-hardware-testing/SLAP-5-0.1.31.fwsc

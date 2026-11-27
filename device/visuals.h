@@ -68,7 +68,8 @@ static void dancer_draw(unsigned time)
     unsigned pose = active ? (cycle + dancer_pattern * 8u) % 24u :
         24u + (recovery <= 5u ? recovery : 10u - recovery);
     unsigned light_track = ((positions >> 2) + dancer_pattern) % TRACKS;
-    int sway = active ? 0 : visual_wave(time * 2u, 1);
+    int sway = active ? visual_wave(time * (dancer_pattern + 2u), dancer_reactivity ? 6 + (int)(energy / 90u) : 4) :
+        visual_wave(time * 2u, 1);
     const uint8_t *span = dancer_frames[pose];
     enum { DANCER_LIFT = 14 };
     int source_row = 0;
@@ -85,8 +86,9 @@ static void dancer_draw(unsigned time)
         cv_begin(240, 40, C_BLACK);
         if (accent && dancer_lighting) {
             int spread = 16 + (int)(active ? note_activity[DRUMS] / 2u : 3u);
-            cv_line(38, 9 - sy, 120 - spread, 218 - sy, track_rule[light_track]);
-            cv_line(201, 9 - sy, 120 + spread, 218 - sy, track_rule[(light_track + 2u) % TRACKS]);
+            int sweep = visual_wave(time * 3u, 28);
+            cv_line(38, 9 - sy, 120 - spread + sweep, 218 - sy, track_rule[light_track]);
+            cv_line(201, 9 - sy, 120 + spread - sweep, 218 - sy, track_rule[(light_track + 2u) % TRACKS]);
         }
         if (active) cv_rect(15, 218 - sy, 210, 2, track_rule[light_track]);
         for (int y = 0; y < 40 && source_row < DANCER_HEIGHT; ++y) {

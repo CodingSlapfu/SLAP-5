@@ -4671,7 +4671,13 @@ static void draw_performance_knob(int x, const char *label, const char *value, i
             uint16_t shade = row < -body / 2 ? (studio ? 0xbe18 : 0x6b4d) :
                 row < body / 3 ? (studio ? 0x7bcf : 0x39e7) : (studio ? 0x4a69 : 0x2104);
             cv_rect(center - half, cy + row, 2 * half + 1, 1, bevel);
-            if (half > 2) cv_rect(center - half + 2, cy + row, 2 * half - 3, 1, shade);
+            if (half > 2) {
+                cv_rect(center - half + 2, cy + row, 2 * half - 3, 1, shade);
+                if (studio && !(row & 3) && half > 5)
+                    cv_rect(center - half + 4, cy + row, 2 * half - 7, 1, row < 0 ? 0xad95 : 0x52aa);
+                if (!studio && (row & 3) == 0)
+                    cv_rect(center - half + 1, cy + row, 2, 1, 0x526c);
+            }
         }
         if (!expanded) cv_text(x + 35 + (24 - width) / 2, 7, value_font, value, C_WHITE);
     } else {
@@ -4690,6 +4696,9 @@ static void draw_performance_knob(int x, const char *label, const char *value, i
             tick >= low && tick <= high ? color :
             bipolar && tick == origin ? 0xa514 : 0x39e7;
         cv_rect(px, py, digital ? 2 : 1, 2, ink);
+        if (digital && tick >= low && tick <= high)
+            cv_rect(center + visual_wave(angle + 256u, radius - 2),
+                    cy + visual_wave(angle, radius - 2), 1, 1, knob_style == KNOB_NEON ? 0xfcb4 : color);
     }
     if (!digital) {
         unsigned angle = 384u + (unsigned)(clamp(position, -100, 100) + 100) * 768u / 200u;
@@ -5324,18 +5333,20 @@ static void draw_panel(void)
         }
         cv_begin(240, 48, background);
         cv_text(8, 4, &FONT_M, settings_names[settings_section], c);
-        cv_text(8, 29, &FONT_XS, "ALGO PAGE / SELECT ITEM / K1 VALUE", C_WHITE);
+        cv_text(8, 29, &FONT_T, "ALGO PAGE   SELECT ROW   K1 EDIT", 0xbdf7);
         cv_blit(0, 48);
         for (unsigned row = 0; row < 4u; ++row) {
             cv_begin(240, 36, background);
             if (labels[row]) {
                 unsigned focused = settings_item == row;
-                cv_rect(5, 2, 230, 32, focused ? c : track_surface[selected]);
-                uint16_t ink = focused ? C_BLACK : C_WHITE;
+                cv_rect(4, 1, 232, 33, focused ? BLACK_PANEL : background);
+                cv_rect(4, 4, 2, 27, focused ? c : 0x2945);
+                cv_rect(12, 33, 216, 1, 0x18c3);
+                uint16_t ink = C_WHITE;
                 cv_text(12, 10, &FONT_B, labels[row], ink);
                 const char *value = values[row];
                 const felucca_font_t *font = text_w(&FONT_B, value) <= 94 ? &FONT_B : &FONT_XS;
-                cv_text(229 - text_w(font, value), 10, font, value, ink);
+                cv_text(229 - text_w(font, value), 10, font, value, focused ? c : 0xbdf7);
             }
             cv_blit(0, 96 + row * 36);
         }
