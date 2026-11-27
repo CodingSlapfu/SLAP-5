@@ -75,7 +75,7 @@ static uint32_t previous_live_key;
 static uint8_t smooth_controls[4];
 
 
-#if !defined(PLAT_WEB)
+#if defined(PLAT_HOST) && !defined(PLAT_WEB)
 typedef struct {
     Fx state;
     unsigned track, delay_count, chorus_count, room_count, slice_count;

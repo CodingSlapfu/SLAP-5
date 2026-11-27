@@ -2303,11 +2303,16 @@ static struct {
     uint32_t start, ticks;
 } voice_worker __attribute__((aligned(32)));
 static PLAT_POOL SlapSynth worker_synth[REMOTE_VOICES];
+#ifdef PLAT_HOST
 static float fx_bus[TRACKS][VOICE_BATCH] __attribute__((aligned(32)));
 static unsigned fx_worker_tracks[SLAP_FX_WORKER_TRACKS], fx_worker_count;
 static volatile uint32_t fx_worker_jobs, fx_worker_fallbacks, fx_worker_ticks;
 static unsigned fx_worker_cooldown;
-static uint32_t fx_job_start, fx_job_ticks, worker_overlap_ticks;
+static uint32_t fx_job_start, fx_job_ticks;
+#else
+enum { fx_worker_jobs = 0, fx_worker_fallbacks = 0, fx_worker_ticks = 0 };
+#endif
+static uint32_t worker_overlap_ticks;
 static volatile uint32_t worker_jobs, worker_fallbacks, worker_ticks, worker_wait_ticks;
 static volatile uint32_t voice_late_jobs, voice_rejected_jobs, voice_busy_jobs, fx_late_jobs;
 static volatile uint32_t voice_short_spans, voice_budget_skips, voice_no_split;
@@ -2580,6 +2585,7 @@ static unsigned render_voice_batch(unsigned frames, unsigned muted,
     return frames;
 }
 
+#ifdef PLAT_HOST
 static unsigned select_fx_worker_tracks(void)
 {
     // Live transitions can overlap configured effects. Allocate six bits per
@@ -2706,6 +2712,7 @@ static unsigned render_fx_batch(unsigned frames, unsigned mask, unsigned active,
     return frames;
 }
 
+#endif
 #else
 
 static unsigned render_voice_batch(unsigned frames, unsigned muted,
@@ -2770,7 +2777,9 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
         dsp_xrun_baseline = plat_xruns();
 #if FM1B_CPU2 && !defined(PLAT_WEB)
         worker_jobs = worker_fallbacks = worker_ticks = worker_wait_ticks = 0;
+#ifdef PLAT_HOST
         fx_worker_jobs = fx_worker_fallbacks = fx_worker_ticks = 0;
+#endif
         worker_overlap_ticks = peak_worker_overlap = peak_voice_recovery = peak_fx_recovery = 0;
         voice_late_jobs = voice_rejected_jobs = voice_busy_jobs = fx_late_jobs = 0;
         voice_short_spans = voice_budget_skips = voice_no_split = 0;
@@ -2923,16 +2932,14 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
     unsigned reclaim = dsp_pressure;
     uint32_t callback_budget = (24000000u / RATE) * frames;
 #if FM1B_CPU2 && !defined(PLAT_WEB)
-    unsigned fx_batch_end = 0;
-    // Track FX mutates live state in place. Keep it on Core 0 so a late FX
-    // block cannot hold Core 1 or force a checkpoint rollback and rerender.
-    unsigned fx_mask = 0;
+    // Native FX never transfers ownership. Only the host fault fixture uses the old path.
 #ifdef PLAT_HOST
+    unsigned fx_batch_end = 0, fx_mask = 0;
     if (host_legacy_fx_worker && !fx_worker_cooldown && !voice_recovery_jobs && !measure_fx &&
         (active_effects & (active_effects - 1u)) && plat_cpu2_on())
         fx_mask = select_fx_worker_tracks();
-#endif
     if (fx_worker_cooldown) --fx_worker_cooldown;
+#endif
     uint32_t voice_batch_ticks = 0, fx_batch_ticks = 0;
     uint32_t remote_start = worker_ticks + fx_worker_ticks, wait_start = worker_wait_ticks;
     uint32_t overlap_start = worker_overlap_ticks;
@@ -3033,11 +3040,13 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
             if (spike_enabled && voice_ticks > spike_current[SPIKE_SPAN])
                 spike_current[SPIKE_SPAN] = voice_ticks;
             if (profile) serial[PROFILE_VOICES] += voice_end - stage_start;
+#ifdef PLAT_HOST
             fx_batch_end = i;
             if (fx_mask) {
                 fx_batch_end += render_fx_batch(amount, fx_mask, effect_mask, audio_started, callback_budget);
                 fx_batch_ticks += plat_ticks24() - voice_end;
             }
+#endif
 #else
             if (profile) serial[PROFILE_VOICES] += plat_ticks24() - stage_start;
 #endif
@@ -3057,7 +3066,7 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
             float sample = voice_bus[t][i - batch_start];
             if (effect_mask & (1u << t)) {
                 float processed;
-#if FM1B_CPU2 && !defined(PLAT_WEB)
+#if FM1B_CPU2 && defined(PLAT_HOST) && !defined(PLAT_WEB)
                 if (i < fx_batch_end) processed = fx_bus[t][i - batch_start];
                 else
 #endif
