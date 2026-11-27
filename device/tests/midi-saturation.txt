@@ -225,7 +225,7 @@ wait 2100
 release EDIT
 expect page 11
 expect track 5
-turn K1 1
+tap ARP
 expect solo 1
 tap HOME
 press PLAY
