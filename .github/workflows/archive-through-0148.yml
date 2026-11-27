@@ -1,0 +1,97 @@
+name: SLAP-5 verify historical recovery archive
+on:
+  push:
+    branches: [slap-5-environment-recovery]
+    paths: ['.github/workflows/archive-through-0148.yml']
+permissions:
+  contents: write
+concurrency:
+  group: slap5-history-through-0148
+jobs:
+  archive:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ARCHIVE_TAG: historical-firmware-through-0.1.48
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Inventory and verify historical payloads
+        run: |
+          set -eu
+          archive="$RUNNER_TEMP/history"
+          mkdir -p "$archive/releases" "$RUNNER_TEMP/upload"
+          commit=efa956451c0fb77bc730b4e72320b678179b4bdd
+          git fetch --no-tags origin "$commit"
+          git archive --format=tar.gz --prefix=SLAP-5-Pages/ "$commit" > "$archive/SLAP-5-Pages.tar.gz"
+          git tag --format='%(refname:short) %(objectname) %(*objectname)' > "$archive/source-tags.txt"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" | jq -s 'add' > "$RUNNER_TEMP/releases.json"
+          python3 - "$archive" "$RUNNER_TEMP/releases.json" <<'PY'
+          import concurrent.futures, hashlib, json, pathlib, subprocess, sys
+          root = pathlib.Path(sys.argv[1])
+          releases = json.loads(pathlib.Path(sys.argv[2]).read_text())
+          tasks, manifest = [], []
+          for release in releases:
+              tag = release["tag_name"]
+              if tag.startswith("historical-firmware") or not release["assets"]:
+                  continue
+              folder = root / "releases" / tag
+              folder.mkdir(parents=True)
+              commit = subprocess.check_output(["git", "rev-parse", f"{tag}^{{commit}}"], text=True).strip()
+              manifest.append(dict(tag=tag, commit=commit, url=release["html_url"],
+                                   prerelease=release["prerelease"], assets=release["assets"]))
+              (folder / "release-notes.md").write_text(release["body"] or "")
+              tasks.extend((asset, folder / asset["name"]) for asset in release["assets"])
+          def download(item):
+              asset, target = item
+              subprocess.run(["curl", "-fsSL", "--retry", "3", "--max-time", "120",
+                              asset["browser_download_url"], "-o", str(target)], check=True)
+              digest = hashlib.sha256(target.read_bytes()).hexdigest()
+              assert target.stat().st_size == asset["size"], target
+              if asset.get("digest"):
+                  assert asset["digest"] == "sha256:" + digest, target
+              asset["verified_sha256"] = digest
+          with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+              list(pool.map(download, tasks))
+          assert any(release["tag"] == "v0.1.48-hardware-testing" for release in manifest)
+          (root / "release-inventory.json").write_text(json.dumps(manifest, indent=2) + "\n")
+          print(f"Verified {len(tasks)} assets across {len(manifest)} releases.")
+          PY
+          cat > "$archive/RESTORE.md" <<'EOF'
+          # Restore historical SLAP-5 firmware
+
+          Extract this archive and run sha256sum -c SHA256SUMS at its root.
+          The release inventory maps files to exact tags, commits, original URLs, and byte digests.
+          The Pages snapshot preserves historical installers, firmware, screenshots, documentation, and Studio assets as of efa956451c0fb77bc730b4e72320b678179b4bdd.
+          Use the corresponding release notes and installer instructions. Confirm the FM-1 product ID, transition support and package checksum before flashing. Save an untouched copy of current projects. Firmware rollback does not downgrade project schemas.
+          The GitHub repository preserves source commits and release tags. Engineering backups within release folders also contain the packaged sources or native build inputs where originally published.
+          Drafts, expired Actions artifacts, and versions that were never published might be unavailable.
+          EOF
+          cd "$archive"
+          find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+          sha256sum -c SHA256SUMS --quiet
+          tar -czf "$RUNNER_TEMP/upload/SLAP-5-history-through-0.1.48.tar.gz" .
+          cd "$RUNNER_TEMP/upload"
+          sha256sum SLAP-5-history-through-0.1.48.tar.gz > historical-SHA256SUMS
+      - name: Publish and download recovery archive
+        run: |
+          set -eu
+          cd "$RUNNER_TEMP/upload"
+          gh release create "$ARCHIVE_TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --latest=false \
+            --title 'SLAP-5 historical recovery archive through v0.1.48' \
+            --notes 'Verified historical firmware, release notes, source-tag inventory, engineering backups and installer/Studio site snapshot. See RESTORE.md and SHA256SUMS inside.' \
+            SLAP-5-history-through-0.1.48.tar.gz historical-SHA256SUMS
+          gh release download "$ARCHIVE_TAG" --repo "$GITHUB_REPOSITORY" --dir "$RUNNER_TEMP/redownload"
+          cd "$RUNNER_TEMP/redownload"
+          sha256sum -c historical-SHA256SUMS
+          mkdir extracted
+          tar -xzf SLAP-5-history-through-0.1.48.tar.gz -C extracted
+          cd extracted
+          sha256sum -c SHA256SUMS --quiet
+          cc -O2 -o "$RUNNER_TEMP/ldr-test" "$GITHUB_WORKSPACE/vendor/fm1-base/tests/ldr_test.c"
+          start=releases/v0.1.31-hardware-testing/SLAP-5-0.1.31.fwsc
+          final=releases/v0.1.48-hardware-testing/SLAP-5-0.1.48.fwsc
+          "$RUNNER_TEMP/ldr-test" "$start" "$final" --interrupt
+          "$RUNNER_TEMP/ldr-test" "$final" "$start"
