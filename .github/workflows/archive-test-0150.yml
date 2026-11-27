@@ -1,0 +1,39 @@
+name: Preserve verified v0.1.50 hardware-testing release assets
+on:
+  push:
+    branches: [slap-5-environment-recovery]
+    paths: ['.github/workflows/archive-test-0150.yml']
+permissions:
+  actions: read
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Wait for live installer verification
+        run: |
+          result=''
+          for i in $(seq 1 45); do
+            result="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/46017869301" --jq '.status + ":" + (.conclusion // "")')"
+            case "$result" in
+              completed:success) break ;;
+              completed:*) exit 1 ;;
+            esac
+            sleep 8
+          done
+          test "$result" = completed:success
+      - name: Attach exact checked firmware and backup
+        run: |
+          gh run download 46017869435 --repo "$GITHUB_REPOSITORY" --name SLAP-5-0.1.50-engineering-checkpoint-unpublished --dir "$RUNNER_TEMP/verified"
+          cd "$RUNNER_TEMP/verified"
+          sha256sum -c SHA256SUMS-0.1.50
+          gh release create v0.1.50-hardware-testing --repo "$GITHUB_REPOSITORY" --target 79b906e7bc1e302bbb15a91aeac91d7ebc58e9df --prerelease --latest=false \
+            --title 'SLAP-5 v0.1.50 — Experimental FM-1 hardware testing' \
+            --notes 'Experimental FM-1 firmware with native HOME type, a visible battery gauge, beat-synced Dancer and live measure-boundary STEPS. Physical JUNGLE stress qualification remains pending. Browser installer: https://codingslapfu.github.io/SLAP-5/flash-testing-0.1.50.html' \
+            SLAP-5-0.1.50.fwsc SHA256SUMS-0.1.50 SLAP-5-0.1.50-engineering-backup.tar.gz SLAP-5-0.1.50-framebuffer.zip SLAP-5-0.1.50-HOME-reference-comparison.png
+          mkdir redownload
+          gh release download v0.1.50-hardware-testing --repo "$GITHUB_REPOSITORY" --dir redownload
+          (cd redownload && sha256sum -c SHA256SUMS-0.1.50)
