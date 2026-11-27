@@ -2,6 +2,8 @@
 
 ## v0.1.49 engineering checkpoint
 
+Current application source `aa313d7497d1468320f58e69d7f8183bc89d5032`. [Engineering package](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45960084692/artifacts/15180995753) and [matching single-release site audit](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45960084724). The public installer and recovery archive remain in service while software acceptance stays open.
+
 [Source and physical qualification procedure](evidence/qualification-0.1.49.md). Existing public distribution stays in service pending the cross-page physical audio gate and final design acceptance in Issue #8.
 
 ## v0.1.48 experimental FM-1 candidate
