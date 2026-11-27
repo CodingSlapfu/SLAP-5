@@ -3122,6 +3122,8 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
                 if (mixer_envelope[t] < 0.0000001f && energy_smooth[t] < 0.0000001f) {
                     mixer_envelope[t] = energy_smooth[t] = 0.0f;
                 } else {
+                    // Short spans are cheaper to advance through the normal mixer.
+                    if (batch_end - i < 32u) continue;
                     if (envelope_decay == 0.0f) {
                         envelope_decay = silent_decay(0.00018f, batch_end - i);
                         meter_decay = silent_decay(0.0015f, batch_end - i);
