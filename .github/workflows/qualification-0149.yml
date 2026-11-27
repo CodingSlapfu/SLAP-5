@@ -94,7 +94,7 @@ jobs:
           styles="$RUNNER_TEMP/looper-knob-compare.txt"
           awk '/^shot knob-/ { name=$2; pending=1 } { print } /^tap HOME$/ && pending { sub(/^knob-/, "home-knob-", name); print "wait 100"; print "shot " name; pending=0 }' device/tests/knob-style.txt > "$styles"
           device/build/host/slap-5_host "$styles" "$RUNNER_TEMP/framebuffer"
-          git diff --exit-code 0176f5707d447530863ecf35fdafbde1b37a40bd -- design/owner-approved-home-v0.1.49.svg
+          test "$(git hash-object design/owner-approved-home-v0.1.49.svg)" = 4b7ef09c3d043b443f05e82fcf2a220eea75122f
           python3 - <<'PY'
           import os
           from pathlib import Path

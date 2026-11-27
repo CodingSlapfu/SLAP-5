@@ -35,7 +35,7 @@ key w0 up
 expect playing 1
 expect step >3
 press EDIT
-wait 1900
+wait 900
 expect page 0
 expect recording 1
 wait 150

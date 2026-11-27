@@ -39,15 +39,19 @@ jobs:
                   continue
               folder = root / "releases" / tag
               folder.mkdir(parents=True)
-              commit = subprocess.check_output(["git", "rev-parse", f"{tag}^{{commit}}"], text=True).strip()
-              manifest.append(dict(tag=tag, commit=commit, url=release["html_url"],
+              ref = subprocess.run(["git", "rev-parse", "--verify", f"refs/tags/{tag}^{{commit}}"],
+                                   stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+              commit = ref.stdout.strip() if ref.returncode == 0 else None
+              manifest.append(dict(tag=tag, commit=commit, release_target=release["target_commitish"],
+                                   draft=release["draft"], url=release["html_url"],
                                    prerelease=release["prerelease"], assets=release["assets"]))
               (folder / "release-notes.md").write_text(release["body"] or "")
               tasks.extend((asset, folder / asset["name"]) for asset in release["assets"])
           def download(item):
               asset, target = item
-              subprocess.run(["curl", "-fsSL", "--retry", "3", "--max-time", "120",
-                              asset["browser_download_url"], "-o", str(target)], check=True)
+              with target.open("wb") as output:
+                  subprocess.run(["gh", "api", "-H", "Accept: application/octet-stream",
+                                  asset["url"]], stdout=output, check=True)
               digest = hashlib.sha256(target.read_bytes()).hexdigest()
               assert target.stat().st_size == asset["size"], target
               if asset.get("digest"):
