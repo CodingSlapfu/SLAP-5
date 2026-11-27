@@ -99,24 +99,9 @@ static void dancer_draw(unsigned time)
     const uint8_t *trail = active && trail_ink ? dancer_frames[previous_pose] : 0;
     const uint8_t *span = dancer_frames[pose];
     enum { DANCER_LIFT = 14 };
-    int source_row = 0;
-    while (source_row < DANCER_LIFT * DANCER_HEIGHT / 240) {
-        while (*span) {
-            unsigned code = *span++;
-            if (code >> 6 == 3u) ++span;
-            if ((code >> 3 & 7u) == 7u) ++span;
-        }
-        ++span;
-        if (trail) {
-            while (*trail) {
-                unsigned code = *trail++;
-                if (code >> 6 == 3u) ++trail;
-                if ((code >> 3 & 7u) == 7u) ++trail;
-            }
-            ++trail;
-        }
-        ++source_row;
-    }
+    int source_row = DANCER_LIFT * DANCER_HEIGHT / 240;
+    int pose_first = dancer_first_rows[pose];
+    int trail_first = dancer_first_rows[previous_pose];
     for (int sy = 0; sy < 240; sy += 40) {
         cv_begin(240, 40, C_BLACK);
         if (accent) {
@@ -128,15 +113,18 @@ static void dancer_draw(unsigned time)
         if (active) cv_rect(15, 218 - sy, 210, 2, track_rule[light_track]);
         for (int y = 0; y < 40 && source_row < DANCER_HEIGHT; ++y) {
             const uint8_t *next_trail = trail;
-            if (trail && !(y & (dsp_pressure ? 3 : 1)))
+            if (trail && source_row >= trail_first && !(y & (dsp_pressure ? 3 : 1)))
                 next_trail = dancer_row(trail, y, previous_sway, trail_ink);
-            if (dancer_outline)
-                dancer_row(span, y, sway, active ? track_rule[light_track] : RGB(23, 14, 35));
-            const uint8_t *next = dancer_row(span, y, sway, 0);
+            const uint8_t *next = span;
+            if (source_row >= pose_first) {
+                if (dancer_outline)
+                    dancer_row(span, y, sway, active ? track_rule[light_track] : RGB(23, 14, 35));
+                next = dancer_row(span, y, sway, 0);
+            }
             int next_row = (sy + y + DANCER_LIFT + 1) * DANCER_HEIGHT / 240;
             if (next_row != source_row) {
                 span = next;
-                if (trail && next_trail == trail) {
+                if (trail && source_row >= trail_first && next_trail == trail) {
                     while (*next_trail) {
                         unsigned code = *next_trail++;
                         if (code >> 6 == 3u) ++next_trail;
