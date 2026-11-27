@@ -73,13 +73,14 @@ jobs:
           turn K3 2
           tap SEL
           expect length 64
-          expect events >1
           shot role-generator.png
           tap SEQ
           expect page 1
+          expect pitch >0
           tap HOME
           tap PLAY
           wait 2000
+          expect events >1
           expect length 64
           expect playing 1
           FIXTURE
