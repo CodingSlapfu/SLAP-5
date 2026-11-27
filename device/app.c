@@ -5153,7 +5153,7 @@ static void draw_home_sequences(void)
         int pan = pan_percent((selected_mix >> 8) & 255u);
         int knob_positions[] = {(int)values[0] * 2 - 100, length <= 16 ? -100 : length <= 32 ? 0 : 100,
                           pan, (int)swing * 200 / 70 - 100};
-        cv_begin(240, 57, header);
+        cv_begin(240, 52, header);
         for (unsigned i = 0; i < 4u; ++i) {
             int x = (int)i * 60;
             decimal(number, values[i]);
@@ -5164,6 +5164,10 @@ static void draw_home_sequences(void)
             draw_performance_knob(x, labels[i], i == 2u && !pan ? "CTR" : number, knob_positions[i], track_color[i]);
         }
         cv_blit(0, 183);
+        if (full) {
+            cv_begin(240, 5, header);
+            cv_blit(0, 235);
+        }
     }
     home_idle_valid = 1;
 }
