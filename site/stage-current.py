@@ -22,6 +22,7 @@ screens = [
     ("looper-jungle-240.png", "HOME and the five JUNGLE tracks"),
     ("fm6-active.png", "Sound Lab FM6 routing"),
     ("wavetable-active.png", "Sound Lab wavetable"),
+    ("drum-sound-lab.png", "Drum Sound Lab and live signal"),
     ("knob-analog-classic.png", "MIXER Analog Classic"),
     ("knob-analog-studio.png", "MIXER Analog Studio"),
     ("knob-digital-neon.png", "MIXER Digital Neon"),

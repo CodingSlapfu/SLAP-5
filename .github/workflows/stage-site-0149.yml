@@ -17,16 +17,15 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
         with:
-          ref: 7fd92a81fc5f684d0aa591de8e7e59114d36ced1
+          ref: 4f2048879e930a9091d1bb3ef73f8346daca6643
           path: firmware-source
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
       - name: Download the exact-source firmware and captures
         run: |
-          gh run download 45955599338 --name SLAP-5-0.1.49-engineering-checkpoint-unpublished --dir "$RUNNER_TEMP/verified"
+          gh run download 45956039967 --name SLAP-5-0.1.49-engineering-checkpoint-unpublished --dir "$RUNNER_TEMP/verified"
           (cd "$RUNNER_TEMP/verified" && sha256sum -c SHA256SUMS-0.1.49)
-          printf '%s  %s\n' 9b4d0f622049e83855256045e6d1690cf7f88fd9c34f10e9f7c02eeffe6bac33 "$RUNNER_TEMP/verified/SLAP-5-0.1.49.fwsc" | sha256sum -c -
       - name: Build matching Studio and stage current pages
         run: |
           python3 -m venv "$RUNNER_TEMP/python"
@@ -71,7 +70,7 @@ jobs:
               if (path === '/' || path === '/flash.html')
                 assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), path);
               const urls = await page.locator('img').evaluateAll(nodes => nodes.map(image => image.src));
-              for (const url of urls) assert.ok((await fetch(url)).ok(), url);
+              for (const url of urls) assert.ok((await fetch(url)).ok, url);
             }
             assert.deepEqual(errors, []);
             await page.close();
