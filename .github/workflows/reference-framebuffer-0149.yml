@@ -1,0 +1,47 @@
+name: SLAP-5 reference framebuffer audit
+on:
+  push:
+    branches: [slap-5-environment-recovery]
+    paths: ['.github/workflows/reference-framebuffer-0149.yml']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  reference:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Compare exact-source rendered pixels with the pinned reference
+        run: |
+          gh run download 45964624868 --repo "$GITHUB_REPOSITORY" --name SLAP-5-0.1.49-engineering-checkpoint-unpublished --dir "$RUNNER_TEMP/verified"
+          (cd "$RUNNER_TEMP/verified" && sha256sum -c SHA256SUMS-0.1.49)
+          python3 -m venv "$RUNNER_TEMP/python"
+          "$RUNNER_TEMP/python/bin/pip" install Pillow==11.3.0
+          "$RUNNER_TEMP/python/bin/python" - <<'PY'
+          import base64, os
+          from pathlib import Path
+          from PIL import Image, ImageChops
+
+          path = Path(os.environ["RUNNER_TEMP"]) / "verified/SLAP-5-0.1.49-HOME-reference-comparison.png"
+          pair = Image.open(path).convert("RGB")
+          assert pair.size == (480, 240)
+          reference = pair.crop((0, 0, 240, 240))
+          actual = pair.crop((240, 0, 480, 240))
+          regions = {
+              "header": (0, 0, 240, 44),
+              "progress": (0, 44, 240, 58),
+              "lanes": (0, 58, 240, 183),
+              "rotaries": (0, 183, 240, 240),
+          }
+          for name, box in regions.items():
+              delta = ImageChops.difference(reference.crop(box), actual.crop(box))
+              values = list(delta.getdata())
+              changed = sum(pixel != (0, 0, 0) for pixel in values)
+              mean = sum(sum(pixel) for pixel in values) / (3 * len(values))
+              print(f"{name}: {changed}/{len(values)} pixels differ, mean absolute RGB channel delta {mean:.2f}")
+          encoded = base64.b64encode(path.read_bytes()).decode()
+          for offset in range(0, len(encoded), 1024):
+              print("FRAMEBUFFER_PNG", encoded[offset:offset + 1024])
+          PY
