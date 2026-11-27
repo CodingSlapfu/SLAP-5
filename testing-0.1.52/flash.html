@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Install · SLAP-5</title><link rel="stylesheet" href="studio.css">
+<link rel="stylesheet" href="fonts/slap-block.css">
+<style>figure{margin:0}img{max-width:100%;height:auto;image-rendering:pixelated}
+.gallery{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));gap:1.25rem}
+nav{display:flex;gap:1rem;flex-wrap:wrap}code{overflow-wrap:anywhere}</style></head>
+<body><header><a class="brand" href="./">SLAP<span>-5</span></a>
+<nav aria-label="Main"><a href="flash.html">Install</a><a href="studio.html">Studio</a><a href="./#controls">Controls</a></nav>
+</header><main>
+<h1>Install SLAP-5 v0.1.52</h1>
+<p>For the M-VAVE FM-1. Save untouched project copies and use a data-capable USB cable.</p>
+<p>Identity <code>FM-1_75000152</code> · 611,488 bytes</p>
+<p>SHA-256 <code>ffddc8b99114caf39026269149b1d8f025389435d9e46c73f1f84d6db8ed2389</code></p>
+<ol><li>Connect your FM-1 over USB.</li><li>Confirm the installed firmware is supported for this update and close other MIDI applications.</li>
+<li>Connect below, review the device identity and confirm the update. Keep USB connected until installation finishes.</li></ol>
+<p id="availability"></p>
+<p><button id="connect">Connect FM-1</button></p>
+<p><label><input id="confirmed" type="checkbox"> I backed up my projects and verified the connected device.</label></p>
+<p><button id="install" disabled>Install v0.1.52</button></p>
+<p id="result" role="status"></p>
+<p id="desktop-fallback"><a href="SLAP-5-0.1.52.fwsc">Download the verified firmware for the desktop installer</a></p>
+<p><a href="https://github.com/CodingSlapfu/SLAP-5/releases/tag/historical-firmware-through-0.1.48">Recovery instructions and historical archive</a></p>
+<script type="module" src="flash.js"></script>
+</main></body></html>
