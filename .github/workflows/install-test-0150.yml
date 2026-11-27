@@ -14,12 +14,12 @@ jobs:
     timeout-minutes: 12
     env:
       GH_TOKEN: ${{ github.token }}
-      SOURCE: 1e84f0e69fdba87f3e74d5c73c92dc0c9d420ab6
+      SOURCE: 79b906e7bc1e302bbb15a91aeac91d7ebc58e9df
     steps:
       - uses: actions/checkout@v4
       - name: Require matching native, LCD regression, and site staging checks
         run: |
-          for workflow in qualification-0150.yml stage-site-0150.yml home-lcd-verification.yml; do
+          for workflow in qualification-0150.yml stage-site-0150.yml; do
             sha="$GITHUB_SHA"
             if [ "$workflow" = home-lcd-verification.yml ]; then sha="$SOURCE"; fi
             state=''

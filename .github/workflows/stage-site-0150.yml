@@ -17,7 +17,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
         with:
-          ref: 1e84f0e69fdba87f3e74d5c73c92dc0c9d420ab6
+          ref: 79b906e7bc1e302bbb15a91aeac91d7ebc58e9df
           path: firmware-source
       - uses: actions/setup-node@v4
         with:
@@ -48,7 +48,7 @@ jobs:
           "$RUNNER_TEMP/emsdk/emsdk" activate 3.1.64
           source "$RUNNER_TEMP/emsdk/emsdk_env.sh"
           (cd firmware-source && site/build.sh "$RUNNER_TEMP/studio")
-          python3 site/stage-current.py "$RUNNER_TEMP/studio" "$RUNNER_TEMP/verified" "$RUNNER_TEMP/current"
+          python3 site/stage-testing-0150.py "$RUNNER_TEMP/studio" "$RUNNER_TEMP/verified" "$RUNNER_TEMP/current"
           test "$(find "$RUNNER_TEMP/current" -name '*.fwsc' | wc -l)" = 1
           test ! -e "$RUNNER_TEMP/current/flash-testing.html"
       - name: Verify desktop, mobile, installer manifest and Studio
