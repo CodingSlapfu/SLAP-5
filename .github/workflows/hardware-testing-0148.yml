@@ -24,10 +24,15 @@ jobs:
       - name: Require exact-source host, native, browser and DSP comparison
         run: |
           test "$(git rev-parse HEAD)" = "$CHECKPOINT"
-          for run in 45942312167 45942312182 45942312181; do
+          browser_source=645cdb15636b30b1cd7a71e0553bc9e4e9bc8102
+          git fetch --no-tags origin "$browser_source"
+          git diff --exit-code "$CHECKPOINT" "$browser_source" -- . ':(exclude).github/workflows/hardware-testing-0148.yml'
+          for run in 45942312167 45942423076 45942312181; do
             expected="$CHECKPOINT"
+            if [ "$run" = 45942423076 ]; then expected="$browser_source"; fi
             for attempt in $(seq 1 30); do
               state="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq '.head_sha + ":" + .status + ":" + (.conclusion // "")')"
+              echo "Gate $run: $state"
               case "$state" in
                 "$expected:completed:success") break ;;
                 "$expected:completed:"*) exit 1 ;;
