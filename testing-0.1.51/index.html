@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Five-track groovebox · SLAP-5</title><link rel="stylesheet" href="studio.css">
+<link rel="stylesheet" href="fonts/slap-block.css">
+<style>figure{margin:0}img{max-width:100%;height:auto;image-rendering:pixelated}
+.gallery{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));gap:1.25rem}
+nav{display:flex;gap:1rem;flex-wrap:wrap}code{overflow-wrap:anywhere}</style></head>
+<body><header><a class="brand" href="./">SLAP<span>-5</span></a>
+<nav aria-label="Main"><a href="flash.html">Install</a><a href="studio.html">Studio</a><a href="./#controls">Controls</a></nav>
+</header><main>
+<h1>SLAP-5 v0.1.51 hardware testing</h1>
+<p>Experimental FM-1 build. Physical JUNGLE stress qualification is pending.</p><p>A five-track groovebox for the M-VAVE FM-1 with four melodic tracks, a drum track and sixteen shared voices.</p>
+<p><a href="flash.html">Install on FM-1</a> · <a href="studio.html">Open SLAP Studio</a> · <a href="emulator/">Open the FM-1 simulation</a></p>
+<h2 id="controls">Performance controls</h2>
+<ul><li>HOME opens the looper. Press again for visualizers. SELECT chooses a track.</li>
+<li>HOME K1–K4 adjust level, pattern length, stereo pan and swing.</li>
+<li>Tap REC to start or finish a take. Recording preferences set overdub or replace and count-in behavior.</li>
+<li>On HOME, hold REC + OCT− for two seconds to clear the selected track. Hold REC + OCT+ for five seconds to reset the working song. Release early to cancel. Saved songs and system preferences remain available.</li>
+<li>Tap EDIT for Sound Lab. Hold EDIT for one second for MIXER.</li>
+<li>MIXER K1–K4 adjust level, duck, all-track filter and selected-track filter. ARP toggles solo, and SELECT + K2 changes the duck source.</li>
+<li>In SETTINGS → DISPLAY, use SELECT to highlight KNOB THEME and turn K1.</li></ul>
+<h2>Sound and connectivity</h2>
+<p>25 synthesis engines, 128 factory patches, 25 factory drum kits with 16 sounds each, 16/32/64-step patterns, LIVE FX, SLICER and USB audio/MIDI. The firmware uses 256-frame audio callbacks and a 240×240 RGB565 display. Studio runs the matching firmware source in a browser simulation.</p>
+<h2>Firmware gallery</h2><p>240×240 captures from the v0.1.51 firmware host renderer.</p>
+<div class="gallery"><figure><img src="screens/looper-jungle-240.png" width="240" height="240" loading="lazy" alt="HOME and the five JUNGLE tracks"><figcaption>HOME and the five JUNGLE tracks</figcaption></figure><figure><img src="screens/fm6-active.png" width="240" height="240" loading="lazy" alt="Sound Lab FM6 routing"><figcaption>Sound Lab FM6 routing</figcaption></figure><figure><img src="screens/wavetable-active.png" width="240" height="240" loading="lazy" alt="Sound Lab wavetable"><figcaption>Sound Lab wavetable</figcaption></figure><figure><img src="screens/drum-sound-lab.png" width="240" height="240" loading="lazy" alt="Drum Sound Lab and live signal"><figcaption>Drum Sound Lab and live signal</figcaption></figure><figure><img src="screens/knob-analog-classic.png" width="240" height="240" loading="lazy" alt="MIXER Analog Classic"><figcaption>MIXER Analog Classic</figcaption></figure><figure><img src="screens/knob-analog-studio.png" width="240" height="240" loading="lazy" alt="MIXER Analog Studio"><figcaption>MIXER Analog Studio</figcaption></figure><figure><img src="screens/knob-digital-neon.png" width="240" height="240" loading="lazy" alt="MIXER Digital Neon"><figcaption>MIXER Digital Neon</figcaption></figure><figure><img src="screens/knob-digital-segmented.png" width="240" height="240" loading="lazy" alt="MIXER Digital Segmented"><figcaption>MIXER Digital Segmented</figcaption></figure><figure><img src="screens/gravity-rings.png" width="240" height="240" loading="lazy" alt="Gravity Rings"><figcaption>Gravity Rings</figcaption></figure><figure><img src="screens/digital-vu.png" width="240" height="240" loading="lazy" alt="Digital VU"><figcaption>Digital VU</figcaption></figure><figure><img src="screens/filter.png" width="240" height="240" loading="lazy" alt="FX filter response"><figcaption>FX filter response</figcaption></figure><figure><img src="screens/slicer.png" width="240" height="240" loading="lazy" alt="Slicer"><figcaption>Slicer</figcaption></figure><figure><img src="screens/guarded-clear.png" width="240" height="240" loading="lazy" alt="Track-clear countdown"><figcaption>Track-clear countdown</figcaption></figure></div>
+<h2>Using the FM-1</h2><p>Use a USB data cable and close other MIDI apps before connecting. Check the project backup and firmware identity before installing. If the browser cannot connect, verify USB MIDI access and use the download link with the desktop flasher if needed.</p>
+<h2>Release notes</h2><p>v0.1.51 redesigns all four shared dials. Analog Classic has a fluted dark body, Analog Studio a brushed silver face, Digital Neon a recessed chamfered face, and Digital Segmented a rectangular instrument readout. Choose under SETTINGS → DISPLAY → KNOB THEME.</p><p>FX inspection now follows active track FX and samples the visible track. Rendering uses a 20 FPS cap with coalescing under load. HOME gains a dotted playhead, vertical battery gauge and a clearer tempo and shortcut header. The Dancer follows the transport beat with a bounded bass accent. K1 toggles bass response, K2 changes the beat division and pose stride, K3 toggles subtle sway, and K4 toggles club lights. HOME K2 queues live length changes for the next measure. GEN DRUM writes finite editable 16-, 32-, or 64-step patterns.</p>
+<p><a href="https://github.com/CodingSlapfu/SLAP-5/issues">Support</a> · <a href="https://github.com/CodingSlapfu/SLAP-5/releases/tag/historical-firmware-through-0.1.48">Recovery archive</a></p>
+</main></body></html>
