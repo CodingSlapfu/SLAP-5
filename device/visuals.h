@@ -72,17 +72,18 @@ static void dancer_draw(unsigned time)
     int amplitude = dancer_outline ? 9 : 3;
     if (dancer_reactivity) amplitude += (int)((track_energy[0] + track_energy[2]) / 44u);
     int sway = active ? visual_wave(time * (dancer_pattern + 2u), amplitude) : visual_wave(time * 2u, 1);
+    unsigned now = plat_ms();
     static unsigned started, prior_bucket, prior_pose, previous_pose, was_active, last_draw;
     static int prior_sway, previous_sway;
-    if (!active || !was_active || time - last_draw > 250u) {
-        started = time;
+    if (!active || !was_active || now - last_draw > 250u) {
+        started = now;
         prior_pose = previous_pose = pose;
         prior_sway = previous_sway = sway;
-        prior_bucket = time / 500u;
+        prior_bucket = now / 500u;
     }
     was_active = active;
-    last_draw = time;
-    unsigned bucket = time / 500u;
+    last_draw = now;
+    unsigned bucket = now / 500u;
     if (bucket != prior_bucket) {
         previous_pose = prior_pose;
         previous_sway = prior_sway;
@@ -90,7 +91,7 @@ static void dancer_draw(unsigned time)
         prior_sway = sway;
         prior_bucket = bucket;
     }
-    unsigned trail_phase = (time - started) % 5000u;
+    unsigned trail_phase = (now - started) % 5000u;
     unsigned opacity = trail_phase < 2000u ? 24u : trail_phase < 3400u ?
         (3400u - trail_phase) * 24u / 1400u : 0u;
     const uint16_t hue = track_color[light_track];
@@ -138,7 +139,7 @@ static void dancer_draw(unsigned time)
         }
         if (sy == 0) {
             cv_text(8, 5, &FONT_B, "DANCER", C_WHITE);
-            if (dancer_control_at && time - dancer_control_at < 1200u) {
+            if (dancer_control_at && now - dancer_control_at < 1200u) {
                 static const char *const labels[] = {"REACT", "GROOVE", "SWAY", "LIGHT"};
                 unsigned levels[] = {dancer_reactivity, dancer_pattern, dancer_outline, dancer_lighting};
                 char readout[] = "0";
