@@ -14,11 +14,11 @@ jobs:
     timeout-minutes: 12
     env:
       GH_TOKEN: ${{ github.token }}
-      CHECKPOINT: c945e09252d9af06d4fb28e5c6a374f4e4429294
+      CHECKPOINT: 0a03a652900e85005e9adfc2bf87f06f2187b8eb
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: c945e09252d9af06d4fb28e5c6a374f4e4429294
+          ref: 0a03a652900e85005e9adfc2bf87f06f2187b8eb
       - name: Build and audit the versioned native package
         run: |
           python3 -m venv "$RUNNER_TEMP/slap-python"
@@ -65,6 +65,19 @@ jobs:
           python3 vendor/fm1-base/tools/build.py device --host
           device/build/host/slap-5_host device/tests/guarded-reset.txt "$RUNNER_TEMP/framebuffer"
           device/build/host/slap-5_host device/tests/graph-navigation.txt "$RUNNER_TEMP/framebuffer"
+          git fetch --no-tags origin c945e09252d9af06d4fb28e5c6a374f4e4429294
+          git worktree add --detach "$RUNNER_TEMP/dancer-baseline" FETCH_HEAD
+          (cd "$RUNNER_TEMP/dancer-baseline" && python3 vendor/fm1-base/tools/build.py device --host)
+          motion="$RUNNER_TEMP/dancer-motion.txt"
+          cp device/tests/transport-mixer.txt "$motion"
+          printf '%s\n' 'tap PLAY' 'key w0 down' >> "$motion"
+          for frame in $(seq 1 12); do printf 'wait 280\nshot dancer-%02d.png\n' "$frame" >> "$motion"; done
+          printf '%s\n' 'key w0 up' 'tap PLAY' >> "$motion"
+          mkdir "$RUNNER_TEMP/dancer-before" "$RUNNER_TEMP/dancer-after"
+          "$RUNNER_TEMP/dancer-baseline/device/build/host/slap-5_host" "$motion" "$RUNNER_TEMP/dancer-before"
+          device/build/host/slap-5_host "$motion" "$RUNNER_TEMP/dancer-after"
+          for shot in "$RUNNER_TEMP/dancer-after/"*.png; do cmp "$shot" "$RUNNER_TEMP/dancer-before/${shot##*/}"; done
+          cp "$RUNNER_TEMP/dancer-after/"dancer*.png "$RUNNER_TEMP/framebuffer/"
           fixture="$RUNNER_TEMP/looper-reference-comparison.txt"
           awk '{print} /^expect worker_fallbacks 0$/ {print "shot looper-jungle-240.png"}' device/tests/jungle-155.txt > "$fixture"
           device/build/host/slap-5_host "$fixture" "$RUNNER_TEMP/framebuffer"
