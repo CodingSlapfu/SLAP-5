@@ -1,5 +1,9 @@
 # SLAP-5 environment recovery
 
+## v0.1.49 engineering checkpoint
+
+[Source and physical qualification procedure](evidence/qualification-0.1.49.md). Existing public distribution stays in service pending the cross-page physical audio gate and final design acceptance in Issue #8.
+
 ## v0.1.48 experimental FM-1 candidate
 
 Source `4e405ddaecc740254a7ca33dca1641f581c23120`. Identity `FM-1_75000148`. [Qualification and FM-1 acceptance procedure](evidence/qualification-0.1.48.md). [Exact-source native packaging, rollback and deployed installer](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45942568719).

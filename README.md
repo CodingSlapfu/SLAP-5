@@ -17,7 +17,7 @@ SLAP-5 is an original five-track groovebox for the M-VAVE FM-1. Copyright (C) 20
 | REC + ARP | Cancel the current take and restore its snapshot. |
 | Hold REC for 2 seconds | Open advanced RECORD. |
 | Tap EDIT | Open SOUND LAB. K1 Filter, K2 Resonance, K3 Decay (Room on drums), K4 Drive. Turn ALGO right for the patch browser and synthesis display. |
-| Hold EDIT for 2 seconds | Open MIXER. Press HOME to exit. The first five white keys mute tracks 1–5 and show their enabled state. ARP toggles the selected track's solo. |
+| Hold EDIT for 1 second | Open MIXER. Press HOME to exit. The first five white keys mute tracks 1–5 and show their enabled state. ARP toggles the selected track's solo. |
 | Tap GLO | Open SETTINGS from a performance page. |
 | Hold GLO for 5 seconds | Open DIAGNOSTICS. Short GLO presses inside diagnostics cycle its pages. |
 | Double-press FX | Open LIVE FX. Black keys apply momentary effects and white keys play notes. SEL switches between the selected track and the full mix. |
