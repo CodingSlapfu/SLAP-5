@@ -157,3 +157,4 @@ jobs:
             curl -fsSL --max-time 15 "$base/$file?verify=$GITHUB_RUN_ID" -o "$RUNNER_TEMP/live"
             cmp "$file" "$RUNNER_TEMP/live"
           done
+

@@ -110,7 +110,7 @@ jobs:
           styles="$RUNNER_TEMP/looper-knob-compare.txt"
           awk '/^shot knob-/ { name=$2; pending=1 } { print } /^tap HOME$/ && pending { sub(/^knob-/, "home-knob-", name); print "wait 100"; print "shot " name; pending=0 }' device/tests/knob-style.txt > "$styles"
           device/build/host/slap-5_host "$styles" "$RUNNER_TEMP/framebuffer"
-          test "$(git hash-object design/owner-approved-home-v0.1.50.svg)" = 4b7ef09c3d043b443f05e82fcf2a220eea75122f
+          test "$(git hash-object design/owner-approved-home-v0.1.49.svg)" = 4b7ef09c3d043b443f05e82fcf2a220eea75122f
           python3 - <<'PY'
           import os
           from pathlib import Path
@@ -123,7 +123,7 @@ jobs:
               capture.resize((960, 960), Image.Resampling.NEAREST).save(folder / "looper-jungle-960.png")
           import cairosvg
           reference_path = folder / "owner-approved-home-240.png"
-          cairosvg.svg2png(url="design/owner-approved-home-v0.1.50.svg", write_to=str(reference_path),
+          cairosvg.svg2png(url="design/owner-approved-home-v0.1.49.svg", write_to=str(reference_path),
                            output_width=240, output_height=240)
           with Image.open(reference_path) as reference, Image.open(native) as actual:
               compare = Image.new("RGB", (480, 240))
