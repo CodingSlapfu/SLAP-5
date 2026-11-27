@@ -50,16 +50,15 @@ tap HOME
 tap GLO
 turn ALGO 7
 expect settings_section 7
-expect led_active_soft 0
-turn SELECT 2
+expect led_track 2
+expect led_other 1
+turn K1 -2
+expect led_track 0
+turn SELECT 1
 turn K1 1
-expect led_active_soft 1
+expect led_other 2
 wait 700
 reboot
 wait 6100
-expect led_active_soft 1
-tap GLO
-turn ALGO 7
-turn SELECT 2
-turn K1 -1
-expect led_active_soft 0
+expect led_track 0
+expect led_other 2

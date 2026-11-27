@@ -455,12 +455,13 @@ static void load_patch(unsigned track, unsigned number)
 
 enum { PREF_AUDIO, PREF_METRO, PREF_RECORD, PREF_TRANSPORT, PREF_KEYS, PREF_DISPLAY, PREF_DIAG, PREF_LEDS, PREF_MIDI, PREF_SYNC, PREF_MIDI_ROUTE, PREF_MIDI_TRACKS, PREF_MIDI_MON, PREF_KNOB_STYLE, PREF_SECTIONS };
 static unsigned settings_section, settings_item;
-static const uint8_t settings_count[PREF_SECTIONS] = {4, 3, 4, 1, 1, 2, 1, 3, 4, 4, 4, 4, 1, 1};
+static const uint8_t settings_count[PREF_SECTIONS] = {4, 3, 4, 1, 1, 2, 1, 2, 4, 4, 4, 4, 1, 1};
 static const char *const settings_names[] = {
     "AUDIO", "METRONOME", "RECORDING", "TRANSPORT", "KEYBOARD", "DISPLAY", "SYSTEM", "LEDS", "MIDI", "MIDI SYNC", "MIDI ROUTE", "MIDI TRACKS", "MIDI MONITOR", "KNOB STYLE"
 };
 static volatile uint32_t output_trim, speaker_mode, click_trim, resume_playback, auto_level_off, auto_mix;
 static unsigned visual_quality, led_style, led_keys_on_hit, led_active_soft;
+static unsigned led_track = 2, led_other = 1, led_custom;
 enum { KNOB_CLASSIC, KNOB_STUDIO, KNOB_NEON, KNOB_SEGMENTED };
 enum { BLACK_CHROMA = 0x0000, BLACK_PANEL = 0x0841 };
 static volatile unsigned mixer_duck_source = DRUMS;
@@ -533,6 +534,10 @@ void app_init(void)
     led_style = saved_preferences >> 30;
     led_keys_on_hit = !!(options & 64u) || (!(options & 128u) && led_style == 3u);
     led_active_soft = !!(options & 256u);
+    unsigned encoded_track = options >> 29 & 3u;
+    led_custom = led_style == 3u && encoded_track;
+    led_track = led_custom ? encoded_track - 1u : 2u;
+    led_other = led_custom ? (unsigned)clamp(led_keys_on_hit + 2u * led_active_soft, 0, 2) : 1u;
     slap_ui.visual = select_visual(saved_preferences >> 22 & 7u, 0);
     startup_sample = 0;
     startup_phase = 0.0f;
@@ -4184,9 +4189,11 @@ void app_input_only(void)
             if (knob[0]) perfect_note_off = knob[0] > 0 ? 0u : 15u;
             break;
         case PREF_LEDS:
-            if (knob[0]) led_style = (unsigned)clamp((int)led_style + knob[0], 0, 2);
-            if (knob[1]) led_keys_on_hit = knob[1] > 0;
-            if (knob[2]) led_active_soft = knob[2] > 0;
+            if (knob[0] || knob[1]) {
+                led_custom = 1;
+                led_track = (unsigned)clamp((int)led_track + knob[0], 0, 2);
+                led_other = (unsigned)clamp((int)led_other + knob[1], 0, 2);
+            }
             break;
         case PREF_MIDI:
         case PREF_SYNC:
@@ -4524,25 +4531,30 @@ void app_input_only(void)
     }
     for (unsigned i = 0; i < sizeof live_black_keys / sizeof live_black_keys[0]; ++i)
         key_lights &= ~(1u << live_black_keys[i]);
-    unsigned priority_lights = context | (lights & (LED_PLAY_GREEN | (1u << B_REC)));
-    unsigned ordinary_lights = lights & ~priority_lights;
-    uint32_t bright_buttons = priority_lights | ordinary_lights;
-    uint32_t dim_buttons = ((1u << NB) - 1u) & ~bright_buttons;
-    uint32_t normal_keys = ((1u << NKEYS) - 1u) & ~key_lights;
+    const uint32_t activity = lights & (LED_PLAY_GREEN | (1u << B_REC));
+    uint32_t ordinary = (lights | context) & ~(context | activity);
+    uint32_t bright = activity | (led_track == 2u ? context : 0u) | (led_other == 2u ? ordinary : 0u);
+    uint32_t middle = (led_track == 1u ? context : 0u) | (led_other == 1u ? ordinary : 0u);
+    uint32_t dim = (led_track == 0u ? context : 0u) | (led_other == 0u ? ordinary : 0u);
+    uint32_t idle = ((1u << NB) - 1u) & ~(bright | middle | dim);
+    if (led_style != 1u) dim |= idle;
+    uint32_t white_keys = ((1u << NKEYS) - 1u);
     for (unsigned i = 0; i < sizeof live_black_keys / sizeof live_black_keys[0]; ++i)
-        normal_keys &= ~(1u << live_black_keys[i]);
-    if (slap_ui.page == MIXER || led_keys_on_hit) normal_keys = 0;
-    plat_lights(led_active_soft ? 0u : bright_buttons, led_active_soft ? 0u : key_lights,
-        dim_buttons, 0, led_style == 2u ? 2 : led_style == 1u ? 0 : 1);
-    plat_lights_mid(led_active_soft ? bright_buttons : 0u,
-        normal_keys | (led_active_soft ? key_lights : 0u));
+        white_keys &= ~(1u << live_black_keys[i]);
+    if (slap_ui.page != MIXER && !led_keys_on_hit) key_lights |= white_keys;
+    key_lights &= white_keys;
+    plat_lights(bright, led_other == 2u ? key_lights : 0u, dim,
+                led_other == 0u ? key_lights : 0u, 1);
+    plat_lights_mid(middle, led_other == 1u ? key_lights : 0u);
     uint32_t preferences = metronome | (perfect_note_off & 15u) << 2 |
         rec_bars << 6 | rec_count_in << 9 | rec_replace << 10 | rec_quantize << 11 |
         output_trim << 15 | speaker_mode << 17 | click_trim << 18 |
-        resume_playback << 20 | visual_quality << 21 | (unsigned)slap_ui.visual << 22 | auto_level_off << 25 | split_keys << 26 | led_style << 30;
+        resume_playback << 20 | visual_quality << 21 | (unsigned)slap_ui.visual << 22 | auto_level_off << 25 | split_keys << 26 | (led_custom ? 3u : led_style) << 30;
     uint32_t options = auto_mix | dancer_pattern << 1 | (unsigned)!dancer_outline << 3 |
         (unsigned)!dancer_lighting << 4 | (unsigned)!dancer_reactivity << 5 |
-        led_keys_on_hit << 6 | 128u | led_active_soft << 8 | midi_options << 9 |
+        (led_custom ? led_other & 1u : led_keys_on_hit) << 6 | 128u |
+        (led_custom ? led_other >> 1 : led_active_soft) << 8 | midi_options << 9 |
+        (led_custom ? led_track + 1u : 0u) << 29 |
         (knob_style ? (knob_style << 27) | (1u << 31) : 0u);
     uint32_t duck = 0;
     for (unsigned t = 0; t < DRUMS; ++t) duck |= (uint32_t)mixer_duck[t] << (8u * t);
@@ -5337,10 +5349,9 @@ static void draw_panel(void)
             values[0] = level; values[1] = visual_quality ? "ECO" : "ADAPTIVE";
             break;
         case PREF_LEDS: {
-            static const char *const profiles[] = {"SOFT", "OFF", "BRIGHTER", "SOFT"};
-            labels[0] = "IDLE BUTTONS"; values[0] = profiles[led_style];
-            labels[1] = "NORMAL KEYS"; values[1] = led_keys_on_hit ? "OFF" : "MEDIUM";
-            labels[2] = "ACTIVE LIGHTS"; values[2] = led_active_soft ? "MEDIUM" : "HIGH";
+            static const char *const profiles[] = {"LOW", "MED", "MAX"};
+            labels[0] = "TRACK SELECT"; values[0] = profiles[led_track];
+            labels[1] = "OTHER BUTTONS"; values[1] = profiles[led_other];
             break;
         }
         case PREF_MIDI:
@@ -6769,6 +6780,8 @@ int app_expect(const char *name, int *result)
     else if (name_matches(name, "midi_clock")) *result = !!midi_clock_period;
     else if (name_matches(name, "settings_section")) *result = (int)settings_section;
     else if (name_matches(name, "knob_style")) *result = (int)knob_style;
+    else if (name_matches(name, "led_track")) *result = (int)led_track;
+    else if (name_matches(name, "led_other")) *result = (int)led_other;
     else if (name_matches(name, "led_active_soft")) *result = (int)led_active_soft;
     else if (name_matches(name, "resume_playback")) *result = (int)resume_playback;
     else if (name_matches(name, "output_trim")) *result = (int)output_trim;
