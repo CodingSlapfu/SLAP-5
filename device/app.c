@@ -453,13 +453,21 @@ static void load_patch(unsigned track, unsigned number)
         (patch->engine == 0u || patch->engine == 2u ? ADVANCED_SYNTH : 0u);
 }
 
-enum { PREF_AUDIO, PREF_METRO, PREF_RECORD, PREF_TRANSPORT, PREF_KEYS, PREF_DISPLAY, PREF_DIAG, PREF_LEDS, PREF_MIDI, PREF_SYNC, PREF_MIDI_ROUTE, PREF_MIDI_TRACKS, PREF_MIDI_MON, PREF_KNOB_STYLE, PREF_SECTIONS };
+enum { PREF_AUDIO, PREF_METRO, PREF_RECORD, PREF_TRANSPORT, PREF_KEYS, PREF_DISPLAY, PREF_DIAG, PREF_LEDS, PREF_MIDI, PREF_SYNC, PREF_MIDI_ROUTE, PREF_MIDI_TRACKS, PREF_MIDI_MON, PREF_SECTIONS };
 static unsigned settings_section, settings_item;
-static const uint8_t settings_count[PREF_SECTIONS] = {4, 3, 4, 1, 1, 2, 1, 2, 4, 4, 4, 4, 1, 1};
+static const uint8_t settings_count[PREF_SECTIONS] = {4, 3, 4, 1, 1, 3, 1, 2, 4, 4, 4, 4, 1};
 static const char *const settings_names[] = {
-    "AUDIO", "METRONOME", "RECORDING", "TRANSPORT", "KEYBOARD", "DISPLAY", "SYSTEM", "LEDS", "MIDI", "MIDI SYNC", "MIDI ROUTE", "MIDI TRACKS", "MIDI MONITOR", "KNOB STYLE"
+    "AUDIO", "METRONOME", "RECORDING", "TRANSPORT", "KEYBOARD", "DISPLAY", "SYSTEM", "LEDS", "MIDI", "MIDI SYNC", "MIDI ROUTE", "MIDI TRACKS", "MIDI MONITOR"
 };
 static volatile uint32_t output_trim, speaker_mode, click_trim, resume_playback, auto_level_off, auto_mix;
+static volatile int8_t scope_samples[SLAP_FX_PLOT];
+static volatile unsigned scope_head, scope_owner = TRACKS;
+
+static int visible_scope(unsigned track, unsigned point)
+{
+    return scope_owner == track ? scope_samples[(scope_head + point) % SLAP_FX_PLOT] : 0;
+}
+
 static unsigned visual_quality, led_style, led_keys_on_hit, led_active_soft;
 static unsigned led_track = 2, led_other = 1, led_custom;
 enum { KNOB_CLASSIC, KNOB_STUDIO, KNOB_NEON, KNOB_SEGMENTED };
@@ -2924,10 +2932,14 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
     const unsigned muted = muted_drums();
     unsigned measure_fx = slap_ui.page == FX && slap_ui.fx_page == 4;
     const unsigned analyze = slap_ui.page == VISUAL;
-    const unsigned inspect_fx = slap_ui.page == FX ||
-        (slap_ui.page == PATCH && edit_page && edit_page < SOUND_LAB_MAIN);
-    const unsigned active_effects = slap_fx_active_mask();
-    const unsigned effect_mask = inspect_fx ? (1u << TRACKS) - 1u : active_effects;
+    const unsigned effect_mask = slap_fx_active_mask();
+    const unsigned scope_track = slap_ui.page == FX ||
+        (slap_ui.page == PATCH && edit_page) ? slap_ui.track : TRACKS;
+    if (scope_track != scope_owner) {
+        for (unsigned p = 0; p < SLAP_FX_PLOT; ++p) scope_samples[p] = 0;
+        scope_head = 0;
+        scope_owner = scope_track;
+    }
     float meter_sum[2] = {0}, meter_peak[2] = {0};
     float target = master_q12 * (1.0f / 4096.0f) * (1.0f - 0.2f * output_trim);
     float click_gain = 1.0f - 0.25f * click_trim;
@@ -3028,6 +3040,7 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
             batch_end = i + render_voice_batch(amount, muted, audio_started, callback_budget);
             sleeping_mix = 0;
             unsigned signal_tracks = voice_span_tracks | effect_mask | low_filter_mask | high_filter_mask;
+            if (scope_track < TRACKS) signal_tracks |= 1u << scope_track;
             for (unsigned t = 0; t < TRACKS; ++t) {
                 if ((signal_tracks & (1u << t)) || mixer_gain[t] != 1.0f ||
                     (t < DRUMS && (duck_depth[t] > 0.0f || duck_amount[t] > 0.0f))) continue;
@@ -3086,6 +3099,11 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
                     }
                 }
                 sample += wet[t] * (processed - sample);
+            }
+            if (!(i & 63u) && t == scope_track) {
+                unsigned point = scope_head;
+                scope_samples[point] = (int8_t)(fm_clampf(sample * 2.0f, -1.0f, 1.0f) * 55.0f);
+                scope_head = point + 1u == SLAP_FX_PLOT ? 0u : point + 1u;
             }
             if (profile) section = plat_ticks24();
             float amplitude = fm_fabsf(sample);
@@ -3885,7 +3903,7 @@ void app_input_only(void)
         edit_pressed_at = gesture_now;
         pressed &= ~(1u << B_EDIT);
     }
-    if (edit_pending && (buttons & (1u << B_EDIT)) && gesture_now - edit_pressed_at >= 2000u) {
+    if (edit_pending && (buttons & (1u << B_EDIT)) && gesture_now - edit_pressed_at >= 1000u) {
         edit_pending = 0;
         slap_ui.page = MIXER;
         slap_ui.frame_at = gesture_now - 45u;
@@ -4192,6 +4210,8 @@ void app_input_only(void)
         case PREF_LEDS:
             if (knob[0] || knob[1]) {
                 led_custom = 1;
+                led_keys_on_hit = 0;
+                led_style = 3u;
                 led_track = (unsigned)clamp((int)led_track + knob[0], 0, 2);
                 led_other = (unsigned)clamp((int)led_other + knob[1], 0, 2);
             }
@@ -4227,12 +4247,9 @@ void app_input_only(void)
             }
             break;
         }
-        case PREF_KNOB_STYLE:
-            knob_style = (unsigned)clamp((int)knob_style + knob[0], KNOB_CLASSIC, KNOB_SEGMENTED);
-            break;
         case PREF_DISPLAY:
             slap_ui.visual = select_visual(slap_ui.visual, knob[0]);
-            visual_quality = (unsigned)clamp((int)visual_quality + knob[1], 0, 1);
+            knob_style = (unsigned)clamp((int)knob_style + knob[2], KNOB_CLASSIC, KNOB_SEGMENTED);
             break;
         }
     } else if (slap_ui.page == VISUAL && slap_ui.visual == 6) {
@@ -4895,37 +4912,39 @@ static void draw_home_sequences(void)
     const uint16_t progress_surface = BLACK_PANEL;
     if (redraw_header) {
         cv_begin(240, 23, header);
-        cv_text(6, 0, &FONT_M, "LOOPER", 0x9eff);
+        cv_text(4, 0, &FONT_M, "LOOPER", C_WHITE);
         decimal(number, bpm);
-        cv_text(84, 0, &FONT_M, number, C_WHITE);
+        cv_text(145, 5, &FONT_T, "BPM", 0xad55);
+        cv_text(169, 0, &FONT_M, number, C_WHITE);
         char label[] = { 'T', (char)('0' + (notice & 7u)), 0 };
         if (notice) {
-            cv_text(132, 0, &FONT_XS, notice & 32u ? "CLEAR?" : notice & 8u ? "UNDO" : "CLEARED", C_WHITE);
+            cv_text(94, 0, &FONT_XS, notice & 32u ? "CLEAR?" : notice & 8u ? "UNDO" : "CLEARED", C_WHITE);
             cv_text(211, 0, &FONT_XS, label, C_WHITE);
         } else {
-            cv_text(132, 0, &FONT_XS, "USB", status & 1u ? C_WHITE : 0x9cd3);
-            cv_text(172, 0, &FONT_XS, "IN", status & 2u ? 0x8ff3 : 0x9cd3);
-            cv_text(199, 0, &FONT_XS, "OUT", status & 4u ? 0x8ff3 : 0x9cd3);
-            cv_text(158, 12, &FONT_T, "EDIT 2S MIXER", 0x9cd3);
+            cv_text(94, 0, &FONT_XS, "USB", status & 1u ? C_WHITE : 0x9cd3);
+            cv_text(117, 0, &FONT_XS, "IN", status & 2u ? 0x8ff3 : 0x9cd3);
+            cv_text(94, 10, &FONT_XS, "OUT", status & 4u ? 0x8ff3 : 0x9cd3);
+            cv_text(119, 14, &FONT_T, "EDIT 1S MIXER", C_WHITE);
         }
         if (battery_status >= 0 && battery_status < 4) {
-            uint16_t battery_ink = low_battery ? track_color[3] : C_WHITE;
-            cv_rect(132, 15, 21, 7, battery_ink);
-            cv_rect(133, 16, 19, 5, header);
-            cv_rect(153, 17, 2, 3, battery_ink);
+            const uint16_t battery_ink = 0xfd20;
+            cv_rect(78, 4, 10, 16, battery_ink);
+            cv_rect(80, 2, 6, 2, battery_ink);
+            cv_rect(79, 5, 8, 14, header);
             for (int cell = 0; cell < battery_status; ++cell)
-                cv_rect(134 + cell * 5, 17, 4, 3, track_color[4]);
+                cv_rect(80, 16 - cell * 4, 6, 3, battery_ink);
         }
         cv_blit(0, 0);
     }
     unsigned phase = fraction < 14u ? fraction : 13u;
     unsigned bar_fill = run ? (((loop_step & 15u) * 14u + phase) * 27u / 224u) * 2u : 0;
     unsigned loop_fill = run ? ((loop_step * 14u + phase) * 38u / (length * 14u)) * 2u : 0;
-    static unsigned last_bar_fill, last_loop_fill, last_loop_selection, last_loop_length;
-    if (full || bar_fill != last_bar_fill || loop_fill != last_loop_fill || selection != last_loop_selection || length != last_loop_length) {
+    static unsigned last_bar_fill, last_loop_fill, last_loop_selection, last_loop_length, last_progress_bar;
+    if (full || bar != last_progress_bar || bar_fill != last_bar_fill || loop_fill != last_loop_fill || selection != last_loop_selection || length != last_loop_length) {
         cv_begin(240, 11, progress_surface);
         draw_transport_progress(position, fraction, length, run, track_color[selection]);
         cv_blit(0, 23);
+        last_progress_bar = bar;
         last_bar_fill = bar_fill;
         last_loop_fill = loop_fill;
         last_loop_selection = selection;
@@ -5025,7 +5044,8 @@ static void draw_home_sequences(void)
         draw_signature_name(name, name_ink[t], 218, 4, 22);
         if (run) {
             cv_rect(playhead - 1, 0, 3, 32, home_shade(name_ink[t], 22));
-            cv_rect(playhead, 0, 1, 32, beat_flash ? C_WHITE : 0xbdf7);
+            for (int dot = 0; dot < 32; dot += 5)
+                cv_rect(playhead, dot, 1, 2, beat_flash ? C_WHITE : 0xbdf7);
             if (!t) {
                 cv_rect(playhead - 3, 1, 7, 1, C_WHITE);
                 cv_rect(playhead - 2, 2, 5, 1, C_WHITE);
@@ -5247,7 +5267,7 @@ static void draw_panel(void)
     unsigned selected = (unsigned)slap_ui.track;
     if (selected >= TRACKS) return;
     if (slap_ui.page == SETTINGS && settings_section == PREF_DISPLAY) {
-        uint32_t signature = (uint32_t)slap_ui.visual | visual_quality << 3 |
+        uint32_t signature = (uint32_t)slap_ui.visual | knob_style << 4 |
             settings_item << 8 | selected << 10 | tempo << 13;
         if (signature == display_settings_signature) return;
         display_settings_signature = signature;
@@ -5337,16 +5357,13 @@ static void draw_panel(void)
         case PREF_KEYS:
             labels[0] = "PERFECT NOTE";
             values[0] = perfect_note_off == 0u ? "ON" : perfect_note_off == 15u ? "OFF" : "MIXED"; break;
-        case PREF_KNOB_STYLE: {
+        case PREF_DISPLAY: {
             static const char *const styles[] = {"ANALOG CLASSIC", "ANALOG STUDIO", "DIGITAL NEON", "DIGITAL SEGMENTED"};
-            labels[0] = "APPEARANCE"; values[0] = styles[knob_style];
+            labels[0] = "VISUALIZER"; labels[1] = "FRAME RATE"; labels[2] = "KNOB THEME";
+            decimal(level, visual_index(slap_ui.visual) + 1u);
+            values[0] = level; values[1] = "20 FPS"; values[2] = styles[knob_style];
             break;
         }
-        case PREF_DISPLAY:
-            labels[0] = "VISUALIZER"; labels[1] = "DISPLAY QUALITY";
-            decimal(level, visual_index(slap_ui.visual) + 1u);
-            values[0] = level; values[1] = visual_quality ? "ECO" : "ADAPTIVE";
-            break;
         case PREF_LEDS: {
             static const char *const profiles[] = {"LOW", "MED", "MAX"};
             labels[0] = "TRACK SELECT"; values[0] = profiles[led_track];
@@ -5891,8 +5908,8 @@ static void draw_panel(void)
                 } else if (selected < DRUMS) {
                     cv_rect(8, 30, 224, 1, track_rule[selected]);
                     for (unsigned i = 1; i < SLAP_FX_PLOT; ++i)
-                        cv_line(5 + (int)i * 3, 65 - (y - 160) - slap_fx_trace(selected, i - 1u) / 2,
-                            8 + (int)i * 3, 65 - (y - 160) - slap_fx_trace(selected, i) / 2, c);
+                        cv_line(5 + (int)i * 3, 65 - (y - 160) - visible_scope(selected, i - 1u) / 2,
+                            8 + (int)i * 3, 65 - (y - 160) - visible_scope(selected, i) / 2, c);
                 }
                 cv_blit(0, y);
             }
@@ -6110,8 +6127,8 @@ static void draw_panel(void)
             cv_begin(240, 40, background);
             cv_rect(8, 20, 224, 1, track_rule[selected]);
             for (unsigned point = 1; point < SLAP_FX_PLOT; ++point)
-                cv_line(5 + (int)point * 3, 20 - slap_fx_trace(selected, point - 1u) / 2,
-                    8 + (int)point * 3, 20 - slap_fx_trace(selected, point) / 2, c);
+                cv_line(5 + (int)point * 3, 20 - visible_scope(selected, point - 1u) / 2,
+                    8 + (int)point * 3, 20 - visible_scope(selected, point) / 2, c);
             cv_blit(0, 120);
             cv_begin(240, 40, background);
             switch (patch->engine) {
@@ -6295,9 +6312,9 @@ static void draw_panel(void)
                     cv_rect(8 + (int)slice.replay * 4, 67 - offset, 1, 37, C_WHITE);
             } else {
                 for (unsigned i = 0; i < SLAP_FX_PLOT; ++i) {
-                    int y = fpage == 1 ? filter_curve[i] : 53 + slap_fx_trace(selected, i);
+                    int y = fpage == 1 ? filter_curve[i] : 53 + visible_scope(selected, i);
                     int next = fpage == 1 ? filter_curve[i + (i + 1u < SLAP_FX_PLOT)] :
-                        53 + slap_fx_trace(selected, i + (i + 1u < SLAP_FX_PLOT));
+                        53 + visible_scope(selected, i + (i + 1u < SLAP_FX_PLOT));
                     int x = 8 + (int)i * 3;
                     if (fpage == 1) {
                         int low = y < 61 ? y : 61;
@@ -6620,13 +6637,12 @@ static void draw_panel(void)
 void app_frame(void)
 {
     app_input_only();
-    if (slap_ui.page == VISUAL) update_spectrum();
-    else analysis_read = analysis_write;
+    if (slap_ui.page != VISUAL) analysis_read = analysis_write;
     uint32_t now = plat_ms();
     sample_battery(now);
     static uint32_t last_xruns, last_pressure;
     static unsigned under_pressure;
-    unsigned frame_interval = 45u;
+    unsigned frame_interval = 50u;
     if (slap_ui.page == VISUAL) {
         uint32_t xruns = plat_xruns();
         if (xruns != last_xruns || (dsp_budget_ticks &&
@@ -6636,12 +6652,13 @@ void app_frame(void)
         }
         last_xruns = xruns;
         if (under_pressure && now - last_pressure >= 1000u) under_pressure = 0;
-        if (under_pressure || visual_quality) frame_interval = 85u;
+        if (under_pressure) frame_interval = 100u;
     } else {
         last_xruns = plat_xruns();
     }
     if (now - slap_ui.frame_at >= frame_interval) {
         slap_ui.frame_at = now;
+        if (slap_ui.page == VISUAL) update_spectrum();
         static uint32_t displayed_notes[TRACKS];
         for (unsigned t = 0; t < TRACKS; ++t) {
             uint32_t notes = visual_notes[t];

@@ -717,11 +717,13 @@ static inline __attribute__((always_inline)) float process_sample(
         }
         x += f->dp[0] * f->delay_lp;
     }
+#ifdef PLAT_HOST
     if (track < SLAP_FX_TRACKS && (f->block_index++ & 63u) == 0) {
         unsigned point = (f->block_index >> 6) % SLAP_FX_PLOT;
         traces[track][point] = (int8_t)(clamp_signal(x * 2.0f) * 55.0f);
         if (!track) trace_head = point;
     }
+#endif
     return x;
 }
 

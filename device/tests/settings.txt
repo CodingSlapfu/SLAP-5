@@ -32,7 +32,7 @@ expect settings_section 6
 tap SEL
 expect page 2
 press EDIT
-wait 1800
+wait 800
 expect page 2
 wait 250
 expect page 11
