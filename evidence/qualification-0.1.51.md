@@ -1,3 +1,7 @@
 # SLAP-5 v0.1.51 knob testing
 
 The shared renderer preserves geometry and labels. Analog Classic uses a fluted dark body, Analog Studio a brushed silver face, Digital Neon a recessed chamfered face, and Digital Segmented a rectangular readout with block indicators. The available descriptions and approved HOME SVG guided this original adaptation. Physical visual and JUNGLE acceptance remain open.
+
+[Direct installer](https://codingslapfu.github.io/SLAP-5/flash-testing-0.1.51.html) accepts compatible FM-1 units running v0.1.50. [Testing site and Studio](https://codingslapfu.github.io/SLAP-5/testing-0.1.51/). [Verified package, backup and all four HOME/MIXER captures](https://github.com/CodingSlapfu/SLAP-5/actions/runs/46032568509/artifacts/15215101512). [Live Pages verification](https://github.com/CodingSlapfu/SLAP-5/actions/runs/46032568714) passed at `51915677e120b99dd7f29f436dc17184cc86609d`. Primary installer stayed in service.
+
+Firmware `FM-1_75000151`, application `7080d36c998db3c09dcca18deb79e1b80e3b0844`, SHA-256 `449e494cf5c1521fbd29ec89d974ec55185e7dab493c655364ea60b21847afbf`. Verified backup SHA-256 `ce4c5b597788fa79a7c66aab8bf0f97df97083f7556310c8737ef572ea3b12b9`. Native package, prior-version interruption/rollback simulation, host regressions and matching Studio staging passed. No separate GitHub Releases publication was attempted after the prior integration 403. Original handoff PNGs were unavailable for visual comparison, and physical acceptance remains pending.
