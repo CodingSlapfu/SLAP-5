@@ -2466,6 +2466,7 @@ static unsigned experimental_voice_split(const unsigned *slots, unsigned active,
 static unsigned render_voice_batch(unsigned frames, unsigned muted,
                                    uint32_t callback_start, uint32_t budget)
 {
+    static uint32_t worker_ticks_per_cost_frame_q4;
     uint32_t dispatch_started = spike_enabled ? plat_ticks24() : 0u;
     unsigned active_slots[VOICES], active = 0, total_cost = 0;
     unsigned eligible_by_cost[MAX_VOICE_COST + 1];
@@ -2502,6 +2503,16 @@ static unsigned render_voice_batch(unsigned frames, unsigned muted,
         unsigned remaining = (total_cost * share + 8u) / 16u;
         // Keep two-voice chords eligible without offloading the entire workload.
         if (active == 2) remaining = (total_cost + 1u) / 2u;
+        // Reserve the final quarter for serial FX, mixing and IRQ jitter.
+        // Until a worker has completed a job, retain the established split.
+        if (worker_ticks_per_cost_frame_q4) {
+            uint32_t elapsed = plat_ticks24() - callback_start;
+            uint32_t time_limit = budget * 3u / 4u;
+            uint32_t unit = (worker_ticks_per_cost_frame_q4 * frames + 15u) >> 4;
+            unsigned cap = elapsed < time_limit ? (time_limit - elapsed) / unit : 0;
+            if (!cap) ++voice_budget_skips;
+            if (remaining > cap) remaining = cap;
+        }
 #ifdef PLAT_HOST
         if (host_voice_split != HOST_COST_SPLIT)
             remote = experimental_voice_split(active_slots, active, remaining);
@@ -2522,6 +2533,7 @@ static unsigned render_voice_batch(unsigned frames, unsigned muted,
 
     if (dispatch && active > 1 && !remote) ++voice_no_split;
     int launched = 0;
+    unsigned remote_cost = 0;
     if (remote) {
         voice_worker.count = 0;
         voice_worker.muted = muted;
@@ -2532,6 +2544,7 @@ static unsigned render_voice_batch(unsigned frames, unsigned muted,
         for (unsigned n = 0; n < active; ++n) {
             unsigned slot = active_slots[n];
             if (!(remote & (1u << slot))) continue;
+            remote_cost += voices[slot].dispatch_cost & (VOICE_LOCAL_ONLY - 1u);
             unsigned i = voice_worker.count++;
             voice_worker.slot[i] = slot;
             voice_worker.voice[i] = voices[slot];
@@ -2595,6 +2608,13 @@ static unsigned render_voice_batch(unsigned frames, unsigned muted,
         if (voice_recovery_jobs && !--voice_recovery_jobs) voice_late_streak = 0;
         if (voice_worker.ticks > peak_voice_job_ticks) peak_voice_job_ticks = voice_worker.ticks;
         worker_ticks += voice_worker.ticks;
+        if (remote_cost && voice_worker.ticks < budget) {
+            uint32_t measured = (voice_worker.ticks << 4) / (remote_cost * frames);
+            if (measured > worker_ticks_per_cost_frame_q4)
+                worker_ticks_per_cost_frame_q4 = measured;
+            else
+                worker_ticks_per_cost_frame_q4 = (15u * worker_ticks_per_cost_frame_q4 + measured + 8u) >> 4;
+        }
         if (voice_worker.profile) {
             for (unsigned engine = 0; engine < TRACE_ENGINES; ++engine)
                 if (voice_worker.engine_peaks[engine] > remote_engine_peaks[engine])
@@ -2887,7 +2907,10 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
         wet[t] = mixer_proc[t] * (1.0f / 255.0f);
         float envelope = mixer_envelope[t];
         float confidence = fm_clampf((envelope - 0.002f) * 125.0f, 0.0f, 1.0f);
-        float correction = fm_clampf(0.035f / fm_maxf(envelope, 0.006f), 0.62f, 1.65f);
+        // The same envelope follows drums, but preserve more transient punch
+        // when automatic leveling reduces a hot kit.
+        float floor = t == DRUMS ? 0.80f : 0.62f;
+        float correction = fm_clampf(0.035f / fm_maxf(envelope, 0.006f), floor, 1.65f);
         gain_goal[t] = automatic ? 1.0f + confidence * (correction - 1.0f) : 1.0f;
         activity[t] = sharing ? fm_clampf(envelope * level * 28.0f, 0.0f, 1.0f) : 0.0f;
         activity_sum += activity[t];
@@ -3118,9 +3141,10 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
                 (trigger > drum_duck_envelope ? 0.018f : duck_release);
             duck = drum_duck_envelope;
         }
+        const unsigned sample_cost = measure_fx && i == 0u;
+        const unsigned sampled_track = (i & 63u) ? TRACKS : scope_track;
         for (unsigned slot = 0; slot < mix_count; ++slot) {
             unsigned t = mix_tracks[slot];
-            unsigned sample_cost = measure_fx && i == 0u;
             float sample = voice_bus[t][i - batch_start];
             if (effect_mask & (1u << t)) {
                 float processed;
@@ -3139,7 +3163,7 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
                 }
                 sample += wet[t] * (processed - sample);
             }
-            if (!(i & 63u) && t == scope_track) {
+            if (t == sampled_track) {
                 unsigned point = scope_head;
                 scope_samples[point] = (int8_t)(fm_clampf(sample * 2.0f, -1.0f, 1.0f) * 55.0f);
                 scope_head = point + 1u == SLAP_FX_PLOT ? 0u : point + 1u;
@@ -3156,8 +3180,8 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
                 if (gain_goal[t] == 1.0f && (next == previous || fm_fabsf(1.0f - next) < 0.00005f))
                     next = 1.0f;
                 mixer_gain[t] = next;
-                sample *= mixer_gain[t];
-                amplitude = fm_fabsf(sample);
+                sample *= next;
+                amplitude *= next;
             }
             if (duck_enabled && t < DRUMS) {
                 duck_amount[t] += (duck_depth[t] - duck_amount[t]) * 0.003f;
