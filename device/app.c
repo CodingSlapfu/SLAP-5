@@ -4919,53 +4919,50 @@ static void draw_performance_knob(int x, const char *label, const char *value, i
     cv_text(label_x + 1, label_y + 1, label_font, label, 0x18c3);
     cv_text(label_x, label_y, label_font, label, C_WHITE);
 
-    // The four faces share the same envelope and value position.
+    // Shared bounds, layered surfaces designed for RGB565 contrast.
     for (int row = -body; row <= body; ++row) {
-        int magnitude = row < 0 ? -row : row;
-        int rounded = rim[magnitude * 12 / body] * body / 12;
-        int half = rounded;
-        uint16_t edge, face;
-        switch (theme) {
-        case KNOB_STUDIO:
-            edge = row < 0 ? 0xef7d : 0x630c;
-            face = row < -body / 2 ? 0xce79 : row < 0 ? 0x9cf3 :
-                   row < body / 2 ? 0x736e : 0x4208;
-            break;
-        case KNOB_NEON:
-            half = body - (magnitude > body / 2 ? magnitude - body / 2 : 0);
-            edge = row < 0 ? 0x1b6e : 0x08ab;
-            face = magnitude < body / 2 ? 0x0046 : 0x08ca;
-            break;
-        case KNOB_SEGMENTED:
-            half = body - (magnitude > body * 2 / 3 ? (magnitude - body * 2 / 3) * 2 : 0);
-            edge = row < 0 ? 0x6b4d : 0x2124;
-            face = magnitude < body / 2 ? 0x0000 : 0x2104;
-            break;
-        default:
-            edge = row < 0 ? 0x4a69 : 0x1082;
-            face = row < -body / 2 ? 0x39e7 : row < 0 ? 0x2945 : 0x18c3;
-            break;
+        int dy = row < 0 ? -row : row;
+        int half = rim[dy * 12 / body] * body / 12;
+        uint16_t bevel, face, shine;
+        if (theme == KNOB_STUDIO) {
+            bevel = row < 0 ? 0xffff : 0x39e7;
+            face = row < -body / 2 ? 0xdebb : row < 0 ? 0xb596 :
+                   row < body / 2 ? 0x8c71 : 0x52aa;
+            shine = row < 0 ? 0xc618 : 0x738e;
+        } else if (theme == KNOB_NEON) {
+            half = body - (dy > body / 2 ? dy - body / 2 : 0);
+            bevel = row < 0 ? 0x3eff : 0x7815;
+            face = dy < body / 2 ? 0x0008 : 0x1950;
+            shine = row < 0 ? 0x294f : 0x5017;
+        } else if (theme == KNOB_SEGMENTED) {
+            half = body - (dy > body * 2 / 3 ? (dy - body * 2 / 3) * 2 : 0);
+            bevel = row < 0 ? 0x94b2 : 0x18c3;
+            face = dy < body / 2 ? C_BLACK : 0x2945;
+            shine = row < 0 ? 0x630c : 0x1082;
+        } else {
+            bevel = row < 0 ? 0x6b6d : 0x0841;
+            face = row < -body / 2 ? 0x39e7 : row < 0 ? 0x2104 : 0x1082;
+            shine = row < 0 ? 0x4a69 : 0x2104;
         }
-        cv_rect(center - half, cy + row, half * 2 + 1, 1, edge);
-        if (half > 2)
-            cv_rect(center - half + 2, cy + row, half * 2 - 3, 1, face);
-        if (theme == KNOB_STUDIO && !(row & 1) && half > 4)
-            cv_rect(center - half + 3, cy + row, half * 2 - 5, 1,
-                    row < 0 ? 0xad55 : 0x5289);
-        if (theme == KNOB_CLASSIC && magnitude < body - 1 && !(row & 2)) {
-            cv_rect(center - half + 1, cy + row, 2, 1, 0x0000);
-            cv_rect(center + half - 2, cy + row, 2, 1, 0x526b);
+        cv_rect(center - half, cy + row, 2 * half + 1, 1, bevel);
+        if (half > 3) {
+            cv_rect(center - half + 1, cy + row, 2 * half - 1, 1, shine);
+            cv_rect(center - half + 3, cy + row, 2 * half - 5, 1, face);
+        }
+        if (theme == KNOB_STUDIO && !(row & 1) && half > 5)
+            cv_rect(center - half + 4, cy + row, 2 * half - 7, 1, shine);
+        if (theme == KNOB_CLASSIC && half > 4 && !(row & 2)) {
+            cv_rect(center - half + 1, cy + row, 2, 1, C_BLACK);
+            cv_rect(center + half - 2, cy + row, 2, 1, 0x6b4d);
         }
     }
-    if (theme == KNOB_NEON || theme == KNOB_SEGMENTED) {
-        int inset = body - 2;
-        uint16_t panel = theme == KNOB_NEON ? 0x32cf : 0x630c;
-        cv_rect(center - inset, cy - body / 2, inset * 2 + 1, 1, panel);
-        cv_rect(center - inset, cy + body / 2, inset * 2 + 1, 1, panel);
-        if (theme == KNOB_SEGMENTED) {
-            cv_rect(center - inset, cy - body / 2, 1, body + 1, panel);
-            cv_rect(center + inset, cy - body / 2, 1, body + 1, panel);
-        }
+    if (digital) {
+        int inset = body - 3;
+        uint16_t frame = theme == KNOB_NEON ? 0x0351 : 0x6b4d;
+        cv_rect(center - inset, cy - body / 2, 2 * inset + 1, body + 1, frame);
+        cv_rect(center - inset + 1, cy - body / 2 + 1, 2 * inset - 1, body - 1, C_BLACK);
+        cv_rect(center - inset + 2, cy - body / 2 + 1, 2 * inset - 3, 1,
+                theme == KNOB_NEON ? 0x43de : 0x2945);
     }
 
     unsigned origin = bipolar ? 12u : 0u;
@@ -4976,12 +4973,14 @@ static void draw_performance_knob(int x, const char *label, const char *value, i
         int px = center + arc[tick][0] * radius / 127;
         int py = cy + arc[tick][1] * radius / 127;
         uint16_t ink = tick >= low && tick <= high ? color : 0x39e7;
+        if (theme == KNOB_NEON && tick >= low && tick <= high)
+            ink = tick < 16u ? 0x4fff : 0xf81f;
         if (bipolar && tick == origin) ink = 0xadb5;
         if (theme == KNOB_SEGMENTED) {
-            cv_rect(px - 1, py, 3, 2, ink);
+            cv_rect(px - 1, py, 3, 3, ink);
             cv_rect(px, py - 1, 1, 1, tick >= low && tick <= high ? C_WHITE : 0x2945);
         } else {
-            int inward = radius - (theme == KNOB_STUDIO ? 4 : theme == KNOB_NEON ? 3 : 2);
+            int inward = radius - (theme == KNOB_STUDIO || theme == KNOB_NEON ? 4 : 3);
             cv_line(px, py, center + arc[tick][0] * inward / 127,
                     cy + arc[tick][1] * inward / 127, ink);
         }
@@ -5195,7 +5194,7 @@ static void draw_home_sequences(void)
                     home_shade(base_ink[t], (unsigned)clamp(20 + (int)(pulse + rise) * 2, 0, 32)));
         }
         cv_rect(0, 0, 232, 1, color);
-        int playhead = 134;
+        int playhead = 132;
         int origin = playhead - (int)cursor;
         int first_column = run ? -10 : 0;
         int wrapped_column = ((int)first + first_column) % (int)length;
@@ -5211,7 +5210,7 @@ static void draw_home_sequences(void)
         }
         unsigned base = RATE * 15u / bpm;
         unsigned swing_samples = base * swing / 200u;
-        int first_note = run ? (t == DRUMS ? -4 : -(int)length) : 0;
+        int first_note = run ? (t == DRUMS ? -13 : -(int)length - 12) : 0;
         unsigned index = run ? (unsigned)(((int)first + first_note % (int)length + (int)length) % (int)length) : first;
         for (int col = first_note; col < 17; ++col) {
             if (!run && first + (unsigned)col >= length) break;
@@ -5230,7 +5229,7 @@ static void draw_home_sequences(void)
                 for (unsigned v = 0; v < count; ++v)
                     if (active[v] == id) { ink = C_WHITE; break; }
                 if (beat_flash && x <= playhead && x + width > playhead) ink = C_WHITE;
-                int start = clamp(x, 134, 232), end = clamp(x + (width > 2 ? width : 2), 134, 232);
+                int start = clamp(x, 0, 232), end = clamp(x + (width > 2 ? width : 2), 0, 232);
                 if (end > start) cv_rect(start, y, end - start, 3, ink);
             }
             if (++index == length) index = 0;
