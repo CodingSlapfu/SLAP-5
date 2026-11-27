@@ -28,7 +28,7 @@ jobs:
           s = p.read_text()
           assert s.count("static uint32_t blits;") == s.count("    blits++;") == 1
           s = s.replace("static uint32_t blits;", "static uint32_t blits, meter_blits;\nstatic unsigned long long blit_pixels;")
-          s = s.replace("    blits++;", "    blits++;\n    blit_pixels += w * h;\n    if (w == 8 && h == 32) ++meter_blits;")
+          s = s.replace("    blits++;", "    blits++;\n    blit_pixels += w * h;\n    if (w == 8 && (h == 30 || h == 31)) ++meter_blits;")
           mark = '    printf("host: %u ms simulated'
           assert s.count(mark) == 1
           s = s.replace(mark, '    printf("LCD_PIXELS %llu METER_BLITS %u\\n", blit_pixels, meter_blits);\n' + mark)
@@ -76,7 +76,7 @@ jobs:
                   with Image.open(root / "candidate" / image.name) as capture:
                       assert capture.size == (240, 240), image.name
                       # The bottom row of every lane is painted, including the gutter.
-                      for y in (65, 97, 129, 161, 193):
+                      for y in (64, 95, 126, 157, 187):
                           assert capture.convert("RGB").getpixel((2, y)) != (0, 0, 0), (image.name, y)
               assert pixels[1] < pixels[0]
               print("60 full-height LOOPER lane captures. Pixels avoided:", pixels[0] - pixels[1])
@@ -129,7 +129,7 @@ jobs:
           for screenshot in knobs:
               with Image.open(screenshot) as image:
                   assert image.size == (240, 240), screenshot
-                  footers.add(image.crop((0, 196, 240, 240)).tobytes())
+                  footers.add(image.crop((0, 188, 240, 240)).tobytes())
                   image.resize((960, 960), Image.Resampling.NEAREST).save(
                       screenshot.with_stem(screenshot.stem + "-960"))
           assert len(footers) == 4, "All four styles must change the MIXER footer"
@@ -188,6 +188,12 @@ jobs:
           done
           previous=https://github.com/CodingSlapfu/SLAP-5/releases/download/v0.1.45-hardware-testing
           for entry in 'a72db8e95d7caf0f8a04f487f5376ef92a934ec39605a644095292e3ce5f21e8 SLAP-5-0.1.45.fwsc' '84c3793113aef1080d5582bf1fa223a84fe5332d04979fdeaaaef864973b4dc9 SLAP-5-0.1.45-engineering-backup.tar.gz'; do
+            read -r digest name <<< "$entry"
+            curl -fsSL --retry 3 "$previous/$name" -o "$RUNNER_TEMP/$name"
+            printf '%s  %s\n' "$digest" "$RUNNER_TEMP/$name" | sha256sum -c -
+          done
+          previous=https://github.com/CodingSlapfu/SLAP-5/releases/download/v0.1.46-hardware-testing
+          for entry in '2c295b18f69a93e8064cfd55fccd300445b54d8131dfdd433177c9920ff993a5 SLAP-5-0.1.46.fwsc' 'f0d781d820ee24b715cf2cfe4fa12d7f1dc29d5623e5a78f5fcea049945f68be SLAP-5-0.1.46-engineering-backup.tar.gz'; do
             read -r digest name <<< "$entry"
             curl -fsSL --retry 3 "$previous/$name" -o "$RUNNER_TEMP/$name"
             printf '%s  %s\n' "$digest" "$RUNNER_TEMP/$name" | sha256sum -c -

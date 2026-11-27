@@ -6,8 +6,8 @@ expect page 11
 expect duck_source 4
 turn K2 18
 expect duck 18
-press SEL
 turn K1 -10
+press SEL
 turn K2 -1
 expect duck_source 3
 expect level 57

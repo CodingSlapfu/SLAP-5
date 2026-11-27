@@ -193,8 +193,8 @@ static void visualizer_draw(unsigned kind, unsigned time, unsigned intro)
             break;
         case 2: {
             unsigned tilt_phase = (time % 1920000u) * tempo / 1875u;
-            int tilt = visual_wave(tilt_phase * 2u, 36);
-            int opening = 49 + visual_wave(tilt_phase * 2u + 256u, 23);
+            int tilt = visual_wave(tilt_phase * 3u, 43);
+            int opening = 49 + visual_wave(tilt_phase * 3u + 256u, 26);
             for (unsigned t = 0; t < TRACKS; ++t) {
                 int radius = 24 + (int)t*17 + energy[t]/5;
                 int depth = 14 + (int)(levels[0] * 13);
@@ -276,12 +276,8 @@ static void visualizer_draw(unsigned kind, unsigned time, unsigned intro)
         }
         case 5: {
             if (sy == 40) {
-                unsigned length = pattern_length(tracks[slap_ui.track].mix);
-                unsigned position = positions % length;
-                unsigned fill = playing ? (position * 14u + step_progress) * 156u / (length * 14u) : 0u;
-                cv_text(8, 5, &FONT_B, "LOOP", track_color[slap_ui.track]);
-                cv_rect(72, 8, 156, 10, BLACK_PANEL);
-                if (fill) cv_rect(72, 8, (int)fill, 10, track_color[slap_ui.track]);
+                draw_transport_progress(positions, step_progress, pattern_length(tracks[slap_ui.track].mix),
+                                        playing, track_color[slap_ui.track]);
             }
             for (unsigned track = 0; track < TRACKS; ++track) {
                 int y = 77 + (int)track * 29;

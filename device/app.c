@@ -227,6 +227,8 @@ static volatile uint32_t peak_worker_overlap, peak_voice_recovery, peak_fx_recov
 #endif
 
 static volatile uint32_t active_voices, voice_steals;
+static unsigned dsp_pressure, dsp_pressure_hold;
+static volatile uint32_t quiet_tails_reclaimed, pressure_spans;
 static volatile uint32_t track_voice_counts, track_sleep_mask, peak_active_voices;
 #if defined(PLAT_HOST)
 static unsigned host_peak_voices;
@@ -2440,7 +2442,9 @@ static unsigned render_voice_batch(unsigned frames, unsigned muted,
     unsigned remote = 0, remote_count = 0;
     unsigned remote_limit = voice_late_streak >= 3u ? 1u : REMOTE_VOICES;
     if (dispatch && active > 1) {
-        unsigned remaining = (total_cost * (voice_recovery_jobs ? 6u : 7u) + 8u) / 16u;
+        unsigned share = voice_recovery_jobs ? 6u : dsp_pressure ? 8u : 7u;
+        if (dsp_pressure) ++pressure_spans;
+        unsigned remaining = (total_cost * share + 8u) / 16u;
         // Keep two-voice chords eligible without offloading the entire workload.
         if (active == 2) remaining = (total_cost + 1u) / 2u;
 #ifdef PLAT_HOST
@@ -2766,6 +2770,7 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
         worker_overlap_ticks = peak_worker_overlap = peak_voice_recovery = peak_fx_recovery = 0;
         voice_late_jobs = voice_rejected_jobs = voice_busy_jobs = fx_late_jobs = 0;
         voice_short_spans = voice_budget_skips = voice_no_split = 0;
+        quiet_tails_reclaimed = pressure_spans = 0;
         voice_drained_jobs = peak_voice_job_ticks = 0;
 #endif
         for (unsigned bin = 0; bin < DSP_BINS; ++bin) dsp_histogram[bin] = 0;
@@ -2911,6 +2916,7 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
     static float speaker_dc_l, speaker_dc_r;
     unsigned batch_start = 0, batch_end = 0, sleeping_mix = 0;
     unsigned mix_tracks[TRACKS], mix_count = 0;
+    unsigned reclaim = dsp_pressure;
     uint32_t callback_budget = (24000000u / RATE) * frames;
 #if FM1B_CPU2 && !defined(PLAT_WEB)
     unsigned fx_batch_end = 0;
@@ -2981,6 +2987,22 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
             if (arp_active && amount > arp_wait + 1u)
                 amount = arp_wait + 1u;
             batch_start = i;
+            if (reclaim) {
+                // Last output and remaining envelope must both be quiet.
+                // Reclaim at most one expired sequencer release per callback.
+                for (unsigned v = 0; v < VOICES; ++v) {
+                    Voice *voice = &voices[v];
+                    if (voice->age && voice->track < DRUMS && voice->releasing &&
+                        !voice->manual && !voice->delay && voice->steal_tail == 0.0f &&
+                        voice->env * voice->velocity < 0.0005f &&
+                        fm_fabsf(voice->last_sample) < 0.00004f) {
+                        voice->age = 0;
+                        ++quiet_tails_reclaimed;
+                        break;
+                    }
+                }
+                reclaim = 0;
+            }
 #if FM1B_CPU2 && !defined(PLAT_WEB)
             uint32_t stage_start = plat_ticks24();
 #else
@@ -3180,6 +3202,16 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
         }
         uint32_t budget = (24000000u / RATE) * frames + (24000000u % RATE) * frames / RATE;
         dsp_budget_ticks = budget;
+#ifndef PLAT_HOST
+        // Reserve roughly a Timer 5 window and other IRQ margin. Require
+        // consecutive high-load callbacks and hold the bias until load settles.
+        if (elapsed > budget * 9u / 10u) {
+            if (dsp_pressure_hold < 12u) ++dsp_pressure_hold;
+            if (dsp_pressure_hold >= 3u) dsp_pressure = 1;
+        } else if (elapsed < budget * 4u / 5u && dsp_pressure_hold) {
+            if (!--dsp_pressure_hold) dsp_pressure = 0;
+        }
+#endif
         unsigned bin = elapsed / DSP_BIN_TICKS;
         if (bin >= DSP_BINS) bin = DSP_BINS - 1u;
         if (!profile && !spike_enabled) {
@@ -4204,15 +4236,11 @@ void app_input_only(void)
         rec_replace = (unsigned)clamp((int)rec_replace + knob[3], 0, 1);
     } else if (slap_ui.page == MIXER) {
         unsigned t = (unsigned)slap_ui.track;
+        if (knob[0]) track_setting(t, 16, level_after_turn((mix >> 16) & 255u, knob[0]));
         if (buttons & (1u << B_SEL)) {
-            if (knob[0]) track_setting(t, 16, level_after_turn((mix >> 16) & 255u, knob[0]));
             if (knob[1]) mixer_duck_source = (unsigned)clamp((int)mixer_duck_source + knob[1], 0, DRUMS);
-        } else {
-            if (knob[0] > 0) mixer_solo |= 1u << t;
-            else if (knob[0] < 0) mixer_solo &= ~(1u << t);
-            if (t < DRUMS && knob[1])
-                mixer_duck[t] = (uint8_t)clamp((int)mixer_duck[t] + knob[1], 0, 100);
-        }
+        } else if (t < DRUMS && knob[1])
+            mixer_duck[t] = (uint8_t)clamp((int)mixer_duck[t] + knob[1], 0, 100);
         if (knob[2])
             performance_filter[TRACKS] = (int8_t)clamp(performance_filter[TRACKS] + knob[2], -100, 100);
         if (knob[3])
@@ -4537,6 +4565,27 @@ static void decimal(char *out, unsigned value)
     *out = 0;
 }
 
+static void draw_transport_progress(unsigned position, unsigned fraction, unsigned length, unsigned run, uint16_t ink)
+{
+    unsigned step = run ? position % length : 0;
+    unsigned phase = run ? (fraction < 14u ? fraction : 13u) : 0;
+    char text[12];
+    decimal(text, (step >> 4) + 1u);
+    unsigned digits = 0;
+    while (text[digits]) ++digits;
+    text[digits++] = '/';
+    decimal(text + digits, (length + 15u) >> 4);
+    cv_text(3, 0, &FONT_T, "BAR", C_WHITE);
+    cv_text(27, 0, &FONT_T, text, C_WHITE);
+    cv_text(125, 0, &FONT_T, "LOOP", C_WHITE);
+    cv_rect(57, 4, 54, 4, 0x322e);
+    cv_rect(158, 4, 76, 4, 0x322e);
+    unsigned bar = ((step & 15u) * 14u + phase) * 27u / 224u * 2u;
+    unsigned loop = (step * 14u + phase) * 38u / (length * 14u) * 2u;
+    if (bar) cv_rect(57, 4, (int)bar, 4, 0x7e9f);
+    if (loop) cv_rect(158, 4, (int)loop, 4, ink);
+}
+
 #include "visuals.h"
 
 static unsigned callback_percentile(unsigned percentile)
@@ -4646,11 +4695,10 @@ static void draw_performance_knob(int x, const char *label, const char *value, i
     int width = text_w(value_font, value);
     unsigned step = (unsigned)(clamp(position, -100, 100) + 100) * 24u / 200u;
     int bipolar = (label[0] == 'P' && label[1] == 'A' && label[2] == 'N' && !label[3]) ||
-        (label[0] == 'A' && label[1] == 'L' && label[2] == 'L' && label[3] == ' ') ||
-        (label[0] == 'T' && label[1] == 'R' && label[2] == 'A' && label[3] == 'C' && label[4] == 'K' && label[5] == ' ');
+        (slap_ui.page == MIXER && x >= 120);
     cv_text(x + (60 - text_w(label_font, label)) / 2,
-            (slap_ui.page == MIXER || slap_ui.page == HOME) ? 33 : 27, label_font, label, color);
-    if (width > 24) {
+            expanded ? 40 : 27, label_font, label, color);
+    if (width > (expanded ? 32 : 24)) {
         cv_text(x + (60 - width) / 2, 1, value_font, value, C_WHITE);
         cv_rect(x + 4, 22, 52, 3, 0x3186);
         cv_rect(x + 4 + (int)step * 2, 19, 4, 9, color);
@@ -4742,12 +4790,12 @@ static unsigned home_glyph(unsigned ch)
     return ch == '-' ? 36u : ch == '+' ? 37u : ch == '.' ? 38u : ch == '/' ? 39u : 40u;
 }
 
-static void draw_signature_name(const char *name, uint16_t ink)
+static void draw_signature_name(const char *name, uint16_t ink, unsigned limit, int y, unsigned height)
 {
     unsigned width = 0;
     for (const char *p = name; *p; ++p)
         width += *p == ' ' ? 5u : home_glyphs[home_glyph((unsigned char)*p)].width + 1u;
-    unsigned scale = width <= 218u ? 256u : 218u * 256u / width;
+    unsigned scale = width <= limit ? 256u : limit * 256u / width;
     for (unsigned pass = 0; pass < 2u; ++pass) {
         unsigned x = 0;
         for (const char *p = name; *p; ++p) {
@@ -4763,8 +4811,8 @@ static void draw_signature_name(const char *name, uint16_t ink)
                     int left = (int)((x + start) * scale >> 8);
                     int right = (int)((x + end) * scale >> 8);
                     if (right > left)
-                        cv_rect(6 + left + !pass, 6 + (int)row + !pass * 2, right - left, 1,
-                                pass ? ink : 0x0841);
+                        cv_rect(6 + left + !pass * 2, y + (int)(row * height / 22u) + !pass * 2, right - left, 1,
+                                pass ? ink : BLACK_CHROMA);
                 }
             }
             x += glyph->width + 1u;
@@ -4797,7 +4845,6 @@ static void draw_home_sequences(void)
     unsigned length = pattern_length(selected_mix);
     unsigned loop_step = run ? position % length : 0;
     unsigned bar = (loop_step >> 4) + 1u;
-    unsigned bar_count = (length + 15u) >> 4;
     unsigned full = !home_idle_valid;
     unsigned notice = clear_mode == 1u ? (clear_track + 1u) | 32u :
         plat_ms() - live_edit_at < 1200u ? live_edit_notice : 0u;
@@ -4822,8 +4869,7 @@ static void draw_home_sequences(void)
         cv_begin(240, 23, header);
         cv_text(6, 0, &FONT_M, "LOOPER", 0x9eff);
         decimal(number, bpm);
-        cv_text(93, 1, &FONT_B, number, C_WHITE);
-        cv_text(93, 13, &FONT_T, "BPM", 0xbdf7);
+        cv_text(84, 0, &FONT_M, number, C_WHITE);
         char label[] = { 'T', (char)('0' + (notice & 7u)), 0 };
         if (notice) {
             cv_text(132, 0, &FONT_XS, notice & 32u ? "CLEAR?" : notice & 8u ? "UNDO" : "CLEARED", C_WHITE);
@@ -4841,33 +4887,20 @@ static void draw_home_sequences(void)
             for (int cell = 0; cell < battery_status; ++cell)
                 cv_rect(134 + cell * 5, 17, 4, 3, track_color[4]);
         }
-        cv_text(161, 11, &FONT_XS, "BAR", 0xbdf7);
-        decimal(number, bar);
-        unsigned digits = 0;
-        while (number[digits]) ++digits;
-        number[digits++] = '/';
-        decimal(number + digits, bar_count);
-        cv_text(183, 11, &FONT_XS, number, C_WHITE);
         cv_blit(0, 0);
     }
     unsigned phase = fraction < 14u ? fraction : 13u;
-    unsigned bar_fill = run ? (((loop_step & 15u) * 14u + phase) * 38u / 224u) * 2u : 0;
+    unsigned bar_fill = run ? (((loop_step & 15u) * 14u + phase) * 27u / 224u) * 2u : 0;
     unsigned loop_fill = run ? ((loop_step * 14u + phase) * 38u / (length * 14u)) * 2u : 0;
-    static unsigned last_bar_fill, last_loop_fill, last_loop_selection;
-    if (full || bar_fill != last_bar_fill || loop_fill != last_loop_fill || selection != last_loop_selection) {
+    static unsigned last_bar_fill, last_loop_fill, last_loop_selection, last_loop_length;
+    if (full || bar_fill != last_bar_fill || loop_fill != last_loop_fill || selection != last_loop_selection || length != last_loop_length) {
         cv_begin(240, 11, progress_surface);
-        cv_text(6, 0, &FONT_T, "BAR", C_WHITE);
-        cv_text(125, 0, &FONT_T, "LOOP", C_WHITE);
-        cv_rect(35, 4, 76, 4, 0x322e);
-        cv_rect(158, 4, 76, 4, 0x322e);
-        if (bar_fill) cv_rect(35, 4, (int)bar_fill, 4, 0x7e9f);
-        if (loop_fill) cv_rect(158, 4, (int)loop_fill, 4, track_color[selection]);
-        for (int tick = 1; tick < 4; ++tick)
-            cv_rect(35 + tick * 19, 4, 1, 1, C_WHITE);
+        draw_transport_progress(position, fraction, length, run, track_color[selection]);
         cv_blit(0, 23);
         last_bar_fill = bar_fill;
         last_loop_fill = loop_fill;
         last_loop_selection = selection;
+        last_loop_length = length;
     }
     for (unsigned t = 0; t < TRACKS; ++t) {
         unsigned mix = tracks[t].mix, length = pattern_length(mix), patch = tracks[t].patch;
@@ -4898,17 +4931,18 @@ static void draw_home_sequences(void)
         if (meter_only && last_lane[t].meter == (unsigned)meter && last_lane[t].peak == peak) continue;
         last_lane[t] = (__typeof__(last_lane[t])){cursor + 16u * beat_flash, first, patch, mix, revision,
             (unsigned)meter, peak, focused, pulse, sounding};
-        int lane_y = 34 + (int)t * 32;
+        int lane_y = 34 + (int)t * 31;
+        int lane_height = t == DRUMS ? 30 : 31;
         if (meter_only) {
-            cv_begin(8, 32, C_BLACK);
+            cv_begin(8, lane_height, C_BLACK);
             draw_home_meter(0, 0, meter, peak, color);
             cv_blit(232, lane_y);
             continue;
         }
         static const uint16_t base_ink[] = {0x047b, 0x691d, 0xfa00, 0xc580, 0x04eb};
         static const uint16_t name_ink[] = {0xdfff, 0xf6ff, 0xff7a, 0xfffa, 0xdff9};
-        cv_begin(240, 32, 0);
-        for (unsigned band = 0; band < 11u; ++band)
+        cv_begin(240, lane_height, 0);
+        for (unsigned band = 0; band < 10u; ++band)
             cv_rect(0, 1 + (int)band * 3, 232, band == 10u ? 1 : 3,
                     home_shade(base_ink[t], 11u + pulse * 4u + band / 2u));
         cv_rect(0, 0, 232, 1, color);
@@ -4959,7 +4993,7 @@ static void draw_home_sequences(void)
         for (const char *p = full_name; *p && n < 8u; ++p)
             if (size <= 8u || *p != ' ') name[n++] = *p;
         name[n] = 0;
-        draw_signature_name(name, name_ink[t]);
+        draw_signature_name(name, name_ink[t], 218, 4, 22);
         if (run) {
             cv_rect(playhead - 1, 0, 3, 32, home_shade(name_ink[t], 22));
             cv_rect(playhead, 0, 1, 32, beat_flash ? C_WHITE : 0xbdf7);
@@ -4979,10 +5013,10 @@ static void draw_home_sequences(void)
         int knob_positions[] = {(int)values[0] * 2 - 100, length <= 16 ? -100 : length <= 32 ? 0 : 100,
                           pan, (int)swing * 200 / 70 - 100};
         uint16_t accent = track_color[selection];
-        cv_begin(240, 46, header);
+        cv_begin(240, 52, header);
         for (unsigned i = 0; i < 4u; ++i) {
             int x = (int)i * 60;
-            cv_rect(x + 1, 1, 58, 44, progress_surface);
+            cv_rect(x + 1, 1, 58, 50, progress_surface);
             decimal(number, values[i]);
             if (i == 2u) {
                 number[0] = pan < 0 ? 'L' : 'R';
@@ -4990,7 +5024,7 @@ static void draw_home_sequences(void)
             }
             draw_performance_knob(x, labels[i], i == 2u && !pan ? "CTR" : number, knob_positions[i], accent);
         }
-        cv_blit(0, 194);
+        cv_blit(0, 188);
     }
     home_idle_valid = 1;
 }
@@ -5343,7 +5377,7 @@ static void draw_panel(void)
                 cv_rect(4, 4, 2, 27, focused ? c : 0x2945);
                 cv_rect(12, 33, 216, 1, 0x18c3);
                 uint16_t ink = C_WHITE;
-                cv_text(12, 10, &FONT_B, labels[row], ink);
+                draw_signature_name(labels[row], ink, 130, 8, 18);
                 const char *value = values[row];
                 const felucca_font_t *font = text_w(&FONT_B, value) <= 94 ? &FONT_B : &FONT_XS;
                 cv_text(229 - text_w(font, value), 10, font, value, focused ? c : 0xbdf7);
@@ -5405,7 +5439,7 @@ static void draw_panel(void)
             if (written != half_trace_written) dma = (HalfTrace){0};
         }
         cv_text(8, 4, &FONT_M, slap_ui.page == GLOBAL ? "SYSTEM" : patch_name, c);
-        cv_text(8, 25, slap_ui.page == RECORD ? &FONT_S : &FONT_XS, slap_ui.page == MIXER ? ((slap_ui.buttons & (1u << B_SEL)) ? "K1 LEVEL / K2 DUCK SOURCE" : "SEL SHIFT / KEYS MUTE / ARP SOLO") :
+        cv_text(8, 25, slap_ui.page == RECORD ? &FONT_S : &FONT_XS, slap_ui.page == MIXER ? ((slap_ui.buttons & (1u << B_SEL)) ? "K2 DUCK SOURCE / ARP SOLO" : "SEL SOURCE / KEYS MUTE / ARP SOLO") :
             slap_ui.page == RECORD ? (recording ? "SEL END TAKE  /  PLAY STOP" : playing ? "STOP TO ARM A TAKE" : "SEL ARM  /  PLAY TO START") :
             global_details == 1 ? "PEAK BREAKDOWN  /  GLO NEXT" :
             global_details == 2 ? "SERIAL PROFILE  /  TIMING OVERHEAD" :
@@ -5419,7 +5453,7 @@ static void draw_panel(void)
             global_details == 6 ? "DISPATCH  /  GLO NEXT" : "SLAP-5 " APP_VERSION "  /  GLO FOR PEAK", C_WHITE);
         cv_blit(0, 48);
         for (int strip = 0; strip < 3; ++strip) {
-            cv_begin(240, 36, background);
+            cv_begin(240, strip == 2 && slap_ui.page == MIXER ? 28 : 36, background);
             if (slap_ui.page == MIXER) {
                 for (unsigned t = 0; t < TRACKS; ++t) {
                     int x = 9 + (int)t * 46;
@@ -5552,12 +5586,12 @@ static void draw_panel(void)
                     }
                     if (global_details == 6) {
                         static const char *const labels_dispatch[] = {
-                            "SHORT SPANS", "BUDGET SKIPS", "NO VOICE SPLIT", "MAILBOX BAD", "LATE DRAINED", "VOICE JOB MAX US"
+                            "SHORT SPANS", "BUDGET SKIPS", "NO VOICE SPLIT", "PRESSURE SPLITS", "TAIL RECLAIMS", "VOICE JOB MAX US"
                         };
                         unsigned value = 0;
 #if FM1B_CPU2 && !defined(PLAT_WEB)
                         const unsigned dispatch_values[] = {voice_short_spans, voice_budget_skips,
-                            voice_no_split, plat_cpu2_bad(), voice_drained_jobs, peak_voice_job_ticks / 24u};
+                            voice_no_split, pressure_spans, quiet_tails_reclaimed, peak_voice_job_ticks / 24u};
                         value = dispatch_values[stage];
 #endif
                         cv_text(x, 0, &FONT_XS, labels_dispatch[stage], C_WHITE);
@@ -5641,18 +5675,16 @@ static void draw_panel(void)
             }
             cv_blit(0, 88 + strip*36);
         }
-        cv_begin(240, 44, background);
+        cv_begin(240, slap_ui.page == MIXER ? 52 : 44, background);
         if (slap_ui.page == MIXER) {
-            unsigned solo = (mixer_solo >> selected) & 1u;
+            unsigned level = percent_from_byte(tracks[selected].mix >> 16 & 255u);
+            decimal(number, level);
+            draw_performance_knob(0, "LEVEL", number, (int)level * 2 - 100, c);
             if (slap_ui.buttons & (1u << B_SEL)) {
-                unsigned level = percent_from_byte(tracks[selected].mix >> 16 & 255u);
-                decimal(number, level);
-                draw_performance_knob(0, "LEVEL", number, (int)level * 2 - 100, c);
                 unsigned source = mixer_duck_source;
                 char name[] = {'T', (char)('1' + source), 0};
                 draw_performance_knob(60, "SOURCE", source == DRUMS ? "DRUM" : name, (int)source * 50 - 100, c);
             } else {
-                draw_performance_knob(0, "SOLO", solo ? "ON" : "OFF", solo ? 100 : -100, c);
                 unsigned duck = selected < DRUMS ? mixer_duck[selected] : 0u;
                 decimal(number, duck);
                 draw_performance_knob(60, "DUCK", number, (int)duck * 2 - 100, c);
@@ -5663,7 +5695,7 @@ static void draw_panel(void)
                 number[0] = filter < 0 ? 'L' : 'H';
                 number[1] = 'P';
                 decimal(number + (filter ? 2 : 0), (unsigned)(filter < 0 ? -filter : filter));
-                draw_performance_knob(x, k ? "TRACK FILTER" : "ALL FILTER", filter ? number : "OFF", filter, c);
+                draw_performance_knob(x, k ? "TRK" : "ALL", number, filter, c);
             }
         } else if (slap_ui.page == GLOBAL) {
 #if FM1B_CPU2 && !defined(PLAT_WEB)
@@ -5705,7 +5737,7 @@ static void draw_panel(void)
                 take_undo[undo_latest].ready ? "ARP UNDO  /  OCT- PATTERN  /  OCT+ TRACK" : "OCT- PATTERN  /  OCT+ TRACK";
             cv_text(8, 30, &FONT_T, record_action, c);
         }
-        cv_blit(0, 196);
+        cv_blit(0, slap_ui.page == MIXER ? 188 : 196);
         return;
     }
     unsigned home = slap_ui.page == HOME;
