@@ -101,7 +101,7 @@ tap SEL
 tap SEL
 wait 2500
 expect gen_count 5
-expect length 48
+expect length 64
 expect playing 1
 tap HOME
 press REC

@@ -235,3 +235,8 @@ No measured callback in any of the receive-only, transmit-only or combined trial
 Use the [v0.1.36 engineering report](evidence/qualification-0.1.36-engineering.md) and [consolidated acceptance](evidence/consolidated-acceptance.md) to resume. Time spent on recovery did not close the full CHROMA typography and panel overhaul, remaining MIDI scheduling and overdub permutations, SLICER marker review, legacy and other-engine DSP-to-graph checks, drum screen extremes, expressive performance and LED/output profiles, remaining sequencer and live FX work, or Studio and website deployment. Keep the v0.1.31 rollback available. Hold experimental publication until the integrated software gate passes.
 
 Physical validation after software qualification uses the owner’s FM-1 and a backed-up project. Run five-track chords, dense drums and overdub at 112, 137 and 160 BPM with SLICER, LIVE FX, both bipolar filter sweeps and visualizers. Record P95/P99, peak, deadline misses, XRUNs and Core 1 status. Check the 12 themes on the 240×240 panel, LCD tearing, Sound Lab and LED/output profiles. Connect the RG35XX Pro as USB host to the FM-1 as USB MIDI device. Confirm the muOS ALSA raw MIDI port, note exchange and both PocketTracker clock/transport directions. Confirm app-only OTA and v0.1.31 rollback on the compatible unit.
+
+
+## v0.1.50 hardware testing
+
+[Qualification and precise next-build notes](evidence/qualification-0.1.50.md).

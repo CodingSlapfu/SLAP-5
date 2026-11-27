@@ -1,0 +1,17 @@
+wait 6100
+tap PLAY
+tap REC
+wait 200
+expect rec_running 1
+turn K2 2
+wait 2500
+expect length 64
+expect rec_running 1
+expect playing 1
+turn K2 -2
+wait 2500
+expect length 16
+expect rec_running 1
+expect playing 1
+tap REC
+tap PLAY
