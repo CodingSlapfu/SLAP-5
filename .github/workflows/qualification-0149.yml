@@ -14,11 +14,11 @@ jobs:
     timeout-minutes: 12
     env:
       GH_TOKEN: ${{ github.token }}
-      CHECKPOINT: 0a03a652900e85005e9adfc2bf87f06f2187b8eb
+      CHECKPOINT: 978ba76f78ccf083ec6d5ef6a234fc9633d2823a
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 0a03a652900e85005e9adfc2bf87f06f2187b8eb
+          ref: 978ba76f78ccf083ec6d5ef6a234fc9633d2823a
       - name: Build and audit the versioned native package
         run: |
           python3 -m venv "$RUNNER_TEMP/slap-python"
@@ -67,6 +67,24 @@ jobs:
           device/build/host/slap-5_host device/tests/graph-navigation.txt "$RUNNER_TEMP/framebuffer"
           git fetch --no-tags origin c945e09252d9af06d4fb28e5c6a374f4e4429294
           git worktree add --detach "$RUNNER_TEMP/dancer-baseline" FETCH_HEAD
+          python3 - "$RUNNER_TEMP/dancer-baseline/device/visuals.h" <<'PY'
+          import sys
+          from pathlib import Path
+          path = Path(sys.argv[1])
+          source = path.read_text()
+          source = source.replace("    static unsigned started, prior_bucket", "    unsigned now = plat_ms();\n    static unsigned started, prior_bucket")
+          for old, new in (
+              ("time - last_draw > 250u", "now - last_draw > 250u"),
+              ("started = time;", "started = now;"),
+              ("time / 500u", "now / 500u"),
+              ("last_draw = time;", "last_draw = now;"),
+              ("(time - started) % 5000u", "(now - started) % 5000u"),
+              ("time - dancer_control_at < 1200u", "now - dancer_control_at < 1200u"),
+          ):
+              assert old in source, old
+              source = source.replace(old, new)
+          path.write_text(source)
+          PY
           (cd "$RUNNER_TEMP/dancer-baseline" && python3 vendor/fm1-base/tools/build.py device --host)
           motion="$RUNNER_TEMP/dancer-motion.txt"
           cp device/tests/transport-mixer.txt "$motion"
