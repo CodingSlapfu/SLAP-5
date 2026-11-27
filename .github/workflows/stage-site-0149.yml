@@ -17,7 +17,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
         with:
-          ref: b1eb81f34fb8d3d1d340009b5dee7db4f3297ba9
+          ref: 02745a8af7ebc1fde4bd6e9db7bf1c62c3e49e01
           path: firmware-source
       - uses: actions/setup-node@v4
         with:
