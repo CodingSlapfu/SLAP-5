@@ -450,18 +450,15 @@ static void load_patch(unsigned track, unsigned number)
 
 enum { PREF_AUDIO, PREF_METRO, PREF_RECORD, PREF_TRANSPORT, PREF_KEYS, PREF_DISPLAY, PREF_DIAG, PREF_LEDS, PREF_MIDI, PREF_SYNC, PREF_MIDI_ROUTE, PREF_MIDI_TRACKS, PREF_MIDI_MON, PREF_KNOB_STYLE, PREF_SECTIONS };
 static unsigned settings_section, settings_item;
-static const uint8_t settings_count[PREF_SECTIONS] = {4, 3, 4, 1, 1, 3, 1, 3, 4, 4, 4, 4, 1, 1};
+static const uint8_t settings_count[PREF_SECTIONS] = {4, 3, 4, 1, 1, 2, 1, 3, 4, 4, 4, 4, 1, 1};
 static const char *const settings_names[] = {
     "AUDIO", "METRONOME", "RECORDING", "TRANSPORT", "KEYBOARD", "DISPLAY", "SYSTEM", "LEDS", "MIDI", "MIDI SYNC", "MIDI ROUTE", "MIDI TRACKS", "MIDI MONITOR", "KNOB STYLE"
 };
 static volatile uint32_t output_trim, speaker_mode, click_trim, resume_playback, auto_level_off, auto_mix;
 static unsigned visual_quality, led_style, led_keys_on_hit, led_active_soft;
 enum { KNOB_CLASSIC, KNOB_STUDIO, KNOB_NEON, KNOB_SEGMENTED };
-static unsigned background_theme;
-static const struct { const char *name; uint16_t surface, panel; } background_themes[] = {
-    {"TITANIUM", 0x18e4, 0x2928}, {"CRIMSON", 0x3803, 0x5826},
-    {"FUCHSIA", 0x380a, 0x580e}, {"BURGUNDY", 0x2805, 0x4808}
-};
+enum { BLACK_CHROMA = 0x0000, BLACK_PANEL = 0x0841 };
+static volatile unsigned mixer_duck_source = DRUMS;
 static unsigned knob_style;
 static unsigned header_valid, graph_valid, home_idle_valid;
 static volatile unsigned split_keys;
@@ -486,7 +483,6 @@ void app_init(void)
     uint32_t duck = setting_bytes == 20 && settings[0] == SETTINGS_TAG ? settings[4] : 0u;
     midi_options = (options >> 9) & 0x3ffffu; // Ignore retired palette bits in saved settings.
     knob_style = options & (1u << 31) ? options >> 27 & 3u : KNOB_CLASSIC;
-    background_theme = options >> 29 & 3u;
     midi_clock_window = midi_clock_intervals = 0;
     midi_count_in_substep = 0;
     midi_pending = midi_phase = midi_ext_step = midi_clock_seen = midi_clock_period = 0;
@@ -2807,8 +2803,9 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
     }
     float duck_depth[DRUMS];
     unsigned duck_enabled = 0;
+    const unsigned duck_source = mixer_duck_source;
     for (unsigned t = 0; t < DRUMS; ++t) {
-        duck_depth[t] = mixer_duck[t] * 0.008f;
+        duck_depth[t] = t == duck_source ? 0.0f : mixer_duck[t] * 0.008f;
         duck_enabled |= duck_depth[t] > 0.0f || duck_amount[t] > 0.0f;
     }
     const float duck_release = tempo * (1.0f / (15.0f * RATE));
@@ -2913,6 +2910,7 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
     const unsigned speaker = speaker_mode;
     static float speaker_dc_l, speaker_dc_r;
     unsigned batch_start = 0, batch_end = 0, sleeping_mix = 0;
+    unsigned mix_tracks[TRACKS], mix_count = 0;
     uint32_t callback_budget = (24000000u / RATE) * frames;
 #if FM1B_CPU2 && !defined(PLAT_WEB)
     unsigned fx_batch_end = 0;
@@ -2999,6 +2997,9 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
                     sleeping_mix |= 1u << t;
                 }
             }
+            mix_count = 0;
+            for (unsigned t = 0; t < TRACKS; ++t)
+                if (!(sleeping_mix & (1u << t))) mix_tracks[mix_count++] = t;
 #if FM1B_CPU2 && !defined(PLAT_WEB)
             uint32_t voice_end = plat_ticks24();
             uint32_t voice_ticks = voice_end - stage_start;
@@ -3018,14 +3019,14 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
         float l = 0.0f, r = 0.0f;
         float duck = 0.0f;
         if (duck_enabled) {
-            float trigger = fm_fabsf(voice_bus[DRUMS][i - batch_start]) * level_at[DRUMS];
+            float trigger = fm_fabsf(voice_bus[duck_source][i - batch_start]) * level_at[duck_source];
             trigger = fm_clampf((trigger - 0.025f) * 8.0f, 0.0f, 1.0f);
             drum_duck_envelope += (trigger - drum_duck_envelope) *
                 (trigger > drum_duck_envelope ? 0.018f : duck_release);
             duck = drum_duck_envelope;
         }
-        for (unsigned t = 0; t < TRACKS; ++t) {
-            if (sleeping_mix & (1u << t)) continue;
+        for (unsigned slot = 0; slot < mix_count; ++slot) {
+            unsigned t = mix_tracks[slot];
             unsigned sample_cost = measure_fx && i == 0u;
             float sample = voice_bus[t][i - batch_start];
             if (effect_mask & (1u << t)) {
@@ -4179,8 +4180,6 @@ void app_input_only(void)
         case PREF_DISPLAY:
             slap_ui.visual = select_visual(slap_ui.visual, knob[0]);
             visual_quality = (unsigned)clamp((int)visual_quality + knob[1], 0, 1);
-            background_theme = (unsigned)clamp((int)background_theme + knob[2], 0, 3);
-            if (knob[2]) header_valid = 0;
             break;
         }
     } else if (slap_ui.page == VISUAL && slap_ui.visual == 6) {
@@ -4205,10 +4204,15 @@ void app_input_only(void)
         rec_replace = (unsigned)clamp((int)rec_replace + knob[3], 0, 1);
     } else if (slap_ui.page == MIXER) {
         unsigned t = (unsigned)slap_ui.track;
-        if (knob[0] > 0) mixer_solo |= 1u << t;
-        else if (knob[0] < 0) mixer_solo &= ~(1u << t);
-        if (t < DRUMS && knob[1])
-            mixer_duck[t] = (uint8_t)clamp((int)mixer_duck[t] + knob[1], 0, 100);
+        if (buttons & (1u << B_SEL)) {
+            if (knob[0]) track_setting(t, 16, level_after_turn((mix >> 16) & 255u, knob[0]));
+            if (knob[1]) mixer_duck_source = (unsigned)clamp((int)mixer_duck_source + knob[1], 0, DRUMS);
+        } else {
+            if (knob[0] > 0) mixer_solo |= 1u << t;
+            else if (knob[0] < 0) mixer_solo &= ~(1u << t);
+            if (t < DRUMS && knob[1])
+                mixer_duck[t] = (uint8_t)clamp((int)mixer_duck[t] + knob[1], 0, 100);
+        }
         if (knob[2])
             performance_filter[TRACKS] = (int8_t)clamp(performance_filter[TRACKS] + knob[2], -100, 100);
         if (knob[3])
@@ -4494,7 +4498,7 @@ void app_input_only(void)
     uint32_t options = auto_mix | dancer_pattern << 1 | (unsigned)!dancer_outline << 3 |
         (unsigned)!dancer_lighting << 4 | (unsigned)!dancer_reactivity << 5 |
         led_keys_on_hit << 6 | 128u | led_active_soft << 8 | midi_options << 9 |
-        (knob_style ? (knob_style << 27) | (1u << 31) : 0u) | background_theme << 29;
+        (knob_style ? (knob_style << 27) | (1u << 31) : 0u);
     uint32_t duck = 0;
     for (unsigned t = 0; t < DRUMS; ++t) duck |= (uint32_t)mixer_duck[t] << (8u * t);
     uint32_t now = plat_ms();
@@ -4803,8 +4807,8 @@ static void draw_home_sequences(void)
         if (voices[v].age && !voices[v].delay && !voices[v].releasing && voices[v].sequence_note)
             active[count++] = voices[v].sequence_note;
     char number[12];
-    const uint16_t header = background_themes[background_theme].surface;
-    const uint16_t progress_surface = background_themes[background_theme].panel;
+    const uint16_t header = BLACK_CHROMA;
+    const uint16_t progress_surface = BLACK_PANEL;
     if (redraw_header) {
         cv_begin(240, 23, header);
         cv_text(6, 0, &FONT_M, "LOOPER", 0x9eff);
@@ -4865,6 +4869,7 @@ static void draw_home_sequences(void)
         int meter = (int)(fm_sqrtf(level * (1.0f / 160.0f)) * 32.0f);
         unsigned peak = level ? track_peak[t] : 0u;
         unsigned cursor = run ? fraction * 11u / 14u : 0u;
+        unsigned beat_flash = run && !(position & 3u) && fraction < 8u;
         unsigned focused = t == selection, revision = pattern_revision[t];
         static const uint8_t pulse_levels[] = {0, 1, 2, 4, 4, 3, 2, 1};
         unsigned pulse = focused ? pulse_levels[now / 110u & 7u] : 0;
@@ -4878,11 +4883,11 @@ static void draw_home_sequences(void)
             }
         }
         unsigned meter_only = !geometry && !recording &&
-            last_lane[t].cursor == cursor && last_lane[t].first == first &&
+            last_lane[t].cursor == cursor + 16u * beat_flash && last_lane[t].first == first &&
             last_lane[t].patch == patch && last_lane[t].mix == mix && last_lane[t].revision == revision &&
             last_lane[t].focused == focused && last_lane[t].pulse == pulse && last_lane[t].active == sounding;
         if (meter_only && last_lane[t].meter == (unsigned)meter && last_lane[t].peak == peak) continue;
-        last_lane[t] = (__typeof__(last_lane[t])){cursor, first, patch, mix, revision,
+        last_lane[t] = (__typeof__(last_lane[t])){cursor + 16u * beat_flash, first, patch, mix, revision,
             (unsigned)meter, peak, focused, pulse, sounding};
         int lane_y = 34 + (int)t * 32;
         if (meter_only) {
@@ -4947,8 +4952,8 @@ static void draw_home_sequences(void)
         name[n] = 0;
         draw_signature_name(name, name_ink[t]);
         if (run) {
-            cv_rect(playhead - 1, 0, 3, 34, home_shade(name_ink[t], 22));
-            cv_rect(playhead, 0, 1, 34, C_WHITE);
+            cv_rect(playhead - 1, 0, 3, 32, home_shade(name_ink[t], 22));
+            cv_rect(playhead, 0, 1, 32, beat_flash ? C_WHITE : 0xbdf7);
             if (!t) {
                 cv_rect(playhead - 3, 1, 7, 1, C_WHITE);
                 cv_rect(playhead - 2, 2, 5, 1, C_WHITE);
@@ -5167,7 +5172,7 @@ static void draw_panel(void)
     if (selected >= TRACKS) return;
     if (slap_ui.page == SETTINGS && settings_section == PREF_DISPLAY) {
         uint32_t signature = (uint32_t)slap_ui.visual | visual_quality << 3 |
-            settings_item << 8 | selected << 10 | tempo << 13 | background_theme << 24;
+            settings_item << 8 | selected << 10 | tempo << 13;
         if (signature == display_settings_signature) return;
         display_settings_signature = signature;
     } else display_settings_signature = 0;
@@ -5204,7 +5209,7 @@ static void draw_panel(void)
     unsigned scroll = slap_ui.page == HOME && playing;
     unsigned substep = step_progress;
     unsigned bank = (slap_ui.page == SEQ ? (unsigned)slap_ui.step : play_step) / 16u * 16u;
-    uint16_t c = track_color[selected], background = background_themes[background_theme].surface;
+    uint16_t c = track_color[selected], background = BLACK_CHROMA;
     static unsigned header_track, header_tempo, header_page;
     if (!header_valid || header_page != (unsigned)slap_ui.page ||
         header_track != selected || header_tempo != tempo) {
@@ -5261,10 +5266,9 @@ static void draw_panel(void)
             break;
         }
         case PREF_DISPLAY:
-            labels[0] = "VISUALIZER"; labels[1] = "DISPLAY QUALITY"; labels[2] = "BACKGROUND THEME";
+            labels[0] = "VISUALIZER"; labels[1] = "DISPLAY QUALITY";
             decimal(level, visual_index(slap_ui.visual) + 1u);
             values[0] = level; values[1] = visual_quality ? "ECO" : "ADAPTIVE";
-            values[2] = background_themes[background_theme].name;
             break;
         case PREF_LEDS: {
             static const char *const profiles[] = {"SOFT", "OFF", "BRIGHTER", "SOFT"};
@@ -5390,7 +5394,7 @@ static void draw_panel(void)
             if (written != half_trace_written) dma = (HalfTrace){0};
         }
         cv_text(8, 4, &FONT_M, slap_ui.page == GLOBAL ? "SYSTEM" : patch_name, c);
-        cv_text(8, 25, slap_ui.page == RECORD ? &FONT_S : &FONT_XS, slap_ui.page == MIXER ? "WHITE KEYS 1-5 MUTE / ARP SOLO" :
+        cv_text(8, 25, slap_ui.page == RECORD ? &FONT_S : &FONT_XS, slap_ui.page == MIXER ? ((slap_ui.buttons & (1u << B_SEL)) ? "K1 LEVEL / K2 DUCK SOURCE" : "SEL SHIFT / KEYS MUTE / ARP SOLO") :
             slap_ui.page == RECORD ? (recording ? "SEL END TAKE  /  PLAY STOP" : playing ? "STOP TO ARM A TAKE" : "SEL ARM  /  PLAY TO START") :
             global_details == 1 ? "PEAK BREAKDOWN  /  GLO NEXT" :
             global_details == 2 ? "SERIAL PROFILE  /  TIMING OVERHEAD" :
@@ -5629,14 +5633,18 @@ static void draw_panel(void)
         cv_begin(240, 44, background);
         if (slap_ui.page == MIXER) {
             unsigned solo = (mixer_solo >> selected) & 1u;
-            draw_performance_knob(0, "SOLO", solo ? "ON" : "OFF", solo ? 100 : -100, c);
-            if (selected < DRUMS) {
-                unsigned duck = mixer_duck[selected];
+            if (slap_ui.buttons & (1u << B_SEL)) {
+                unsigned level = percent_from_byte(tracks[selected].mix >> 16 & 255u);
+                decimal(number, level);
+                draw_performance_knob(0, "LEVEL", number, (int)level * 2 - 100, c);
+                unsigned source = mixer_duck_source;
+                char name[] = {'T', (char)('1' + source), 0};
+                draw_performance_knob(60, "SOURCE", source == DRUMS ? "DRUM" : name, (int)source * 50 - 100, c);
+            } else {
+                draw_performance_knob(0, "SOLO", solo ? "ON" : "OFF", solo ? 100 : -100, c);
+                unsigned duck = selected < DRUMS ? mixer_duck[selected] : 0u;
                 decimal(number, duck);
                 draw_performance_knob(60, "DUCK", number, (int)duck * 2 - 100, c);
-            } else {
-                cv_text(62, 2, &FONT_XS, "DUCK", c);
-                cv_text(62, 15, &FONT_T, "SOURCE", C_WHITE);
             }
             for (unsigned k = 0; k < 2; ++k) {
                 int filter = performance_filter[k ? selected : TRACKS];
@@ -6637,6 +6645,7 @@ int app_expect(const char *name, int *result)
     else if (name_matches(name, "track_filter")) *result = performance_filter[slap_ui.track];
     else if (name_matches(name, "solo")) *result = (mixer_solo >> slap_ui.track) & 1u;
     else if (name_matches(name, "swing")) *result = swing;
+    else if (name_matches(name, "duck_source")) *result = (int)mixer_duck_source;
     else if (name_matches(name, "duck")) *result = slap_ui.track < DRUMS ? mixer_duck[slap_ui.track] : 0;
     else if (name_matches(name, "auto_mix")) *result = (int)auto_mix;
     else if (name_matches(name, "visual_left")) *result = visual_rms[0] > 0.000001f;
@@ -6684,7 +6693,6 @@ int app_expect(const char *name, int *result)
     else if (name_matches(name, "midi_usb")) *result = (int)midi_usb_ready;
     else if (name_matches(name, "midi_drops")) *result = (int)midi_drops;
     else if (name_matches(name, "midi_clock")) *result = !!midi_clock_period;
-    else if (name_matches(name, "background_theme")) *result = (int)background_theme;
     else if (name_matches(name, "settings_section")) *result = (int)settings_section;
     else if (name_matches(name, "knob_style")) *result = (int)knob_style;
     else if (name_matches(name, "led_active_soft")) *result = (int)led_active_soft;

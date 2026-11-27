@@ -109,9 +109,6 @@ jobs:
           for fixture in device/tests/*.txt; do
             out="$(mktemp -d)"
             "$host" "$fixture" "$out"
-            if [ "$fixture" = device/tests/background-theme.txt ]; then
-              cp "$out"/theme-*.png "$RUNNER_TEMP/looper-captures/"
-            fi
             if [ "$fixture" = device/tests/knob-style.txt ]; then
               cp "$out"/knob-*.png "$RUNNER_TEMP/looper-captures/"
             fi
@@ -126,17 +123,6 @@ jobs:
           from PIL import Image
 
           gallery = Path(os.environ["RUNNER_TEMP"]) / "looper-captures"
-          themes = sorted(gallery.glob("theme-*.png"))
-          assert len(themes) == 4, themes
-          samples = []
-          for screenshot in themes:
-              with Image.open(screenshot) as image:
-                  rgb = image.convert("RGB")
-                  samples.append((rgb.getpixel((0, 0)), tuple(rgb.getpixel((225, y)) for y in (34, 66, 98, 130, 162))))
-          print("Theme surface and lane samples:", samples)
-          assert len({surface for surface, _ in samples}) == 4, samples
-          assert len({lanes for _, lanes in samples}) == 1, samples
-          assert all(surface not in lanes for surface, lanes in samples)
           knobs = sorted(gallery.glob("knob-*.png"))
           assert len(knobs) == 4, knobs
           footers = set()

@@ -1,0 +1,17 @@
+wait 6100
+press EDIT
+wait 2100
+release EDIT
+expect page 11
+expect duck_source 4
+turn K2 18
+expect duck 18
+press SEL
+turn K1 -10
+turn K2 -1
+expect duck_source 3
+expect level 57
+release SEL
+expect duck 18
+turn K3 -40
+expect all_filter -40

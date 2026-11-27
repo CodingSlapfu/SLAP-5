@@ -136,7 +136,7 @@ static void visualizer_draw(unsigned kind, unsigned time, unsigned intro)
         for (unsigned i = 0; i < 8; ++i) {
             unsigned response = i < TRACKS ? note_activity[i] * 3u + (unsigned)energy[i] * 2u :
                 (unsigned)(levels[bands[i]] * 150.0f);
-            unsigned target = 3u * rates[i] * (16u + response);
+            unsigned target = 6u * rates[i] * (16u + response);
             orbit_speed[i] = (5u * orbit_speed[i] + target) / 6u;
             orbit_phase[i] += elapsed * orbit_speed[i];
         }
@@ -191,8 +191,8 @@ static void visualizer_draw(unsigned kind, unsigned time, unsigned intro)
             break;
         case 2: {
             unsigned tilt_phase = (time % 1920000u) * tempo / 1875u;
-            int tilt = visual_wave(tilt_phase, 23);
-            int opening = 46 + visual_wave(tilt_phase + 256u, 14);
+            int tilt = visual_wave(tilt_phase * 2u, 36);
+            int opening = 49 + visual_wave(tilt_phase * 2u + 256u, 23);
             for (unsigned t = 0; t < TRACKS; ++t) {
                 int radius = 24 + (int)t*17 + energy[t]/5;
                 int depth = 14 + (int)(levels[0] * 13);
@@ -229,7 +229,7 @@ static void visualizer_draw(unsigned kind, unsigned time, unsigned intro)
             int highs = (int)(80.0f * fm_maxf(levels[5], levels[6]));
             for (unsigned star = 0; star < 22; ++star) {
                 int brightness = 38 + (int)((star * 23u + time / 19u) % 20u) + highs;
-                cv_rect((int)(star * 71u % 233u), 33 + (int)(star * 93u % 200u)-sy,
+                cv_rect((int)(star * 71u % 233u), 33 + (int)((star * 93u + time / (12u - star % 3u)) % 200u)-sy,
                         highs > 35 ? 2 : 1, 1, RGB(brightness, brightness, brightness + 25));
             }
             if (energy[4] > 5)
@@ -274,14 +274,12 @@ static void visualizer_draw(unsigned kind, unsigned time, unsigned intro)
         }
         case 5: {
             if (sy == 40) {
-                unsigned position = positions;
-                char bar[12];
-                decimal(bar, (position >> 4) + 1u);
-                char beat[] = {(char)('1' + ((position >> 2) & 3u)), 0};
-                cv_text(8, 5, &FONT_B, "BAR", track_color[0]);
-                cv_text(45, 1, &FONT_M, bar, C_WHITE);
-                cv_text(145, 5, &FONT_B, "BEAT", track_color[0]);
-                cv_text(205, 1, &FONT_M, beat, C_WHITE);
+                unsigned length = pattern_length(tracks[slap_ui.track].mix);
+                unsigned position = positions % length;
+                unsigned fill = playing ? (position * 14u + step_progress) * 156u / (length * 14u) : 0u;
+                cv_text(8, 5, &FONT_B, "LOOP", track_color[slap_ui.track]);
+                cv_rect(72, 8, 156, 10, BLACK_PANEL);
+                if (fill) cv_rect(72, 8, (int)fill, 10, track_color[slap_ui.track]);
             }
             for (unsigned track = 0; track < TRACKS; ++track) {
                 int y = 77 + (int)track * 29;

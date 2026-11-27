@@ -60,7 +60,7 @@ static int16_t slice_line[SLAP_FX_TRACKS + 1][SLICE_CAPTURE];
 // worker renders or Core 0 rolls back an FX job.
 typedef struct {
     float room_damping, room_feedback, echo_damping, echo_feedback;
-    float drive_gain, drive_damping, chorus_damping;
+    float drive_gain, drive_damping, chorus_damping, drive_fold, chorus_depth;
 } FxCoefficients;
 static FxCoefficients coefficients[SLAP_FX_TRACKS + 1];
 static volatile uint32_t settings_revision[SLAP_FX_TRACKS];
@@ -445,7 +445,9 @@ void slap_fx_begin_assigned(unsigned bpm, uint32_t live, uint32_t assignments)
             .echo_feedback = 0.12f + 0.80f * f->dp[2],
             .drive_gain = 1.0f + 16.0f * f->dr[1],
             .drive_damping = 0.009f + f->dr[2] * 0.9f,
-            .chorus_damping = 0.025f + 0.7f * f->ch[3]
+            .chorus_damping = 0.025f + 0.7f * f->ch[3],
+            .drive_fold = 0.32f * f->dr[3],
+            .chorus_depth = 0.1f + 0.9f * f->ch[1]
         };
         f->phase_step = (0.18f + 3.5f * fm_maxf(f->ch[2], f->speed)) / 44100.0f;
         f->room_long = 300u + (unsigned)(f->rv[2] * 1100.0f);
@@ -611,7 +613,7 @@ static inline __attribute__((always_inline)) float process_sample(
     }
     if (f->dr[0] > 0.0f) {
         float driven = x * c->drive_gain;
-        driven = 0.68f * soft(driven) + 0.32f * f->dr[3] * fold(driven);
+        driven = 0.68f * soft(driven) + c->drive_fold * fold(driven);
         f->drive_lp += (driven - f->drive_lp) * c->drive_damping;
         x += f->dr[0] * (f->drive_lp - x);
     }
@@ -626,11 +628,11 @@ static inline __attribute__((always_inline)) float process_sample(
         if (f->ch[0] > 0.0f || f->insert == 7 || f->live_insert[3] > 0.0f) {
             unsigned pos = f->chorus_pos;
             unsigned tap = 12u + (unsigned)(lfo * (f->insert == 7 ? 105.0f : 500.0f) *
-                            (0.1f + 0.9f*f->ch[1]));
-            float ch = unpack(chorus[preceding(pos, tap, CHORUS)]);
+                            c->chorus_depth);
+            float ch = unpack(chorus[(pos - tap) & (CHORUS - 1u)]);
             if (f->live_insert[3] > 0.0f) {
                 unsigned flange_tap = 5u + (unsigned)(lfo * 95.0f);
-                float flange = unpack(chorus[preceding(pos, flange_tap, CHORUS)]);
+                float flange = unpack(chorus[(pos - flange_tap) & (CHORUS - 1u)]);
                 chorus[pos] = pack(x + flange * 0.23f * f->live_insert[3]);
                 x += (0.55f * flange - 0.22f * x) * f->live_insert[3];
             } else chorus[pos] = pack(x);
@@ -696,8 +698,8 @@ static inline __attribute__((always_inline)) float process_sample(
     }
     if (f->rv[0] > 0.0f) {
         unsigned idx = f->room_pos;
-        float a = unpack(room[preceding(idx, f->room_long, ROOM)]);
-        float b = unpack(room[preceding(idx, f->room_short, ROOM)]);
+        float a = unpack(room[(idx - f->room_long) & (ROOM - 1u)]);
+        float b = unpack(room[(idx - f->room_short) & (ROOM - 1u)]);
         f->reverb_lp += ((a * 0.61f + b * 0.39f) - f->reverb_lp) * c->room_damping;
         room[idx] = pack(x * 0.58f + f->reverb_lp * c->room_feedback);
         f->room_pos = (idx + 1u) & (ROOM - 1u);
