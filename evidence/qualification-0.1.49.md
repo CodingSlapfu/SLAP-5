@@ -1,6 +1,6 @@
 # SLAP-5 v0.1.49 engineering qualification
 
-Source checkpoint: `7fd92a81fc5f684d0aa591de8e7e59114d36ced1`. Candidate identity: `FM-1_75000149`. Public promotion is gated on physical playback across pages and the remaining release acceptance items in Issue #8.
+Source checkpoint: `4f2048879e930a9091d1bb3ef73f8346daca6643`. Candidate identity: `FM-1_75000149`. Public promotion is gated on physical playback across pages and the remaining release acceptance items in Issue #8.
 
 ## Audio and UI scheduling
 
@@ -23,3 +23,5 @@ Use an untouched copy of the saved five-track JUNGLE project. Start from a cold 
 The [historical archive through v0.1.48](https://github.com/CodingSlapfu/SLAP-5/releases/tag/historical-firmware-through-0.1.48) contains 122 assets across 33 releases and the complete Pages tree at `efa956451c0fb77bc730b4e72320b678179b4bdd`. [Archive audit](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45952474629) re-downloaded and extracted the published archive, verified the nested checksum manifest, and ran loader rollback and interruption simulations. Archive SHA-256: `cd3c24eccc7dba13899a56af482af723b6bdc23df429d9ea6e35183181d6a67a`. The site and Studio deployment are pending the public qualification gate.
 
 The Dancer afterimage now samples rendered pose and position, holds in place, then fades. Under DSP pressure it uses sparser scanlines. Leaving and re-entering the visualizer resets the trail after a frame gap.
+
+The drum Sound Lab uses the same visible audio snapshot as melodic live-signal pages, with an idle redraw when activity stops.

@@ -14,11 +14,11 @@ jobs:
     timeout-minutes: 12
     env:
       GH_TOKEN: ${{ github.token }}
-      CHECKPOINT: 7fd92a81fc5f684d0aa591de8e7e59114d36ced1
+      CHECKPOINT: 4f2048879e930a9091d1bb3ef73f8346daca6643
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 7fd92a81fc5f684d0aa591de8e7e59114d36ced1
+          ref: 4f2048879e930a9091d1bb3ef73f8346daca6643
       - name: Build and audit the versioned native package
         run: |
           python3 -m venv "$RUNNER_TEMP/slap-python"
@@ -67,6 +67,9 @@ jobs:
           fixture="$RUNNER_TEMP/looper-reference-comparison.txt"
           awk '{print} /^expect worker_fallbacks 0$/ {print "shot looper-jungle-240.png"}' device/tests/jungle-155.txt > "$fixture"
           device/build/host/slap-5_host "$fixture" "$RUNNER_TEMP/framebuffer"
+          drum="$RUNNER_TEMP/drum-sound-lab.txt"
+          awk '!done && /^expect peak_voices 16$/ {print; print "tap EDIT\nexpect page 3\nwait 150\nshot drum-sound-lab.png\ntap HOME"; done=1; next} {print}' device/tests/jungle-155.txt > "$drum"
+          device/build/host/slap-5_host "$drum" "$RUNNER_TEMP/framebuffer"
           stress="$RUNNER_TEMP/track1-peak.txt"
           cp device/tests/jungle-155.txt "$stress"
           cat >> "$stress" <<'FIXTURE'
