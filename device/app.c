@@ -14,7 +14,7 @@ static float (*volatile dsp_fx_sample)(unsigned, float) = slap_fx_sample;
 #endif
 
 enum { TRACKS = 5, LEGACY_STEPS = 64, STEPS = 512, VOICES = 16, RATE = 44100 };
-enum { HOME, SEQ, GLOBAL, PATCH, ENV, FX, VISUAL, SAVE, HARMONY, LFO, ARP, MIXER, RECORD, GEN_DRUMS, LIVE_FX, SETTINGS };
+enum { HOME, SEQ, GLOBAL, PATCH, ENV, FX, VISUAL, SAVE, HARMONY, LFO, ARP, MIXER, RECORD, GEN_DRUMS, LIVE_FX, SETTINGS, ROLE_GEN };
 enum { NOTES = 0x7f, ACTIVE = 0x80, DRUMS = 4, OLD_DRUM_LANES = 6, DRUM_LANES = 16, MODERN_SYNTH = 1u << 27, ADVANCED_SYNTH = 1u << 28 };
 
 typedef struct {
@@ -87,6 +87,7 @@ static const uint8_t lane_pitch[DRUM_LANES] = {36,38,42,37,39,49,35,40,46,44,45,
 #include "drum_patterns.h"
 static unsigned gen_style, gen_hit = 76, gen_groove = 35, gen_var = 28;
 static unsigned gen_bars;
+static unsigned role_kind, role_style, role_length, role_confirm;
 static volatile uint8_t pending_steps[TRACKS];
 static unsigned gen_enabled = 1, gen_confirm;
 static volatile unsigned gen_count, gen_queued;
@@ -3841,6 +3842,70 @@ static unsigned lane_count(unsigned track)
     return track == DRUMS ? DRUM_LANES + 1u : MELODIC_LANES;
 }
 
+static const char *const role_names[] = {"BASS", "LEAD", "CHORDS", "ARP", "PLUCK", "KEYS", "PAD", "HARMONY"};
+static const struct {
+    const char *name;
+    uint16_t rhythm;
+    uint8_t contour, gate, velocity;
+} role_styles[] = {
+    {"AMBIENT", 0x101, 0, 143, 61},
+    {"IDM", 0x5949, 7, 38, 77},
+    {"JUNGLE", 0x2925, 5, 49, 94},
+    {"DRUM & BASS", 0x5545, 0, 62, 98},
+    {"BREAKBEAT", 0x4929, 3, 66, 89},
+    {"TECHNO", 0x5555, 1, 78, 92},
+    {"HOUSE", 0x1115, 4, 99, 90},
+    {"ACID", 0xb56b, 9, 54, 101},
+    {"TRANCE", 0xaaaa, 2, 84, 88},
+    {"ELECTRO", 0x9695, 6, 57, 90},
+    {"SYNTHWAVE", 0x3333, 4, 89, 78},
+    {"DOWNTEMPO", 0x1049, 2, 103, 71},
+    {"TRIP HOP", 0x2509, 3, 78, 76},
+    {"DUB", 0x4085, 0, 114, 82},
+    {"GARAGE", 0x2a95, 5, 60, 86},
+    {"FUNK", 0x4d25, 7, 45, 96},
+    {"JAZZ", 0x9151, 6, 96, 73},
+    {"SOUL", 0x2129, 3, 110, 80},
+    {"CINEMATIC", 0x811, 7, 136, 71},
+    {"NEOCLASSICAL", 0x9249, 5, 104, 77},
+    {"MINIMAL", 0x4445, 0, 71, 72},
+    {"EXPERIMENTAL", 0x6b1b, 11, 32, 83},
+};
+
+static void generate_role(void)
+{
+    unsigned track = slap_ui.track;
+    if (track >= DRUMS || playing || recording || rec_running || pattern_action) return;
+    unsigned length = 16u << role_length;
+    for (unsigned step = 0; step < length && !role_confirm; ++step)
+        for (unsigned lane = 0; lane < lane_count(track); ++lane)
+            if (event_get(track, step, lane)) { role_confirm = 1; return; }
+    role_confirm = 0;
+    snapshot_take(track, length);
+    clear_events(track, length);
+    static const uint8_t registers[] = {36, 60, 48, 60, 60, 48, 48, 60};
+    static const uint8_t motif[] = {0, 3, 7, 10, 5, 12, 2, 7};
+    uint32_t harmony = tracks[track].harmony;
+    unsigned root = harmony & 255u, scale = harmony >> 8 & 255u;
+    const __typeof__(*role_styles) *style = &role_styles[role_style];
+    unsigned hit = 0;
+    for (unsigned step = 0; step < length; ++step) {
+        if (!(style->rhythm & (1u << (step & 15u)))) continue;
+        unsigned contour = role_kind == 0u ? hit / 2u : hit;
+        unsigned offset = motif[(contour + style->contour + step / 16u) & 7u];
+        unsigned pitch = note_in_scale(registers[role_kind] + root + offset, root, scale);
+        unsigned velocity = style->velocity + (!(step & 3u) ? 12u : hit % 9u);
+        unsigned gate = role_kind == 4u ? style->gate / 2u :
+            role_kind == 6u ? (style->gate + 191u) / 2u : style->gate;
+        event_set(track, step, 0, cell_word(pitch, velocity, gate, 100u));
+        if (role_kind == 2u || role_kind == 6u)
+            event_set(track, step, 1, cell_word(note_in_scale(pitch + 7u, root, scale), velocity - 10u, gate, 100u));
+        ++hit;
+    }
+    track_setting(track, 0, length);
+    finish_snapshot(track);
+}
+
 static void generate_drums(void)
 {
     if (!gen_enabled || gen_queued || recording || rec_running || pattern_action) return;
@@ -4162,7 +4227,12 @@ void app_input_only(void)
     if (pressed & (1u << B_HOME))
         slap_ui.page = slap_ui.page == HOME ? VISUAL : HOME;
     if (pressed & (1u << B_SEQ)) {
-        if (slap_ui.page == SEQ && slap_ui.track == DRUMS) {
+        if (slap_ui.page == SEQ && slap_ui.track < DRUMS) {
+            slap_ui.page = ROLE_GEN;
+            unsigned length = pattern_length(tracks[slap_ui.track].mix);
+            role_length = length <= 16u ? 0u : length <= 32u ? 1u : 2u;
+            role_confirm = 0;
+        } else if (slap_ui.page == SEQ && slap_ui.track == DRUMS) {
             slap_ui.page = GEN_DRUMS;
             unsigned steps = pattern_length(tracks[DRUMS].mix);
             gen_bars = steps <= 16u ? 1u : steps <= 32u ? 2u : 4u;
@@ -4407,6 +4477,12 @@ void app_input_only(void)
         dancer_pattern = (unsigned)clamp((int)dancer_pattern + knob[1], 0, 2);
         dancer_outline = (unsigned)clamp((int)dancer_outline + knob[2], 0, 1);
         dancer_lighting = (unsigned)clamp((int)dancer_lighting + knob[3], 0, 1);
+    } else if (slap_ui.page == ROLE_GEN) {
+        if (knob[0] || knob[1] || knob[2]) role_confirm = 0;
+        role_kind = (unsigned)clamp((int)role_kind + knob[0], 0, 7);
+        role_style = (unsigned)clamp((int)role_style + knob[1], 0, (int)(sizeof role_styles / sizeof *role_styles) - 1);
+        role_length = (unsigned)clamp((int)role_length + knob[2], 0, 2);
+        if (pressed & (1u << B_SEL)) generate_role();
     } else if (slap_ui.page == GEN_DRUMS) {
         if (knob[0] || knob[1] || knob[2] || knob[3] || (pressed & (1u << B_ARP))) gen_confirm = 0;
         gen_style = (unsigned)clamp((int)gen_style + knob[0], 0, sizeof(drum_style) / sizeof(drum_style[0]) - 1);
@@ -4958,11 +5034,13 @@ static void draw_performance_knob(int x, const char *label, const char *value, i
     }
     if (digital) {
         int inset = body - 3;
-        uint16_t frame = theme == KNOB_NEON ? 0x0351 : 0x6b4d;
+        uint16_t frame = theme == KNOB_NEON ? 0x0351 : 0x946a;
         cv_rect(center - inset, cy - body / 2, 2 * inset + 1, body + 1, frame);
         cv_rect(center - inset + 1, cy - body / 2 + 1, 2 * inset - 1, body - 1, C_BLACK);
         cv_rect(center - inset + 2, cy - body / 2 + 1, 2 * inset - 3, 1,
-                theme == KNOB_NEON ? 0x43de : 0x2945);
+                theme == KNOB_NEON ? 0x43de : 0xff4c);
+        cv_rect(center - inset + 2, cy + body / 2 - 1, 2 * inset - 3, 1,
+                theme == KNOB_NEON ? 0xc01b : 0x39c5);
     }
 
     unsigned origin = bipolar ? 12u : 0u;
@@ -5109,10 +5187,10 @@ static void draw_home_sequences(void)
         int tempo_x = 237 - (int)tempo_width;
         cv_text(tempo_x - text_w(&FONT_B, "BPM") - 3, 9, &FONT_B, "BPM", 0xad55);
         cv_text(tempo_x, -3, &FONT_L, number, C_WHITE);
-        cv_text(3, 25, &FONT_B, "USB", status & 1u ? C_WHITE : 0x9cd3);
-        cv_text(41, 25, &FONT_B, "IN", status & 2u ? 0x8ff3 : 0x9cd3);
-        cv_text(66, 25, &FONT_B, "OUT", status & 4u ? 0x8ff3 : 0x9cd3);
-        const char *hint = "EDIT 1S MIXER";
+        cv_text(104, 1, &FONT_T, "USB", status & 1u ? C_WHITE : 0x9cd3);
+        cv_text(104, 13, &FONT_T, "IN", status & 2u ? 0x8ff3 : 0x9cd3);
+        cv_text(125, 13, &FONT_T, "OUT", status & 4u ? 0x8ff3 : 0x9cd3);
+        const char *hint = "HOLD EDIT FOR A SECOND TO OPEN MIXER";
         char prompt[] = "CLEAR TRACK 0S";
         if (notice & 64u) {
             if (notice & 8u) __builtin_memcpy(prompt, "RESET SONG  0S", sizeof prompt);
@@ -5121,9 +5199,10 @@ static void draw_home_sequences(void)
         } else if (notice) {
             hint = notice & 32u ? "CLEAR?" : notice & 8u ? "UNDO" : "CLEARED";
         }
-        cv_text(237 - text_w(&FONT_B, hint), 25, &FONT_B, hint, C_WHITE);
+        const felucca_font_t *hint_font = text_w(&FONT_B, hint) <= 142 ? &FONT_B : &FONT_T;
+        cv_text(3, 27, hint_font, hint, C_WHITE);
         {
-            const uint16_t battery_ink = battery_status < 0 || battery_status >= 4 ? 0x9cf3 : 0xfd20;
+            const uint16_t battery_ink = battery_status == 4 ? 0x47e8 : battery_status < 0 ? 0x9cf3 : 0xfd20;
             int x = 7 + text_w(&FONT_L, "LOOPER");
             cv_rect(x, 4, 10, 19, battery_ink);
             cv_rect(x + 2, 2, 6, 2, battery_ink);
@@ -5191,7 +5270,7 @@ static void draw_home_sequences(void)
         for (unsigned band = 0; band < 10u; ++band) {
             unsigned rise = band < 5u ? band : 9u - band;
             cv_rect((int)band * 24, 1, 24, 24,
-                    home_shade(base_ink[t], (unsigned)clamp(20 + (int)(pulse + rise) * 2, 0, 32)));
+                    home_shade(base_ink[t], (unsigned)clamp(10 + (int)(pulse + rise) * 2, 0, 32)));
         }
         cv_rect(0, 0, 232, 1, color);
         int playhead = 132;
@@ -5489,7 +5568,7 @@ static void draw_panel(void)
         browser_track = selected; browser_patch = patch; browser_group = group; browser_tempo = tempo; browser_page = edit_page;
     } else browser_valid = 0;
 
-    static const char *const page_names[] = {"SLAP-5", "SEQUENCE", "GLOBAL", "SOUND LAB", "ENV", "FX", "VISUAL", "SAVE", "KEY & CHORDS", "LFO", "ARP", "MIXER", "RECORD", "GEN DRUMS", "LIVE FX", "SETTINGS"};
+    static const char *const page_names[] = {"SLAP-5", "SEQUENCE", "GLOBAL", "SOUND LAB", "ENV", "FX", "VISUAL", "SAVE", "KEY & CHORDS", "LFO", "ARP", "MIXER", "RECORD", "GEN DRUMS", "LIVE FX", "SETTINGS", "ROLE GENERATOR"};
     static const char *const arp_labels[] = {"MODE", "RATE", "OCT", "GATE"};
     static const char *const arp_modes[] = {"OFF","UP","DOWN","UP/DN","RANDOM","CHORD","PLAYED"};
     static const char *const arp_rates[] = {"1/4","1/8","1/16","1/32","1/8T","1/16T"};
@@ -6418,6 +6497,24 @@ static void draw_panel(void)
             cv_begin(240, 40, background);
             cv_blit(0, y);
         }
+        return;
+    }
+    if (slap_ui.page == ROLE_GEN) {
+        cv_begin(240, 40, background);
+        cv_text(8, 4, &FONT_B, role_names[role_kind], c);
+        cv_text(118, 4, &FONT_B, role_styles[role_style].name, C_WHITE);
+        cv_text(8, 24, &FONT_T, "K1 ROLE  K2 STYLE  K3 BARS", C_WHITE);
+        cv_blit(0, 80);
+        cv_begin(240, 40, background);
+        char bars[2] = {(char)('0' + (1u << role_length)), 0};
+        cv_text(8, 2, &FONT_B, bars, c);
+        cv_text(29, 2, &FONT_B, "BARS", C_WHITE);
+        cv_text(8, 22, &FONT_T, playing || recording ? "STOP TO GENERATE" :
+                role_confirm ? "SEL AGAIN TO REPLACE" : "SEL GENERATE  /  SEQ BACK", C_WHITE);
+        cv_blit(0, 120);
+        cv_begin(240, 40, background);
+        cv_blit(0, 160);
+        cv_blit(0, 200);
         return;
     }
     if (slap_ui.page == GEN_DRUMS) {
