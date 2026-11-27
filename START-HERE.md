@@ -2,7 +2,7 @@
 
 ## v0.1.49 engineering checkpoint
 
-Current application source `b1eb81f34fb8d3d1d340009b5dee7db4f3297ba9`. [Engineering package](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45965065136/artifacts/15182238906) and [matching single-release site audit](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45965065188). The public installer and recovery archive remain in service while software acceptance stays open.
+Current application source `544340e649f3024d462509aac3ff5a1ecb3222c4`. [Engineering package](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45965939328/artifacts/15182802098) and [matching single-release site audit](https://github.com/CodingSlapfu/SLAP-5/actions/runs/45965939619). The public installer and recovery archive remain in service while software acceptance stays open.
 
 [Source and physical qualification procedure](evidence/qualification-0.1.49.md). Existing public distribution stays in service pending the cross-page physical audio gate and final design acceptance in Issue #8.
 
