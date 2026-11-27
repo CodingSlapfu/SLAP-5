@@ -50,6 +50,7 @@ expect pitch 60
 expect playing 1
 tap HOME
 turn K2 1
+wait 2300
 expect length 32
 tap SEQ
 turn SELECT 31
