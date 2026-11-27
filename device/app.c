@@ -1439,6 +1439,8 @@ static void apply_pattern_action(void)
             performance_filter[t] = 0;
         }
         performance_filter[TRACKS] = 0;
+        __builtin_memset(drum_step_locks, 0, sizeof drum_step_locks);
+        step_clipboard.valid = 0;
         drum_filters = mixer_solo = live_fx_word = 0;
         tempo = 112;
         swing = 0;
