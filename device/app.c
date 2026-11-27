@@ -4839,91 +4839,74 @@ static int held_note_width(unsigned duration, unsigned step, unsigned base, unsi
 
 static void draw_performance_knob(int x, const char *label, const char *value, int position, uint16_t color)
 {
+    static const int8_t arc[25][2] = {
+        {-90, 90}, {-106, 71}, {-117, 49}, {-125, 25}, {-127, 0},
+        {-125, -25}, {-117, -49}, {-106, -71}, {-90, -90}, {-71, -106},
+        {-49, -117}, {-25, -125}, {0, -127}, {25, -125}, {49, -117},
+        {71, -106}, {90, -90}, {106, -71}, {117, -49}, {125, -25},
+        {127, 0}, {125, 25}, {117, 49}, {106, 71}, {90, 90},
+    };
+    static const uint8_t rim[] = {12, 12, 12, 12, 11, 11, 10, 9, 8, 7, 6, 4, 2};
+    unsigned theme = knob_style;
     int expanded = slap_ui.page == MIXER || slap_ui.page == HOME;
-    const felucca_font_t *label_font = expanded ? &FONT_T :
-        text_w(&FONT_B, label) <= 58 ? &FONT_B :
-        text_w(&FONT_T, label) <= 58 ? &FONT_T : &FONT_XS;
+    const felucca_font_t *label_font = &FONT_T;
     const felucca_font_t *value_font = text_w(&FONT_B, value) <= 24 ? &FONT_B : &FONT_T;
     int width = text_w(value_font, value);
+    int digital = theme >= KNOB_NEON;
+    int external = width > (expanded ? 32 : 22) || (!expanded && !digital);
+    if (external) {
+        value_font = &FONT_T;
+        width = text_w(value_font, value);
+    }
+    int center = x + (external ? 16 : 30);
+    int cy = expanded ? 20 : 13;
+    int radius = expanded && !external ? 20 : 13;
+    int body = radius - 4;
     unsigned step = (unsigned)(clamp(position, -100, 100) + 100) * 24u / 200u;
     int bipolar = (label[0] == 'P' && label[1] == 'A' && label[2] == 'N' && !label[3]) ||
         (slap_ui.page == MIXER && x >= 120);
-    const int label_x = x + (60 - text_w(label_font, label)) / 2;
-    const int label_y = expanded ? 40 : 27;
+    int label_x = x + (60 - text_w(label_font, label)) / 2;
+    int label_y = expanded ? 37 : 25;
     cv_text(label_x + 1, label_y + 1, label_font, label, 0x18c3);
-    cv_text(label_x, label_y, label_font, label, expanded ? C_WHITE : color);
-    if (width > (expanded ? 32 : 24)) {
-        cv_text(x + (60 - width) / 2, 1, value_font, value, C_WHITE);
-        cv_rect(x + 4, 22, 52, 3, 0x3186);
-        cv_rect(x + 4 + (int)step * 2, 19, 4, 9, color);
-        return;
-    }
+    cv_text(label_x, label_y, label_font, label, C_WHITE);
 
-    int digital = knob_style >= KNOB_NEON;
-    int center = x + (expanded || digital ? 30 : 17);
-    int cy = expanded ? 21 : 14;
-    int radius = expanded ? 21 : 14;
-    if (!digital) {
-        static const uint8_t rim[] = {12, 12, 12, 12, 11, 11, 10, 9, 8, 7, 6, 4, 2};
-        int studio = knob_style == KNOB_STUDIO;
-        int body = expanded ? 17 : 12;
-        for (int row = -body; row <= body; ++row) {
-            int half = rim[(row < 0 ? -row : row) * 12 / body] * body / 12;
-            uint16_t bevel = row < 0 ? (studio ? 0xef7d : 0x9472) : 0x18c3;
-            uint16_t shade = row < -body / 2 ? (studio ? 0xbe18 : 0x6b4d) :
-                row < body / 3 ? (studio ? 0x7bcf : 0x39e7) : (studio ? 0x4a69 : 0x2104);
-            cv_rect(center - half, cy + row, 2 * half + 1, 1, bevel);
-            if (half > 2) {
-                cv_rect(center - half + 2, cy + row, 2 * half - 3, 1, shade);
-                if (studio && !(row & 3) && half > 5)
-                    cv_rect(center - half + 4, cy + row, 2 * half - 7, 1, row < 0 ? 0xad95 : 0x52aa);
-                if (!studio && (row & 3) == 0)
-                    cv_rect(center - half + 1, cy + row, 2, 1, 0x526c);
-            }
-        }
-        if (expanded) {
-            cv_rect(center - 9, cy - 8, 18, 16, knob_style == KNOB_STUDIO ? 0x3186 : 0x0861);
-            cv_rect(center - 7, cy - 8, 14, 1, knob_style == KNOB_STUDIO ? 0x9cf3 : 0x526b);
-        }
-        if (!expanded) cv_text(x + 35 + (24 - width) / 2, 7, value_font, value, C_WHITE);
-    } else {
-        cv_rect(center - width / 2 - 2, cy - 8, width + 4, 17, knob_style == KNOB_NEON ? 0x08a7 : 0x1084);
-        cv_text(center - width / 2 + 1, cy - 6, value_font, value, C_BLACK);
-        cv_text(center - width / 2, cy - 7, value_font, value, C_WHITE);
+    int studio = theme == KNOB_STUDIO;
+    for (int row = -body; row <= body; ++row) {
+        int magnitude = row < 0 ? -row : row;
+        int half = rim[magnitude * 12 / body] * body / 12;
+        uint16_t face = digital ? (theme == KNOB_NEON ? 0x08a7 : 0x1084) :
+            row < -body / 2 ? (studio ? 0xbe18 : 0x528a) :
+            row < body / 3 ? (studio ? 0x7bcf : 0x2945) : (studio ? 0x4a69 : 0x18c3);
+        uint16_t bevel = row < 0 ? (studio ? 0xef7d : 0x526b) : 0x1082;
+        cv_rect(center - half, cy + row, 2 * half + 1, 1, bevel);
+        if (half > 2)
+            cv_rect(center - half + 1, cy + row, 2 * half - 1, 1, face);
+        if (studio && !(row & 3) && half > 5)
+            cv_rect(center - half + 3, cy + row, 2 * half - 5, 1, row < 0 ? 0xad95 : 0x52aa);
     }
 
     unsigned origin = bipolar ? 12u : 0u;
     unsigned low = step < origin ? step : origin;
     unsigned high = step > origin ? step : origin;
-    unsigned spacing = knob_style == KNOB_SEGMENTED ? 3u : digital ? 1u : 2u;
+    unsigned spacing = theme == KNOB_SEGMENTED ? 3u : digital ? 1u : 2u;
     for (unsigned tick = 0; tick <= 24u; tick += spacing) {
-        unsigned angle = 384u + tick * 32u;
-        int px = center + visual_wave(angle + 256u, radius);
-        int py = cy + visual_wave(angle, radius);
-        uint16_t ink = tick == step ? C_WHITE :
-            tick >= low && tick <= high ? color :
-            bipolar && tick == origin ? 0xa514 : 0x39e7;
-        cv_rect(px, py, digital ? 2 : 1, knob_style == KNOB_SEGMENTED ? 3 : 2, ink);
-        if (expanded && !digital && tick % 6u == 0u)
-            cv_rect(center + visual_wave(angle + 256u, radius - 2),
-                    cy + visual_wave(angle, radius - 2), 1, 2, ink);
-        if (digital && tick >= low && tick <= high)
-            cv_rect(center + visual_wave(angle + 256u, radius - 2),
-                    cy + visual_wave(angle, radius - 2), 1, 1, knob_style == KNOB_NEON ? 0x5fff : color);
+        int px = center + arc[tick][0] * radius / 127;
+        int py = cy + arc[tick][1] * radius / 127;
+        uint16_t ink = tick >= low && tick <= high ? color : 0x39e7;
+        if (bipolar && tick == origin) ink = 0xadb5;
+        cv_rect(px, py, digital ? 2 : 1, theme == KNOB_SEGMENTED ? 3 : 2, ink);
+        if (theme == KNOB_NEON && tick >= low && tick <= high)
+            cv_rect(center + arc[tick][0] * (radius - 2) / 127,
+                    cy + arc[tick][1] * (radius - 2) / 127, 1, 1, 0x5fff);
     }
-    if (!digital) {
-        unsigned angle = 384u + (unsigned)(clamp(position, -100, 100) + 100) * 768u / 200u;
-        int pointer = expanded ? 16 : 10;
-        int inner = expanded ? 11 : 3;
-        int px = center + visual_wave(angle + 256u, pointer);
-        int py = cy + visual_wave(angle, pointer);
-        cv_line(center + visual_wave(angle + 256u, inner), cy + visual_wave(angle, inner), px, py, color);
-        cv_rect(px, py, 2, 2, C_WHITE);
-        if (expanded) {
-            cv_text(center - width / 2 + 1, cy - 6, value_font, value, C_BLACK);
-            cv_text(center - width / 2, cy - 7, value_font, value, C_WHITE);
-        }
-    }
+    if (!digital)
+        cv_line(center + arc[step][0] * (body - 5) / 127, cy + arc[step][1] * (body - 5) / 127,
+                center + arc[step][0] * body / 127, cy + arc[step][1] * body / 127, color);
+    cv_rect(center + arc[step][0] * radius / 127, cy + arc[step][1] * radius / 127, 2, 2, C_WHITE);
+    int value_x = external ? x + 58 - width : center - width / 2;
+    int value_y = cy - 7;
+    cv_text(value_x + 1, value_y + 1, value_font, value, C_BLACK);
+    cv_text(value_x, value_y, value_font, value, C_WHITE);
 }
 
 static uint16_t home_shade(uint16_t color, unsigned amount)
@@ -5034,11 +5017,15 @@ static void draw_home_sequences(void)
     const uint16_t progress_surface = BLACK_PANEL;
     if (redraw_header) {
         cv_begin(240, 44, header);
-        cv_text(3, 1, &FONT_M, "LOOPER", C_WHITE);
         decimal(number, bpm);
-        int tempo_x = 237 - text_w(&FONT_M, number);
+        const felucca_font_t *headline = &FONT_L;
+        if (text_w(headline, "LOOPER") + text_w(headline, number) + text_w(&FONT_B, "BPM") + 30 > 240)
+            headline = &FONT_M;
+        int title_y = headline == &FONT_L ? -3 : 1;
+        cv_text(3, title_y, headline, "LOOPER", C_WHITE);
+        int tempo_x = 237 - text_w(headline, number);
         cv_text(tempo_x - text_w(&FONT_B, "BPM") - 3, 6, &FONT_B, "BPM", 0xad55);
-        cv_text(tempo_x, 1, &FONT_M, number, C_WHITE);
+        cv_text(tempo_x, title_y, headline, number, C_WHITE);
         cv_text(3, 25, &FONT_B, "USB", status & 1u ? C_WHITE : 0x9cd3);
         cv_text(41, 25, &FONT_B, "IN", status & 2u ? 0x8ff3 : 0x9cd3);
         cv_text(66, 25, &FONT_B, "OUT", status & 4u ? 0x8ff3 : 0x9cd3);
@@ -5054,7 +5041,7 @@ static void draw_home_sequences(void)
         cv_text(237 - text_w(&FONT_B, hint), 25, &FONT_B, hint, C_WHITE);
         if (battery_status >= 0 && battery_status < 4) {
             const uint16_t battery_ink = 0xfd20;
-            int x = 7 + text_w(&FONT_M, "LOOPER");
+            int x = 7 + text_w(headline, "LOOPER");
             cv_rect(x, 4, 10, 19, battery_ink);
             cv_rect(x + 2, 2, 6, 2, battery_ink);
             cv_rect(x + 1, 5, 8, 17, header);
