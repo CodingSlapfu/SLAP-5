@@ -14,11 +14,11 @@ jobs:
     timeout-minutes: 12
     env:
       GH_TOKEN: ${{ github.token }}
-      CHECKPOINT: 4f2048879e930a9091d1bb3ef73f8346daca6643
+      CHECKPOINT: e5d73d9a7822dc66f09d56072d6308f9557bc07d
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 4f2048879e930a9091d1bb3ef73f8346daca6643
+          ref: e5d73d9a7822dc66f09d56072d6308f9557bc07d
       - name: Build and audit the versioned native package
         run: |
           python3 -m venv "$RUNNER_TEMP/slap-python"
@@ -63,6 +63,7 @@ jobs:
           tar -C "$RUNNER_TEMP/components" -czf "$RUNNER_TEMP/release/SLAP-5-0.1.49-engineering-backup.tar.gz" .
           mkdir -p "$RUNNER_TEMP/framebuffer"
           python3 vendor/fm1-base/tools/build.py device --host
+          device/build/host/slap-5_host device/tests/guarded-reset.txt "$RUNNER_TEMP/framebuffer"
           device/build/host/slap-5_host device/tests/graph-navigation.txt "$RUNNER_TEMP/framebuffer"
           fixture="$RUNNER_TEMP/looper-reference-comparison.txt"
           awk '{print} /^expect worker_fallbacks 0$/ {print "shot looper-jungle-240.png"}' device/tests/jungle-155.txt > "$fixture"
