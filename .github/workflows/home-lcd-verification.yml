@@ -135,6 +135,10 @@ jobs:
           assert len(footers) == 4, "All four styles must change the MIXER footer"
           PY
           sh device/tests/dual-core.sh
+          pressure="$(mktemp -d)"
+          cat device/tests/jungle-155.txt > "$pressure/input.txt"
+          printf '\n%s\n' 'expect pressure_spans >0' 'expect worker_online 1' >> "$pressure/input.txt"
+          SLAP_TEST_DSP_PRESSURE=1 "$host" "$pressure/input.txt" "$pressure"
           python3 device/tests/dense-recording.py --bpm 155 --extreme --soak-ms 10000
           python3 device/tests/sound-graph-audio.py "$host"
       - uses: actions/upload-artifact@v4

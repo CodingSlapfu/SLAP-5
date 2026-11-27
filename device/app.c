@@ -227,7 +227,10 @@ static volatile uint32_t peak_worker_overlap, peak_voice_recovery, peak_fx_recov
 #endif
 
 static volatile uint32_t active_voices, voice_steals;
-static unsigned dsp_pressure, dsp_pressure_hold;
+static unsigned dsp_pressure;
+#ifndef PLAT_HOST
+static unsigned dsp_pressure_hold;
+#endif
 static volatile uint32_t quiet_tails_reclaimed, pressure_spans;
 static volatile uint32_t track_voice_counts, track_sleep_mask, peak_active_voices;
 #if defined(PLAT_HOST)
@@ -542,6 +545,7 @@ void app_init(void)
     host_discard_worker_result = getenv("SLAP_TEST_DISCARD_WORKER") != 0;
     host_discard_fx_result = getenv("SLAP_TEST_DISCARD_FX") != 0;
     host_fx_grace = getenv("SLAP_TEST_FX_GRACE") != 0;
+    dsp_pressure = getenv("SLAP_TEST_DSP_PRESSURE") != 0;
     host_legacy_fx_worker = getenv("SLAP_TEST_LEGACY_FX_WORKER") != 0;
     const char *late_voice = getenv("SLAP_TEST_LATE_VOICE");
     host_late_voice = late_voice ? atoi(late_voice) : 0;
@@ -4215,10 +4219,10 @@ void app_input_only(void)
             break;
         }
     } else if (slap_ui.page == VISUAL && slap_ui.visual == 6) {
-        dancer_pattern = (unsigned)clamp((int)dancer_pattern + knob[0], 0, 2);
-        dancer_outline = (unsigned)clamp((int)dancer_outline + knob[1], 0, 1);
-        dancer_lighting = (unsigned)clamp((int)dancer_lighting + knob[2], 0, 1);
-        dancer_reactivity = (unsigned)clamp((int)dancer_reactivity + knob[3], 0, 1);
+        dancer_reactivity = (unsigned)clamp((int)dancer_reactivity + knob[0], 0, 1);
+        dancer_pattern = (unsigned)clamp((int)dancer_pattern + knob[1], 0, 2);
+        dancer_outline = (unsigned)clamp((int)dancer_outline + knob[2], 0, 1);
+        dancer_lighting = (unsigned)clamp((int)dancer_lighting + knob[3], 0, 1);
     } else if (slap_ui.page == GEN_DRUMS) {
         if (knob[0] || knob[1] || knob[2] || knob[3] || (pressed & (1u << B_ARP))) gen_confirm = 0;
         gen_style = (unsigned)clamp((int)gen_style + knob[0], 0, sizeof(drum_style) / sizeof(drum_style[0]) - 1);
@@ -6661,6 +6665,8 @@ int app_expect(const char *name, int *result)
     else if (name_matches(name, "diag_voice_peak")) *result = (int)peak_active_voices;
     else if (name_matches(name, "diag_sleep_mask")) *result = (int)track_sleep_mask;
     else if (name_matches(name, "diag_track1_voices")) *result = (int)(track_voice_counts & 31u);
+    else if (name_matches(name, "pressure_spans")) *result = (int)pressure_spans;
+    else if (name_matches(name, "quiet_tails_reclaimed")) *result = (int)quiet_tails_reclaimed;
     else if (name_matches(name, "voice_steals")) *result = (int)voice_steals;
 #endif
 #if defined(PLAT_HOST) && !defined(PLAT_WEB)

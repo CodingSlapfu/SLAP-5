@@ -65,11 +65,30 @@ static void dancer_draw(unsigned time)
     unsigned accent = playing && dancer_reactivity && energy > 12u;
     unsigned cycle = ((positions & 31u) * 15u + step_progress) / 16u;
     unsigned recovery = time / 260u % 10u;
-    unsigned pose = active ? (cycle + dancer_pattern * 8u) % 24u :
+    unsigned pose = active ? (cycle * (1u + dancer_lighting) + dancer_pattern * 8u +
+        note_activity[1] / 8u + note_activity[3] / 12u) % 24u :
         24u + (recovery <= 5u ? recovery : 10u - recovery);
     unsigned light_track = ((positions >> 2) + dancer_pattern) % TRACKS;
-    int sway = active ? visual_wave(time * (dancer_pattern + 2u), dancer_reactivity ? 6 + (int)(energy / 90u) : 4) :
-        visual_wave(time * 2u, 1);
+    int amplitude = dancer_outline ? 9 : 3;
+    if (dancer_reactivity) amplitude += (int)((track_energy[0] + track_energy[2]) / 44u);
+    int sway = active ? visual_wave(time * (dancer_pattern + 2u), amplitude) : visual_wave(time * 2u, 1);
+    static unsigned started, prior_bucket, prior_pose, previous_pose, was_active;
+    if (!active || !was_active) {
+        started = time;
+        prior_pose = previous_pose = pose;
+        prior_bucket = time / 500u;
+    }
+    was_active = active;
+    unsigned bucket = time / 500u;
+    if (bucket != prior_bucket) {
+        previous_pose = prior_pose;
+        prior_pose = pose;
+        prior_bucket = bucket;
+    }
+    unsigned trail_phase = (time - started) % 5000u;
+    const uint8_t *trail = active && !dsp_pressure && trail_phase < 2500u ? dancer_frames[previous_pose] : 0;
+    int spread_trail = trail_phase < 2000u ? 12 : 12 + (int)(trail_phase - 2000u) / 8;
+    if (light_track & 1u) spread_trail = -spread_trail;
     const uint8_t *span = dancer_frames[pose];
     enum { DANCER_LIFT = 14 };
     int source_row = 0;
@@ -80,11 +99,19 @@ static void dancer_draw(unsigned time)
             if ((code >> 3 & 7u) == 7u) ++span;
         }
         ++span;
+        if (trail) {
+            while (*trail) {
+                unsigned code = *trail++;
+                if (code >> 6 == 3u) ++trail;
+                if ((code >> 3 & 7u) == 7u) ++trail;
+            }
+            ++trail;
+        }
         ++source_row;
     }
     for (int sy = 0; sy < 240; sy += 40) {
         cv_begin(240, 40, C_BLACK);
-        if (accent && dancer_lighting) {
+        if (accent) {
             int spread = 16 + (int)(active ? note_activity[DRUMS] / 2u : 3u);
             int sweep = visual_wave(time * 3u, 28);
             cv_line(38, 9 - sy, 120 - spread + sweep, 218 - sy, track_rule[light_track]);
@@ -92,18 +119,30 @@ static void dancer_draw(unsigned time)
         }
         if (active) cv_rect(15, 218 - sy, 210, 2, track_rule[light_track]);
         for (int y = 0; y < 40 && source_row < DANCER_HEIGHT; ++y) {
+            const uint8_t *next_trail = trail;
+            if (trail && !(y & 3))
+                next_trail = dancer_row(trail, y, sway + spread_trail, track_rule[light_track]);
             if (dancer_outline)
                 dancer_row(span, y, sway, active ? track_rule[light_track] : RGB(23, 14, 35));
             const uint8_t *next = dancer_row(span, y, sway, 0);
             int next_row = (sy + y + DANCER_LIFT + 1) * DANCER_HEIGHT / 240;
             if (next_row != source_row) {
                 span = next;
+                if (trail && next_trail == trail) {
+                    while (*next_trail) {
+                        unsigned code = *next_trail++;
+                        if (code >> 6 == 3u) ++next_trail;
+                        if ((code >> 3 & 7u) == 7u) ++next_trail;
+                    }
+                    ++next_trail;
+                }
+                trail = next_trail;
                 source_row = next_row;
             }
         }
         if (sy == 0) cv_text(8, 5, &FONT_B, "DANCER", C_WHITE);
         if (sy == 200) {
-            cv_text(8, 23, &FONT_T, "K1 PATTERN  K2 OUTLINE  K3 LIGHTS  K4 REACT", C_WHITE);
+            cv_text(8, 23, &FONT_T, "K1 ENERGY  K2 GROOVE  K3 AMP  K4 POSE", C_WHITE);
         }
         cv_blit(0, sy);
     }
