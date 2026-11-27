@@ -538,6 +538,7 @@ void app_init(void)
     led_custom = led_style == 3u && encoded_track;
     led_track = led_custom ? encoded_track - 1u : 2u;
     led_other = led_custom ? (unsigned)clamp(led_keys_on_hit + 2u * led_active_soft, 0, 2) : 1u;
+    if (led_custom) led_keys_on_hit = 0;
     slap_ui.visual = select_visual(saved_preferences >> 22 & 7u, 0);
     startup_sample = 0;
     startup_phase = 0.0f;
@@ -4529,8 +4530,6 @@ void app_input_only(void)
         for (unsigned t = 0; t < TRACKS; ++t)
             if (!(tracks[t].mix & (1u << 24))) key_lights |= 1u << save_keys[t];
     }
-    for (unsigned i = 0; i < sizeof live_black_keys / sizeof live_black_keys[0]; ++i)
-        key_lights &= ~(1u << live_black_keys[i]);
     const uint32_t activity = lights & (LED_PLAY_GREEN | (1u << B_REC));
     uint32_t ordinary = (lights | context) & ~(context | activity);
     uint32_t bright = activity | (led_track == 2u ? context : 0u) | (led_other == 2u ? ordinary : 0u);
