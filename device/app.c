@@ -805,14 +805,15 @@ static void trigger_voice(unsigned track, unsigned pitch, unsigned velocity, uin
         expression_seen |= flag;
     }
     float quietest_release = 0.0f;
-    unsigned best_class = 4u;
+    unsigned best_class = 6u;
     const unsigned hidden = mixer_solo ? ((1u << TRACKS) - 1u) & ~mixer_solo : 0u;
     for (unsigned i = 0; i < VOICES; ++i) {
         Voice *candidate = &voices[i];
         if (!candidate->age) { voice = candidate; break; }
         unsigned lane = candidate->track;
         unsigned silent_lane = ((hidden >> lane) & 1u) || (tracks[lane].mix & (1u << 24));
-        unsigned priority = candidate->audition ? 0u : silent_lane ? 1u : candidate->releasing ? 2u : 3u;
+        unsigned priority = candidate->audition ? 0u : silent_lane ? 1u : candidate->releasing ? 2u :
+            candidate->manual ? 5u : lane == track ? 3u : 4u;
         float loudness = candidate->releasing ? candidate->env * candidate->velocity : 0.0f;
         if (priority < best_class ||
             (priority == best_class && (priority == 2u ? loudness < quietest_release :
@@ -2918,7 +2919,7 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
         level_at[t] = level;
         wet[t] = mixer_proc[t] * (1.0f / 255.0f);
         float envelope = mixer_envelope[t];
-        float confidence = fm_clampf((envelope - 0.002f) * 125.0f, 0.0f, 1.0f);
+        float confidence = fm_clampf((envelope - 0.002f) * (t == DRUMS ? 165.0f : 125.0f), 0.0f, 1.0f);
         // The same envelope follows drums, but preserve more transient punch
         // when automatic leveling reduces a hot kit.
         float floor = t == DRUMS ? 0.80f : 0.62f;
@@ -4871,11 +4872,11 @@ static void draw_performance_knob(int x, const char *label, const char *value, i
     static const uint8_t rim[] = {12, 12, 12, 12, 11, 11, 10, 9, 8, 7, 6, 4, 2};
     unsigned theme = knob_style;
     int expanded = slap_ui.page == MIXER || slap_ui.page == HOME;
-    const felucca_font_t *label_font = &FONT_T;
+    const felucca_font_t *label_font = expanded && text_w(&FONT_B, label) <= 55 ? &FONT_B : &FONT_T;
     const felucca_font_t *value_font = text_w(&FONT_B, value) <= 24 ? &FONT_B : &FONT_T;
     int width = text_w(value_font, value);
     int digital = theme >= KNOB_NEON;
-    int external = width > (expanded ? 32 : 22) || (!expanded && !digital);
+    int external = width > (expanded ? 32 : 22);
     if (external) {
         value_font = &FONT_T;
         width = text_w(value_font, value);
@@ -4888,7 +4889,7 @@ static void draw_performance_knob(int x, const char *label, const char *value, i
     int bipolar = (label[0] == 'P' && label[1] == 'A' && label[2] == 'N' && !label[3]) ||
         (slap_ui.page == MIXER && x >= 120);
     int label_x = x + (60 - text_w(label_font, label)) / 2;
-    int label_y = expanded ? 37 : 25;
+    int label_y = expanded ? 35 : 25;
     cv_text(label_x + 1, label_y + 1, label_font, label, 0x18c3);
     cv_text(label_x, label_y, label_font, label, C_WHITE);
 
@@ -4910,23 +4911,26 @@ static void draw_performance_knob(int x, const char *label, const char *value, i
     unsigned origin = bipolar ? 12u : 0u;
     unsigned low = step < origin ? step : origin;
     unsigned high = step > origin ? step : origin;
-    unsigned spacing = theme == KNOB_SEGMENTED ? 3u : digital ? 1u : 2u;
+    unsigned spacing = theme == KNOB_SEGMENTED ? 3u : theme == KNOB_STUDIO ? 2u : 1u;
     for (unsigned tick = 0; tick <= 24u; tick += spacing) {
         int px = center + arc[tick][0] * radius / 127;
         int py = cy + arc[tick][1] * radius / 127;
         uint16_t ink = tick >= low && tick <= high ? color : 0x39e7;
         if (bipolar && tick == origin) ink = 0xadb5;
-        cv_rect(px, py, digital ? 2 : 1, theme == KNOB_SEGMENTED ? 3 : 2, ink);
-        if (theme == KNOB_NEON && tick >= low && tick <= high)
-            cv_rect(center + arc[tick][0] * (radius - 2) / 127,
-                    cy + arc[tick][1] * (radius - 2) / 127, 1, 1, 0x5fff);
+        if (theme == KNOB_SEGMENTED) {
+            cv_rect(px - 1, py, 3, 2, ink);
+        } else {
+            int inward = radius - (theme == KNOB_STUDIO ? 4 : theme == KNOB_NEON ? 3 : 2);
+            cv_line(px, py, center + arc[tick][0] * inward / 127,
+                    cy + arc[tick][1] * inward / 127, ink);
+        }
     }
     if (!digital)
         cv_line(center + arc[step][0] * (body - 5) / 127, cy + arc[step][1] * (body - 5) / 127,
                 center + arc[step][0] * body / 127, cy + arc[step][1] * body / 127, color);
     cv_rect(center + arc[step][0] * radius / 127, cy + arc[step][1] * radius / 127, 2, 2, C_WHITE);
     int value_x = external ? x + 58 - width : center - width / 2;
-    int value_y = cy - 7;
+    int value_y = cy - (int)value_font->h / 2;
     cv_text(value_x + 1, value_y + 1, value_font, value, C_BLACK);
     cv_text(value_x, value_y, value_font, value, C_WHITE);
 }
@@ -4942,8 +4946,8 @@ static uint16_t home_shade(uint16_t color, unsigned amount)
 static void draw_home_meter(int x, int y, unsigned width, unsigned peak, uint16_t color)
 {
     cv_rect(x, y, 8, 25, 0x0841);
-    unsigned lit = ((width + 3u) / 4u) * 3u / 4u;
-    unsigned marker = (unsigned)(fm_sqrtf(peak * (1.0f / 160.0f)) * 5.0f);
+    unsigned lit = (width * 6u + 31u) / 32u;
+    unsigned marker = (unsigned)clamp((int)(fm_sqrtf(peak * (1.0f / 160.0f)) * 5.0f), 0, 5);
     for (unsigned segment = 0; segment < 6u; ++segment) {
         uint16_t ink = segment < lit ? (segment >= 5u ? 0xd7a6 : 0x47ea) : home_shade(color, 5);
         if (peak && segment == marker) ink = 0xe7d9;
