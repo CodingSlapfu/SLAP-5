@@ -1,0 +1,3 @@
+# SLAP-5 v0.1.57 hardware test
+
+Physical acceptance is pending. Install only on compatible FM-1 hardware. Keep untouched project exports and a recovery backup. Cold-boot after direct upgrade, then replay the original 95 BPM VHS SAW / SLICER / DEEP DUB session and JUNGLE at 155 BPM and 60% swing. Reset diagnostics and record callback peak, deadline misses, DMA XRUNs and Core 1 status. Include overdub, transport restart, dense wet tracks and animated screens, while adjusting dials. Verify all four themes on the native LCD at minimum, midpoint and maximum and across bipolar center. Public promotion requires explicit approval.
