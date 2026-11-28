@@ -1,5 +1,7 @@
 # SLAP-5 next build
 
+See the [v0.1.56 internal checkpoint](evidence/performance-internal-0.1.56.md) for the verified candidate, reproducible comparisons and the native measurements needed to guide the next split.
+
 ## v0.1.55 performance checkpoint
 
 The owner reports that v0.1.54 still lags during the same peaks. The five independently captured v0.1.52 pages at 95 BPM show a 6,232 µs peak against 5,804 µs, 192 deadline misses on the first page and 798 XRUNs on the last. The 3,887 µs local voice figure, 1,144 µs worker work, zero worker wait and 486 µs nested Timer 5 figure come from separate pages. The worker was online with zero fallbacks. No synchronized trace or v0.1.54 timing follows from those observations.

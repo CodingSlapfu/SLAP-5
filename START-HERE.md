@@ -1,5 +1,9 @@
 # SLAP-5 environment recovery
 
+## Internal performance checkpoint
+
+Compiled source `aad93d454eefc15920b8d39beb91fc6316e6b550`. [Evidence, backup and next profiling work](evidence/performance-internal-0.1.56.md). v0.1.55 remains the hardware-testing installer.
+
 ## v0.1.55 hardware testing
 
 Application `75d5e5654edc7fff7fcb3857510c14bdb1ce3196`, identity `FM-1_75000155`. [Direct installer](https://codingslapfu.github.io/SLAP-5/flash-testing-0.1.55.html) · [Studio](https://codingslapfu.github.io/SLAP-5/testing-0.1.55/studio.html) · [Qualification](evidence/qualification-0.1.55.md) · [Staged promotion](PROMOTE-0.1.55.md). Physical acceptance is pending.
