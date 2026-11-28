@@ -21,10 +21,10 @@
 :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 body { background: var(--ground); color: var(--ink); margin: 0; padding-inline: 16px; padding-block: 28px 48px;
-       font: 400 16px/1.55 "SLAP Block", "Helvetica Neue", Arial, sans-serif; }
+       font: 400 16px/1.55 "SLAP Nexus", "Helvetica Neue", Arial, sans-serif; }
 main, body > header { max-width: 1040px; margin: 0 auto; }
 header { display: flex; flex-wrap: wrap; align-items: baseline; gap: .4rem 1.2rem; margin: 0 0 1rem; }
-h1 { font: 700 2rem/1.1 "SLAP Block", "SLAP Block", sans-serif; margin: 0; }
+h1 { font: 700 2rem/1.1 "SLAP Nexus", "SLAP Nexus", sans-serif; margin: 0; }
 header p { margin: 0; color: var(--muted); }
 header nav { margin-left: auto; display: flex; gap: 1rem; }
 a { color: var(--accent); }
@@ -52,7 +52,7 @@ a { color: var(--accent); }
 .dim .keyface.white { fill: #e8c9b6; }
 .dim .keyface.black { fill: #8ac6bf; }
 .start { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(10, 11, 13, .55); border-radius: 4.4% / 6.9%; }
-.start button { font: 600 1.25rem "SLAP Block", "SLAP Block", sans-serif; letter-spacing: .04em; padding: .7em 1.6em;
+.start button { font: 600 1.25rem "SLAP Nexus", "SLAP Nexus", sans-serif; letter-spacing: .04em; padding: .7em 1.6em;
                 border-radius: 999px; border: 0; background: #f28a5a; color: #2a140a; cursor: pointer; }
 .start[hidden] { display: none; }
 .turn { display: none; margin: 0 0 .8rem; color: var(--muted); font-size: .92rem; }
@@ -66,7 +66,7 @@ a { color: var(--accent); }
 #alert:empty { display: none; }
 .speak { margin: 1.4rem 0 0; padding: 1rem 1.2rem; background: var(--card); border: 1px solid var(--rule); border-radius: 14px; }
 .speak summary { cursor: pointer; }
-.speak summary h2 { display: inline; font: 600 1.1rem "SLAP Block", "SLAP Block", sans-serif; margin: 0; }
+.speak summary h2 { display: inline; font: 600 1.1rem "SLAP Nexus", "SLAP Nexus", sans-serif; margin: 0; }
 .speak[open] summary { margin: 0 0 .6rem; }
 .bar .keys { display: inline-flex; gap: .4rem; align-items: center; }
 .speak fieldset { border: 0; margin: 0 0 .6rem; padding: 0; display: flex; flex-wrap: wrap; gap: .3rem 1.4rem; }
@@ -79,9 +79,9 @@ a { color: var(--accent); }
 .speak p.note { color: var(--muted); margin: .4rem 0 0; font-size: .92rem; }
 @media (prefers-reduced-motion: reduce) { .btnface, .keyface { transition: none; } }
 .bar .cpu { font-variant-numeric: tabular-nums; }
-.help h2 { font: 600 1.1rem "SLAP Block", "SLAP Block", sans-serif; margin: 0 0 .3rem; }
+.help h2 { font: 600 1.1rem "SLAP Nexus", "SLAP Nexus", sans-serif; margin: 0 0 .3rem; }
 .help { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); gap: 1rem 2rem; margin: 1.6rem 0 0; }
-.help h2 { font: 600 1.1rem "SLAP Block", "SLAP Block", sans-serif; margin: 0 0 .3rem; }
+.help h2 { font: 600 1.1rem "SLAP Nexus", "SLAP Nexus", sans-serif; margin: 0 0 .3rem; }
 .help p, .help ul { margin: 0; max-width: 60ch; }
 .help ul { padding-left: 1.1rem; }
 kbd { font: 600 .85em ui-monospace, Menlo, monospace; background: var(--card); border: 1px solid var(--rule); border-radius: 4px; padding: 0 .3em; color: var(--ink); }
@@ -159,7 +159,7 @@ function el(tag, attrs, parent = svg) {
   return e;
 }
 function text(parent, x, y, s, size, fill = LABEL, weight = 600) {
-  const t = el("text", { x, y, "text-anchor": "middle", "font-family": "'SLAP Block', 'Arial Narrow', Arial, sans-serif",
+  const t = el("text", { x, y, "text-anchor": "middle", "font-family": "'SLAP Nexus', 'Arial Narrow', Arial, sans-serif",
                          "font-size": size, "font-weight": weight, fill, "letter-spacing": ".05em", class: "btn", "pointer-events": "none" }, parent);
   t.textContent = s;
   return t;

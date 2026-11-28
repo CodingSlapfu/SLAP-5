@@ -1,105 +1,29 @@
 <!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>SLAP-5</title>
-  <link rel="stylesheet" href="studio.css">
-  <link rel="stylesheet" href="fonts/slap-block.css">
-</head>
-<body>
-  <header>
-    <a class="brand" href="./">SLAP<span>-5</span></a>
-    <nav aria-label="Primary">
-      <a href="studio.html">SLAP STUDIO</a>
-      <a href="flash.html">SLAP FLASH</a>
-      <a href="#features">Features</a>
-      <a href="#downloads">Downloads</a>
-      <a href="#manual">Manual</a>
-    </nav>
-  </header>
-  <main>
-    <section class="hero">
-      <div>
-        <h1>SLAP-5</h1>
-        <p>Five-track groovebox firmware for the M-VAVE FM-1.</p>
-        <a class="primary" href="studio.html">Open SLAP STUDIO</a>
-        <a href="emulator/">Play the FM-1 emulator</a>
-      </div>
-      <img src="screens/home-five-tracks.png" alt="SLAP-5 firmware showing the five tracks, tempo, piano roll, and HOME controls" width="240" height="240">
-    </section>
-    <section class="copy" id="features">
-      <h2>Features</h2>
-      <div class="features">
-        <article><h3>Five tracks</h3><p>Four pitched tracks and a drum track with independent pattern lengths, pan, level and mute. Edit four notes per pitched step or work with 16 independent drum lanes. Set velocity, gate, hit probability and timing offset.</p></article>
-        <article><h3>25 synth engines</h3><p>Browse 136 factory patches, including eight new saw programs. The original 128 patch IDs are preserved. Play the FM, analog, modeled strings, keys, formants, bell and texture engines.</p></article>
-        <article><h3>Nine effects pages</h3><p>Shape each track with filter, slicer, inserts, reverb, tempo delay, chorus and drive.</p></article>
-        <article><h3>Seven visualizers</h3><p>Follow each track in DNA Helix, Ferrofluid, Gravity Rings, Solar System, Digital VU, Slap Reactor and the Dancer.</p></article>
-      </div>
-    </section>
-    <section class="copy" aria-labelledby="gallery">
-      <h2 id="gallery">Inside the instrument</h2>
-      <div class="screen-gallery">
-        <figure><img src="screens/sequence.png" alt="Sixteenth-note grid and held note" width="240" height="240"><figcaption>1/16 sequencer</figcaption></figure>
-        <figure><img src="screens/fm6.png" alt="Six-operator FM routing and levels" width="240" height="240"><figcaption>FM6 routing</figcaption></figure>
-        <figure><img src="screens/operator-envelope.png" alt="Operator envelope and feedback readout" width="240" height="240"><figcaption>Operator envelope</figcaption></figure>
-        <figure><img src="screens/filter.png" alt="Filter response on a frequency grid" width="240" height="240"><figcaption>Filter response</figcaption></figure>
-      </div>
-    </section>
-    <section class="copy">
-      <h2>0.1.26 HOME and Sound Lab</h2>
-      <img src="screens/sound-lab-0126.png" alt="Five-lane HOME, FM6, operator envelope, wavetable, ENV and LFO screenshots" width="720" height="480" style="max-width:100%;height:auto">
-    </section>
-    <section class="copy" id="manual">
-      <h2>SLAP-5 Sound Lab manual</h2>
-      <p>SLAP STUDIO opens in Song Mode. Add or duplicate a scene, then select a track clip to edit it. Choose scene bars and repeats before playing the song. During playback, click a scene to queue it. Quick REC captures the active scene’s selected clip, and drum generation applies to the current scene. Add per-bar level and pan automation for each track. Export a song for all five tracks and every scene, or export the selected scene as a standalone Studio project.</p>
-      <p>The primary browser installer offers 0.1.18. See the experimental installer for the current hardware-testing release.</p>
-      <img src="screens/dancer.png" alt="Dancer on the SLAP-5 stage" width="240" height="240">
-      <dl>
-        <dt>HOME</dt><dd>SELECT chooses a track. ALGO changes BPM. The four knobs set pan, steps, level and swing. Press HOME again to open visualizers.</dd>
-        <dt>SEQ</dt><dd>SELECT chooses a sixteenth-note step and previews its stored notes or drum hits. Sixteen cells make a bar. On melodic tracks, K1 sets pitch, K2 accent, K3 rest or play, and K4 hold length in steps. A zero hold uses the saved gate. Hold SEL to access hit probability, gate, fine hold and timing offset. Hold SEL and turn SELECT to choose the note or drum lane. SEL with EDIT copies, LFO cuts, ENV pastes, OCT− deletes and OCT+ cycles Normal, Ratchet and Fill.</dd>
-        <dt>EDIT / ENV / LFO</dt><dd>EDIT opens the selected engine graph directly. FM6 lets you choose a routing, then adjust the ratio and level of each of six operators. Turn SELECT inside FM6 Sound Lab to open operator envelopes. Hold OCT+ and turn K4 for feedback. WAVETABLE shows the scanning waveform and lets you adjust morph position and movement. Play keys to audition. ENV sets attack, decay, sustain and release. LFO sets waveform, rate, phase and fade.</dd>
-        <dt>REC</dt><dd>Tap REC on HOME to overdub. From stopped, REC arms for the first note or runs an audible four-click count-in, according to Settings. PLAY flashes green once the loop starts. Turn SELECT to move the active take to another track. Tap REC again to end the take. Hold REC for two seconds for recording options. On HOME, REC+OCT− undoes, REC+ARP cancels the take, and REC+OCT+ or REC+SEL twice clears the loop or selected track.</dd>
-        <dt>Recording storage</dt><dd>Older banks remain readable. FM6 ratio, level and wavetable settings use V10 banks. Per-operator envelopes and feedback use V11 banks. Long takes and sixteenth-step offsets use the new sparse format, which stores up to 587 events per bank. A bank that is too dense leaves the old saved bank intact. Studio JSON v3 supports extended length and timing.</dd>
-        <dt>MIXER</dt><dd>Hold EDIT for two seconds. K1 is level (0–100), K2 pan, K3 solo and K4 drum-triggered ducking on melodic tracks. White keys 1–5 mute tracks. FX PROC K2 adjusts the overall FX blend.</dd>
-        <dt>SETTINGS</dt><dd>Tap GLO. Under Audio, K3 toggles Auto Level and K4 toggles Auto Mix. Lights controls keyboard and button brightness. HOME shows battery bars, USB power, or a low-battery message. Hold GLO for five seconds to open diagnostics.</dd>
-        <dt>SEL / FX</dt><dd>SEL opens harmony for the selected melodic track. FX opens the effect chain. SELECT chooses a track and ALGORITHM moves through the nine FX pages. The four numbered knobs edit the current effect.</dd>
-        <dt>SLICER</dt><dd>On the Slicer FX page, K1 picks Off, Gate or Stutter. K2 selects a pattern, K3 selects the rate and K4 sets depth. Stutter blends a short captured repeat into the closed cells.</dd>
-        <dt>LIVE FX</dt><dd>Double-tap FX. Hold a black key to play an effect and tap SEL to switch selected track or full mix. Vinyl Stop slows the captured audio and drops its pitch while the sequencer continues.</dd>
-        <dt>GEN DRUMS</dt><dd>On Track 5, press SEQ twice. K1–K4 set style, hit density, bars and variation. Hold OCT+ while turning K3 for groove. Choose 1, 2, 3 or 4 bars (16, 32, 48 or 64 steps). Press SEL to generate and confirm replacement when prompted. During playback with a 16, 32 or 64-step drum loop, the pattern applies on the next bar. In the drum sequencer, SEL+GLO protects a step on its lane until another song is loaded. Use HOME REC+OCT− to undo.</dd>
-        <dt>DANCER</dt><dd>Press HOME again and turn SELECT to DANCER. K1 selects the dance pattern, K2 toggles the outline, K3 controls club lights and K4 toggles music reactivity.</dd>
-        <dt>ARP</dt><dd>Choose the mode, tempo division, octave range and gate. Hold notes on a melodic track to play them in sequence.</dd>
-        <dt>SAVE</dt><dd>Stop playback. SELECT chooses one of eight slots. Hold the blinking white key for four seconds to save. Press SEL to load its saved song.</dd>
-        <dt>MIDI</dt><dd>Send notes on channels 1–5 to address tracks 1–5. The FM-1 keyboard sends notes on the selected track’s channel.</dd>
-      </dl>
-    </section>
-    <section class="copy" id="downloads">
-      <h2>Downloads</h2>
-      <p><a href="flash.html">Primary browser installer · 0.1.18</a></p>
-      <p><a href="flash-testing-0.1.30.html">Experimental FM-1 hardware testing · v0.1.30</a> · <a href="nexus-0.1.30/">SLAP Nexus Studio and manual</a></p>
-      <p><a href="flash-testing-0.1.31.html">Experimental FM-1 hardware testing · v0.1.31</a> · <a href="nexus-0.1.31/">SLAP Nexus Studio and manual</a></p>
-      <p><a href="flash-testing-0.1.29.html">Experimental FM-1 hardware testing · v0.1.29</a></p>
-      <p><a href="flash-testing.html">Current experimental hardware testing · v0.1.48</a></p>
-      <a href="https://github.com/CodingSlapfu/SLAP-5">SLAP-5 source</a> · <a href="https://github.com/CodingSlapfu/SLAP-5/actions/workflows/browser.yml">Browser test results</a>
-    </section>
-      <section id="v0148">
-      <h2>SLAP-5 v0.1.48 experimental</h2>
-      <p>FM-1 hardware-testing candidate. Main public promotion requires the five-track JUNGLE audio test on the FM-1.</p>
-      <p><a href="flash-testing-0.1.48.html">Install v0.1.48 experimental</a> · <a href="https://github.com/CodingSlapfu/SLAP-5/releases/tag/v0.1.48-hardware-testing">Release notes, checksums and engineering backup</a> · <a href="flash-testing-0.1.47.html">Previous experimental installer</a></p>
-      <p>Five sequencer tracks with 16 shared voices, 256-frame audio blocks, USB audio/MIDI and a 240×240 display. FM6 operator coefficients are cached when the timbre changes. Live track FX runs on Core 0 while Core 1 handles eligible voice jobs.</p>
-      <p>Tap EDIT for Sound Lab, or hold EDIT for two seconds for MIXER. MIXER K1 sets level, K2 ducking, K3 all-track filter and K4 selected-track filter. SETTINGS offers four knob styles and separate LOW/MED/MAX brightness for track selection and other buttons.</p>
-      <p>Keep an untouched project copy for rollback. Custom Expression projects use schema 13 and require v0.1.41 or later.</p>
-      <div style="display:flex; flex-wrap:wrap; gap:1rem">
-        <figure><img width="240" height="240" loading="lazy" src="screens/v0.1.48/looper-jungle-240.png" alt="Five-track JUNGLE HOME framebuffer"><figcaption>HOME · JUNGLE</figcaption></figure>
-        <figure><img width="240" height="240" loading="lazy" src="screens/v0.1.48/fm6-active.png" alt="Active six-operator FM routing graph"><figcaption>Sound Lab · FM6</figcaption></figure>
-        <figure><img width="240" height="240" loading="lazy" src="screens/v0.1.48/wavetable-active.png" alt="Active wavetable graph"><figcaption>Sound Lab · Wavetable</figcaption></figure>
-        <figure><img width="240" height="240" loading="lazy" src="screens/v0.1.48/mixer.png" alt="MIXER with track meters and controls"><figcaption>MIXER</figcaption></figure>
-      </div>
-      <p>Native-resolution captures from the firmware’s host renderer.</p>
-      <details><summary>Settings</summary><div style="display:flex;flex-wrap:wrap;gap:1rem"><figure><img width="240" height="240" style="max-width:100%;height:auto;image-rendering:pixelated" loading="lazy" src="screens/v0.1.48/settings-0.png" alt="SETTINGS page 1 firmware framebuffer"><figcaption>SETTINGS page 1</figcaption></figure><figure><img width="240" height="240" style="max-width:100%;height:auto;image-rendering:pixelated" loading="lazy" src="screens/v0.1.48/settings-1.png" alt="SETTINGS page 2 firmware framebuffer"><figcaption>SETTINGS page 2</figcaption></figure><figure><img width="240" height="240" style="max-width:100%;height:auto;image-rendering:pixelated" loading="lazy" src="screens/v0.1.48/settings-2.png" alt="SETTINGS page 3 firmware framebuffer"><figcaption>SETTINGS page 3</figcaption></figure><figure><img width="240" height="240" style="max-width:100%;height:auto;image-rendering:pixelated" loading="lazy" src="screens/v0.1.48/settings-3.png" alt="SETTINGS page 4 firmware framebuffer"><figcaption>SETTINGS page 4</figcaption></figure><figure><img width="240" height="240" style="max-width:100%;height:auto;image-rendering:pixelated" loading="lazy" src="screens/v0.1.48/settings-4.png" alt="SETTINGS page 5 firmware framebuffer"><figcaption>SETTINGS page 5</figcaption></figure><figure><img width="240" height="240" style="max-width:100%;height:auto;image-rendering:pixelated" loading="lazy" src="screens/v0.1.48/settings-5.png" alt="SETTINGS page 6 firmware framebuffer"><figcaption>SETTINGS page 6</figcaption></figure><figure><img width="240" height="240" style="max-width:100%;height:auto;image-rendering:pixelated" loading="lazy" src="screens/v0.1.48/settings-6.png" alt="SETTINGS page 7 firmware framebuffer"><figcaption>SETTINGS page 7</figcaption></figure><figure><img width="240" height="240" style="max-width:100%;height:auto;image-rendering:pixelated" loading="lazy" src="screens/v0.1.48/settings-7.png" alt="SETTINGS page 8 firmware framebuffer"><figcaption>SETTINGS page 8</figcaption></figure></div></details>
-      <details><summary>Knob styles</summary><div style="display:flex;flex-wrap:wrap;gap:1rem"><figure><img width="240" height="240" style="max-width:100%;height:auto;image-rendering:pixelated" loading="lazy" src="screens/v0.1.48/knob-analog-classic.png" alt="Analog Classic firmware framebuffer"><figcaption>Analog Classic</figcaption></figure><figure><img width="240" height="240" style="max-width:100%;height:auto;image-rendering:pixelated" loading="lazy" src="screens/v0.1.48/knob-analog-studio.png" alt="Analog Studio firmware framebuffer"><figcaption>Analog Studio</figcaption></figure><figure><img width="240" height="240" style="max-width:100%;height:auto;image-rendering:pixelated" loading="lazy" src="screens/v0.1.48/knob-digital-neon.png" alt="Digital Neon firmware framebuffer"><figcaption>Digital Neon</figcaption></figure><figure><img width="240" height="240" style="max-width:100%;height:auto;image-rendering:pixelated" loading="lazy" src="screens/v0.1.48/knob-digital-segmented.png" alt="Digital Segmented firmware framebuffer"><figcaption>Digital Segmented</figcaption></figure></div></details>
-      <details><summary>Visualizers</summary><div style="display:flex;flex-wrap:wrap;gap:1rem"><figure><img width="240" height="240" style="max-width:100%;height:auto;image-rendering:pixelated" loading="lazy" src="screens/v0.1.48/gravity-rings.png" alt="Gravity Rings firmware framebuffer"><figcaption>Gravity Rings</figcaption></figure><figure><img width="240" height="240" style="max-width:100%;height:auto;image-rendering:pixelated" loading="lazy" src="screens/v0.1.48/solar-system.png" alt="Solar System firmware framebuffer"><figcaption>Solar System</figcaption></figure><figure><img width="240" height="240" style="max-width:100%;height:auto;image-rendering:pixelated" loading="lazy" src="screens/v0.1.48/digital-vu.png" alt="Digital VU firmware framebuffer"><figcaption>Digital VU</figcaption></figure></div></details>
-    </section>
-  <section id="v0150"><h2>SLAP-5 v0.1.50 hardware testing</h2><p>Experimental FM-1 build. Physical qualification is pending.</p><p><a href="flash-testing-0.1.50.html">Direct browser installer</a> · <a href="testing-0.1.50/">Release notes and actual firmware screenshots</a> · <a href="testing-0.1.50/studio.html">Matching Studio</a></p><img width="240" height="240" loading="lazy" src="testing-0.1.50/screens/looper-jungle-240.png" alt="v0.1.50 HOME framebuffer"></section>\n  <section id="v0151"><h2>SLAP-5 v0.1.51 hardware testing</h2><p>Experimental FM-1 build. Physical qualification is pending.</p><p><a href="flash-testing-0.1.51.html">Direct browser installer</a> · <a href="testing-0.1.51/">Redesigned knobs and actual firmware screenshots</a> · <a href="testing-0.1.51/studio.html">Matching Studio</a></p><img width="240" height="240" loading="lazy" src="testing-0.1.51/screens/looper-jungle-240.png" alt="v0.1.51 HOME framebuffer"></section>\n  <section id="v0152"><h2>SLAP-5 v0.1.52 hardware testing</h2><p>Experimental FM-1 build. Physical qualification is pending.</p><p><a href="flash-testing-0.1.52.html">Direct browser installer</a> · <a href="testing-0.1.52/">Redesigned knobs and actual firmware screenshots</a> · <a href="testing-0.1.52/studio.html">Matching Studio</a></p><img width="240" height="240" loading="lazy" src="testing-0.1.52/screens/looper-jungle-240.png" alt="v0.1.52 HOME framebuffer"></section>\n  <section id="v0153"><h2>SLAP-5 v0.1.53 hardware testing</h2><p>Experimental FM-1 build. Physical qualification is pending.</p><p><a href="flash-testing-0.1.53.html">Direct browser installer</a> · <a href="testing-0.1.53/">Redesigned knobs and actual firmware screenshots</a> · <a href="testing-0.1.53/studio.html">Matching Studio</a></p><img width="240" height="240" loading="lazy" src="testing-0.1.53/screens/looper-jungle-240.png" alt="v0.1.53 HOME framebuffer"></section>\n  <section id="v0154"><h2>SLAP-5 v0.1.54 hardware testing</h2><p>Experimental FM-1 build. Physical qualification is pending.</p><p><a href="flash-testing-0.1.54.html">Direct browser installer</a> · <a href="testing-0.1.54/">Redesigned knobs and actual firmware screenshots</a> · <a href="testing-0.1.54/studio.html">Matching Studio</a></p><img width="240" height="240" loading="lazy" src="testing-0.1.54/screens/looper-jungle-240.png" alt="v0.1.54 HOME framebuffer"></section>\n  <section id="v0155"><h2>SLAP-5 v0.1.55 hardware testing</h2><p>Experimental FM-1 build. Physical qualification is pending.</p><p><a href="flash-testing-0.1.55.html">Direct browser installer</a> · <a href="testing-0.1.55/">Redesigned knobs and actual firmware screenshots</a> · <a href="testing-0.1.55/studio.html">Matching Studio</a></p><img width="240" height="240" loading="lazy" src="testing-0.1.55/screens/looper-jungle-240.png" alt="v0.1.55 HOME framebuffer"></section>\n  <section id="v0157"><h2>SLAP-5 v0.1.57 hardware testing</h2><p>Experimental FM-1 build. Physical qualification is pending.</p><p><a href="flash-testing-0.1.57.html">Direct browser installer</a> · <a href="testing-0.1.57/">Redesigned knobs and actual firmware screenshots</a> · <a href="testing-0.1.57/studio.html">Matching Studio</a></p><img width="240" height="240" loading="lazy" src="testing-0.1.57/screens/looper-jungle-240.png" alt="v0.1.57 HOME framebuffer"></section>\n  </main>
-</body>
-</html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Five-track groovebox · SLAP-5</title><link rel="stylesheet" href="studio.css">
+<link rel="stylesheet" href="fonts/slap-block.css">
+<style>figure{margin:0}img{max-width:100%;height:auto;image-rendering:pixelated}
+.gallery{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));gap:1.25rem}
+nav{display:flex;gap:1rem;flex-wrap:wrap}code{overflow-wrap:anywhere}</style></head>
+<body><header><a class="brand" href="./">SLAP<span>-5</span></a>
+<nav aria-label="Main"><a href="flash.html">Install</a><a href="studio.html">Studio</a><a href="./#controls">Controls</a></nav>
+</header><main>
+<h1>SLAP-5 v0.1.57</h1>
+<p>A five-track groovebox for the M-VAVE FM-1 with four melodic tracks, a drum track and sixteen shared voices.</p>
+<p><a href="flash.html">Install on FM-1</a> · <a href="studio.html">Open SLAP Studio</a> · <a href="emulator/">Open the FM-1 simulation</a></p>
+<h2 id="controls">Performance controls</h2>
+<ul><li>HOME opens the looper. Press again for visualizers. SELECT chooses a track.</li>
+<li>HOME K1–K4 adjust level, pattern length, stereo pan and swing.</li>
+<li>Tap REC to start or finish a take. Recording preferences set overdub or replace and count-in behavior.</li>
+<li>On HOME, hold REC + OCT− for two seconds to clear the selected track. Hold REC + OCT+ for five seconds to reset the working song. Release early to cancel. Saved songs and system preferences remain available.</li>
+<li>Tap EDIT for Sound Lab. Hold EDIT for one second for MIXER.</li>
+<li>MIXER K1–K4 adjust level, duck, all-track filter and selected-track filter. ARP toggles solo, and SELECT + K2 changes the duck source.</li>
+<li>In SETTINGS → DISPLAY, use SELECT to highlight KNOB THEME and turn K1.</li></ul>
+<h2>Sound and connectivity</h2>
+<p>25 synthesis engines, 128 factory patches, 25 factory drum kits with 16 sounds each, 16/32/64-step patterns, LIVE FX, SLICER and USB audio/MIDI. The firmware uses 256-frame audio callbacks and a 240×240 RGB565 display. Studio runs the matching firmware source in a browser simulation.</p>
+<h2>Firmware gallery</h2><p>240×240 captures from the v0.1.57 firmware host renderer.</p>
+<div class="gallery"><figure><img src="screens/looper-jungle-240.png" width="240" height="240" loading="lazy" alt="HOME and the five JUNGLE tracks"><figcaption>HOME and the five JUNGLE tracks</figcaption></figure><figure><img src="screens/fm6-active.png" width="240" height="240" loading="lazy" alt="Sound Lab FM6 routing"><figcaption>Sound Lab FM6 routing</figcaption></figure><figure><img src="screens/wavetable-active.png" width="240" height="240" loading="lazy" alt="Sound Lab wavetable"><figcaption>Sound Lab wavetable</figcaption></figure><figure><img src="screens/drum-sound-lab.png" width="240" height="240" loading="lazy" alt="Drum Sound Lab and live signal"><figcaption>Drum Sound Lab and live signal</figcaption></figure><figure><img src="screens/knob-analog-classic.png" width="240" height="240" loading="lazy" alt="MIXER Analog Classic"><figcaption>MIXER Analog Classic</figcaption></figure><figure><img src="screens/knob-analog-studio.png" width="240" height="240" loading="lazy" alt="MIXER Analog Studio"><figcaption>MIXER Analog Studio</figcaption></figure><figure><img src="screens/knob-digital-neon.png" width="240" height="240" loading="lazy" alt="MIXER Digital Neon"><figcaption>MIXER Digital Neon</figcaption></figure><figure><img src="screens/knob-digital-segmented.png" width="240" height="240" loading="lazy" alt="MIXER Digital Segmented"><figcaption>MIXER Digital Segmented</figcaption></figure><figure><img src="screens/gravity-rings.png" width="240" height="240" loading="lazy" alt="Gravity Rings"><figcaption>Gravity Rings</figcaption></figure><figure><img src="screens/digital-vu.png" width="240" height="240" loading="lazy" alt="Digital VU"><figcaption>Digital VU</figcaption></figure><figure><img src="screens/role-generator.png" width="240" height="240" loading="lazy" alt="Melodic ROLE GENERATOR"><figcaption>Melodic ROLE GENERATOR</figcaption></figure><figure><img src="screens/filter.png" width="240" height="240" loading="lazy" alt="FX filter response"><figcaption>FX filter response</figcaption></figure><figure><img src="screens/slicer.png" width="240" height="240" loading="lazy" alt="Slicer"><figcaption>Slicer</figcaption></figure><figure><img src="screens/guarded-clear.png" width="240" height="240" loading="lazy" alt="Track-clear countdown"><figcaption>Track-clear countdown</figcaption></figure></div>
+<h2>Using the FM-1</h2><p>Use a USB data cable and close other MIDI apps before connecting. Check the project backup and firmware identity before installing. If the browser cannot connect, verify USB MIDI access and use the download link with the desktop flasher if needed.</p>
+<h2>Release notes</h2><p>v0.1.57 debuts four original dial faces in SETTINGS → DISPLAY → KNOB THEME. Analog Classic uses charcoal fluting and a cyan arc. Analog Studio adds a radial metal face and a fine scale. Digital Neon has a recessed face and cyan-to-magenta bars. Digital Segmented has heavy blocks and a framed readout. HOME uses the track-name glyphs for LOOPER and tempo, with separate orange and yellow note inks. The native engine retains the v0.1.56 processing changes and batches independent track FX with ducking. Physical audio timing and LCD appearance are under test.</p><p>Stop transport, select a melodic track, press SEQ twice and use K1 role, K2 style and K3 bars. SEL generates an editable phrase, and asks for a second press before replacing existing events. The generator offers 22 style presets and follows the track key and scale. HOME lanes are darker, and green battery outline means USB power with charge level unknown.</p><p>v0.1.53 added layered dial surfaces, stronger metallic bevels, cyan/magenta Neon segments and a framed Segmented readout. HOME notes pass behind the track names and scroll off the left edge. Browser updates allow compatible SLAP-5 v0.1.31 and v0.1.37–v0.1.56 directly. Choose under SETTINGS → DISPLAY → KNOB THEME.</p><p>FX inspection now follows active track FX and samples the visible track. Rendering uses a 20 FPS cap with coalescing under load. HOME gains a dotted playhead, vertical battery gauge and a clearer tempo and shortcut header. The Dancer follows the transport beat with a bounded bass accent. K1 toggles bass response, K2 changes the beat division and pose stride, K3 toggles subtle sway, and K4 toggles club lights. HOME K2 queues live length changes for the next measure. GEN DRUM writes finite editable 16-, 32-, or 64-step patterns.</p>
+<p><a href="https://github.com/CodingSlapfu/SLAP-5/issues">Support</a> · <a href="https://github.com/CodingSlapfu/SLAP-5/releases/tag/historical-firmware-through-0.1.48">Recovery archive</a> · <a href="https://github.com/CodingSlapfu/SLAP-5/archive/refs/tags/archive-pre-0.1.57-pages.tar.gz">Previous site and installers</a></p>
+</main></body></html>

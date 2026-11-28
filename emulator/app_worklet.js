@@ -47,10 +47,16 @@ globalThis.fm1App = {
       port.postMessage({ type: 'scene-take', scene, track, part });
     } } }, { command: 'read-take' });
   },
+  setPerformanceFilters(ex, mixer) {
+      for (let track = 0; track < 5; track++)
+        ex.studio_set_performance_filter(track, mixer?.trackFilter?.[track] ?? 0);
+      ex.studio_set_performance_filter(5, mixer?.allFilter ?? 0);
+  },
   loadProject(ex, project) {
       const { bpm, swing, tracks, drumFilters, metronome, mixer } = project;
       const ducks = mixer?.duck?.reduce((word, depth, track) => word | (depth << (track * 8)), 0) ?? 0;
       ex.studio_set_mixer(mixer?.solo ?? 0, ducks, (mixer?.autoLevel === false ? 0 : 1) | (mixer?.autoMix ? 2 : 0));
+      this.setPerformanceFilters(ex, mixer);
       ex.studio_set_metronome(metronome ?? 0);
       ex.studio_set_drum_filters(drumFilters ?? 0);
       ex.studio_set_clock(bpm, swing);
@@ -168,6 +174,8 @@ globalThis.fm1App = {
           }))
         }
       });
+    } else if (m.command === 'performance-filters') {
+      this.setPerformanceFilters(ex, m.mixer);
     } else if (m.command === 'project') {
       if (!this.song) this.loadProject(ex, m.project);
     } else if (m.command === 'song-start') {
