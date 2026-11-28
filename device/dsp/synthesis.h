@@ -19,6 +19,8 @@ typedef struct {
             float second_ratio, third_ratio, noise_filter, body;
             float second, second_strike, third_strike, noise_gain;
         } piano;
+        struct { float width, filter; } saw;
+        struct { float damping, feedback; } string_model;
     };
     float operator_feedback;
     float fm_ratio[6], fm_level[6];

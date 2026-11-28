@@ -202,16 +202,17 @@ void fm1_timer5_irq(void)
 #endif
     if (++sub == 10u)
         sub = 0;
+    const uint32_t tick_end = fm1_ticks();
+    const uint32_t work_ticks = tick_end - t5_prev;
     {
-        uint32_t run = (fm1_ticks() - t5_prev) / FM1_TICKS_PER_US;
+        uint32_t run = work_ticks / FM1_TICKS_PER_US;
         if (run > t5_run_max)
             t5_run_max = run;
     }
     {
         static uint32_t last, acc;
-        uint32_t now = fm1_ticks();
-        acc += now - last;
-        last = now;
+        acc += tick_end - last;
+        last = tick_end;
         while (acc >= 1000u * FM1_TICKS_PER_US) {
             acc -= 1000u * FM1_TICKS_PER_US;
             fm1_ms++;
@@ -219,7 +220,7 @@ void fm1_timer5_irq(void)
     }
 #ifdef APP_AUDIO_HALF_PROFILE
     if (fm1b_dbg.in_audio && app_audio_half_profile_enabled)
-        audio_timer5_ticks += fm1_ticks() - t5_prev;
+        audio_timer5_ticks += work_ticks;
 #endif
 }
 extern void isr_timer5(void);

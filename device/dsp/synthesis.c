@@ -123,7 +123,13 @@ void slap_synth_start(SlapSynth *s, int16_t *string, unsigned engine, unsigned p
         s->piano.third_strike = 0.24f * c;
         s->piano.noise_gain = 0.05f + 0.14f * c;
     }
+    if (engine == 1u) {
+        s->saw.width = 0.22f + 0.33f * s->motion;
+        s->saw.filter = 0.025f + 0.36f * s->color;
+    }
     if (engine == 4 || engine == 6) {
+        s->string_model.damping = 0.08f + (1.0f - s->color) * 0.36f;
+        s->string_model.feedback = 0.980f + 0.019f * s->motion;
         unsigned period = (unsigned)(1.0f / s->inc + 0.25f);
         s->length = period > SLAP_STRING_CAPACITY ? SLAP_STRING_CAPACITY :
                     period < 2 ? 2 : (uint16_t)period;
@@ -142,8 +148,7 @@ static SLAP_SYNTH_SRAM float string_sample(SlapSynth *s, int pickup)
     unsigned i = s->index, n = i + 1u, length = s->length;
     if (n == length) n = 0;
     float a = s->string[i], b = s->string[n];
-    float damp = 0.08f + (1.0f - s->color) * 0.36f;
-    s->string[i] = (int16_t)((a + (b - a) * damp) * (0.980f + 0.019f * s->motion));
+    s->string[i] = (int16_t)((a + (b - a) * s->string_model.damping) * s->string_model.feedback);
     s->index = (uint16_t)n;
     if (pickup) {
         unsigned tap = i + s->pickup;
@@ -366,8 +371,8 @@ SLAP_SYNTH_SRAM float slap_synth_sample(SlapSynth *s)
         break;
     }
     case 1:
-        s->pole += (0.65f * saw(p, d) + 0.35f * pulse(x, d, 0.22f + 0.33f*m) - s->pole) *
-                   (0.025f + 0.36f*c);
+        s->pole += (0.65f * saw(p, d) + 0.35f * pulse(x, d, s->saw.width) - s->pole) *
+                   s->saw.filter;
         out = s->pole;
         next_x = x + d * 1.005f;
         break;
