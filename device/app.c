@@ -2243,6 +2243,28 @@ static void render_voice_into_bus(Voice *voice, SlapSynth *synth, unsigned muted
         voice->delay -= i;
         if (i == frames) return;
     }
+    // Sample drums without a steal tail don't need the generic voice
+    // dispatcher, oscillator state, or per-sample release-mode checks.
+    if (track == DRUMS && voice->kit >= DRUM_LEGACY_KITS && voice->steal_tail == 0.0f) {
+        float envelope = voice->env, last = voice->last_sample;
+        const float decay = voice->releasing ? 0.985f : 1.0f;
+        const float velocity = voice->velocity;
+        for (; i < frames && voice->age; ++i) {
+            int finished = 0;
+            int pcm = drum_sample_next(&voice->sample, &finished);
+            envelope *= decay;
+            if (finished || envelope < 0.0001f) {
+                voice->age = 0;
+                last = 0.0f;
+                break;
+            }
+            last = pcm * (0.22f / 32768.0f) * velocity * envelope;
+            if (audible) output[i] += last;
+        }
+        voice->env = envelope;
+        voice->last_sample = last;
+        return;
+    }
     // Unmodulated tonal attacks and sustains have no per-sample work
     // outside the oscillator and envelope. Stop before the gate-off sample.
     if (i < frames && track < DRUMS && voice->age && !voice->releasing &&

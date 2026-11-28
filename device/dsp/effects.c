@@ -61,6 +61,7 @@ static int16_t slice_line[SLAP_FX_TRACKS + 1][SLICE_CAPTURE];
 typedef struct {
     float room_damping, room_feedback, echo_damping, echo_feedback;
     float drive_gain, drive_damping, chorus_damping, drive_fold, chorus_depth;
+    unsigned live_insert_mask;
 } FxCoefficients;
 static FxCoefficients coefficients[SLAP_FX_TRACKS + 1];
 static volatile uint32_t settings_revision[SLAP_FX_TRACKS];
@@ -447,7 +448,10 @@ void slap_fx_begin_assigned(unsigned bpm, uint32_t live, uint32_t assignments)
             .drive_damping = 0.009f + f->dr[2] * 0.9f,
             .chorus_damping = 0.025f + 0.7f * f->ch[3],
             .drive_fold = 0.32f * f->dr[3],
-            .chorus_depth = 0.1f + 0.9f * f->ch[1]
+            .chorus_depth = 0.1f + 0.9f * f->ch[1],
+            .live_insert_mask = (f->live_insert[0] > 0.0f) | ((f->live_insert[1] > 0.0f) << 1) |
+                ((f->live_insert[2] > 0.0f) << 2) | ((f->live_insert[3] > 0.0f) << 3) |
+                ((f->live_insert[4] > 0.0f) << 4)
         };
         f->phase_step = (0.18f + 3.5f * fm_maxf(f->ch[2], f->speed)) / 44100.0f;
         f->room_long = 300u + (unsigned)(f->rv[2] * 1100.0f);
@@ -617,20 +621,21 @@ static inline __attribute__((always_inline)) float process_sample(
         f->drive_lp += (driven - f->drive_lp) * c->drive_damping;
         x += f->dr[0] * (f->drive_lp - x);
     }
+    const unsigned live = c->live_insert_mask;
     float soft_amount = f->live_insert[0], hard_amount = f->live_insert[1], fold_amount = f->live_insert[2];
-    if (soft_amount > 0.0f) x += soft_amount * (0.55f * soft(x * (1.0f + 12.0f * soft_amount)) - x);
-    if (hard_amount > 0.0f) x += hard_amount * (0.45f * fm_clampf(x * (1.0f + 15.0f * hard_amount), -1.0f, 1.0f) - x);
-    if (fold_amount > 0.0f) x += fold_amount * (0.48f * fold(x * (1.0f + 23.0f * fold_amount)) - x);
-    if (f->ch[0] > 0.0f || f->insert || f->live_insert[3] > 0.0f || f->live_insert[4] > 0.0f) {
+    if (live & 1u) x += soft_amount * (0.55f * soft(x * (1.0f + 12.0f * soft_amount)) - x);
+    if (live & 2u) x += hard_amount * (0.45f * fm_clampf(x * (1.0f + 15.0f * hard_amount), -1.0f, 1.0f) - x);
+    if (live & 4u) x += fold_amount * (0.48f * fold(x * (1.0f + 23.0f * fold_amount)) - x);
+    if (f->ch[0] > 0.0f || f->insert || (live & 24u)) {
         f->phase += f->phase_step;
         if (f->phase >= 1.0f) f->phase -= 1.0f;
         float lfo = 1.0f - 2.0f * fm_fabsf(f->phase - 0.5f);
-        if (f->ch[0] > 0.0f || f->insert == 7 || f->live_insert[3] > 0.0f) {
+        if (f->ch[0] > 0.0f || f->insert == 7 || (live & 8u)) {
             unsigned pos = f->chorus_pos;
             unsigned tap = 12u + (unsigned)(lfo * (f->insert == 7 ? 105.0f : 500.0f) *
                             c->chorus_depth);
             float ch = unpack(chorus[(pos - tap) & (CHORUS - 1u)]);
-            if (f->live_insert[3] > 0.0f) {
+            if ((live & 8u)) {
                 unsigned flange_tap = 5u + (unsigned)(lfo * 95.0f);
                 float flange = unpack(chorus[(pos - flange_tap) & (CHORUS - 1u)]);
                 chorus[pos] = pack(x + flange * 0.23f * f->live_insert[3]);
@@ -644,7 +649,7 @@ static inline __attribute__((always_inline)) float process_sample(
             x = insert_sample(f, x, lfo, 0.0f);
         }
     }
-    if (f->live_insert[4] > 0.0f) {
+    if (live & 16u) {
         float sweep = 0.12f + 0.72f * (1.0f - 2.0f * fm_fabsf(f->phase - 0.5f));
         float signal = x + 0.38f * f->live_allpass[2];
         for (unsigned stage = 0; stage < 3u; ++stage) {
@@ -672,9 +677,13 @@ static inline __attribute__((always_inline)) float process_sample(
                 unsigned length = (f->capture_count - 1u) * 4u;
                 unsigned index = f->capture_head + SLICE_CAPTURE - f->capture_count + phase / 4u;
                 if (index >= SLICE_CAPTURE) index -= SLICE_CAPTURE;
-                unsigned next = index + 1u == SLICE_CAPTURE ? 0u : index + 1u;
-                float a = unpack(slice_line[track][index]), b = unpack(slice_line[track][next]);
-                float repeated = a + (b - a) * (phase % 4u * 0.25f);
+                float repeated = unpack(slice_line[track][index]);
+                unsigned fraction = phase & 3u;
+                if (fraction) {
+                    unsigned next = index + 1u == SLICE_CAPTURE ? 0u : index + 1u;
+                    float b = unpack(slice_line[track][next]);
+                    repeated += (b - repeated) * (fraction * 0.25f);
+                }
                 unsigned fade = phase;
                 if (length - phase < fade) fade = length - phase;
                 if (remaining - 1u < fade) fade = remaining - 1u;

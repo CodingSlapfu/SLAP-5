@@ -11,7 +11,7 @@ typedef struct {
 typedef struct {
     uint16_t id, cursor;
     int16_t previous, predictor;
-    uint8_t index, quarter;
+    uint8_t index, quarter, packed_byte;
 } DrumSampleVoice;
 
 #include "slap_drum_samples.inc"
@@ -50,8 +50,12 @@ static inline __attribute__((always_inline)) int drum_sample_next(DrumSampleVoic
             *finished = 1;
             return 0;
         }
-        unsigned packed = drum_sample_data[sample->offset + (v->cursor >> 1)];
-        unsigned code = (packed >> ((v->cursor++ & 1u) * 4u)) & 15u;
+        // Both nibbles come from the same XIP byte. Keep it in the voice
+        // across the four interpolated samples and across callback boundaries.
+        unsigned high = v->cursor & 1u;
+        if (!high) v->packed_byte = drum_sample_data[sample->offset + (v->cursor >> 1)];
+        unsigned code = high ? v->packed_byte >> 4 : v->packed_byte & 15u;
+        ++v->cursor;
         unsigned magnitude = code & 7u;
         int step = steps[v->index], delta = step >> 3;
         if (magnitude & 4u) delta += step;
