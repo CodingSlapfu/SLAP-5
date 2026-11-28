@@ -1,5 +1,7 @@
 # SLAP-5 environment recovery
 
+[Standing engineering laws](https://github.com/CodingSlapfu/SLAP-5/issues/10)
+
 ## Internal performance checkpoint
 
 Compiled source `aad93d454eefc15920b8d39beb91fc6316e6b550`. [Evidence, backup and next profiling work](evidence/performance-internal-0.1.56.md). v0.1.55 remains the hardware-testing installer.

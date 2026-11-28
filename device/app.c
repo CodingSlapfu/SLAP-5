@@ -3201,15 +3201,17 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
             // Ducking still reads its original dry trigger, and diagnostic
             // and host fault runs retain their per-sample path.
             scalar_fx = effect_mask;
-            if (!count_in && !duck_enabled && !profile && !measure_fx && batch_end - i >= 16u
+            if (!count_in && !profile && !measure_fx && batch_end - i >= 16u
 #if FM1B_CPU2 && defined(PLAT_HOST) && !defined(PLAT_WEB)
                 && !fx_mask
 #endif
             ) {
+                // The sidechain source stays dry until the mixer reads it.
+                scalar_fx = duck_enabled ? effect_mask & (1u << duck_source) : 0u;
+                unsigned batch_fx = effect_mask & ~scalar_fx;
                 for (unsigned t = 0; t < TRACKS; ++t)
-                    if (effect_mask & (1u << t))
+                    if (batch_fx & (1u << t))
                         slap_fx_span(t, voice_bus[t], batch_end - i, wet[t]);
-                scalar_fx = 0;
             }
         }
         float l = 0.0f, r = 0.0f;
@@ -4999,6 +5001,29 @@ static int held_note_width(unsigned duration, unsigned step, unsigned base, unsi
     return (int)(pixels + duration * 14u / span);
 }
 
+#include "dial_faces.inc"
+
+static void draw_dial_face(int cx, int cy, unsigned body, unsigned theme)
+{
+    unsigned diameter = body * 2u + 1u;
+    uint8_t scale[33];
+    for (unsigned i = 0; i < diameter; ++i) scale[i] = (uint8_t)(i * 16u / body);
+    for (unsigned y = 0; y < diameter; ++y) {
+        const uint8_t *row = dial_faces[theme][scale[y]];
+        unsigned start = 0, previous = 0;
+        for (unsigned x = 0; x <= diameter; ++x) {
+            unsigned at = x < diameter ? scale[x] : 0u;
+            unsigned shade = x < diameter ? (row[at / 2u] >> ((at & 1u) * 4u)) & 15u : 0u;
+            if (shade == previous) continue;
+            if (previous)
+                cv_rect(cx - (int)body + (int)start, cy - (int)body + (int)y,
+                        (int)(x - start), 1, dial_colors[theme][previous]);
+            previous = shade;
+            start = x;
+        }
+    }
+}
+
 static void draw_performance_knob(int x, const char *label, const char *value, int position, uint16_t color)
 {
     static const int8_t arc[25][2] = {
@@ -5008,22 +5033,21 @@ static void draw_performance_knob(int x, const char *label, const char *value, i
         {71, -106}, {90, -90}, {106, -71}, {117, -49}, {125, -25},
         {127, 0}, {125, 25}, {117, 49}, {106, 71}, {90, 90},
     };
-    static const uint8_t rim[] = {12, 12, 12, 12, 11, 11, 10, 9, 8, 7, 6, 4, 2};
     unsigned theme = knob_style;
     int expanded = slap_ui.page == MIXER || slap_ui.page == HOME;
     const felucca_font_t *label_font = expanded && text_w(&FONT_B, label) <= 55 ? &FONT_B : &FONT_T;
     const felucca_font_t *value_font = text_w(&FONT_B, value) <= 24 ? &FONT_B : &FONT_T;
     int width = text_w(value_font, value);
     int digital = theme >= KNOB_NEON;
-    int external = width > (expanded ? 32 : 22);
+    int external = width > (expanded ? 28 : 18);
     if (external) {
         value_font = &FONT_T;
         width = text_w(value_font, value);
     }
     int center = x + (external && !expanded ? 16 : 30);
     int cy = expanded ? 20 : 13;
-    int radius = expanded ? 20 : 13;
-    int body = radius - 4;
+    int radius = expanded ? 19 : 12;
+    int body = radius - 3;
     unsigned step = (unsigned)(clamp(position, -100, 100) + 100) * 24u / 200u;
     int bipolar = (label[0] == 'P' && label[1] == 'A' && label[2] == 'N' && !label[3]) ||
         (slap_ui.page == MIXER && x >= 120);
@@ -5032,77 +5056,47 @@ static void draw_performance_knob(int x, const char *label, const char *value, i
     cv_text(label_x + 1, label_y + 1, label_font, label, 0x18c3);
     cv_text(label_x, label_y, label_font, label, C_WHITE);
 
-    // Shared bounds, layered surfaces designed for RGB565 contrast.
-    for (int row = -body; row <= body; ++row) {
-        int dy = row < 0 ? -row : row;
-        int half = rim[dy * 12 / body] * body / 12;
-        uint16_t bevel, face, shine;
-        if (theme == KNOB_STUDIO) {
-            bevel = row < 0 ? 0xffff : 0x39e7;
-            face = row < -body / 2 ? 0xdebb : row < 0 ? 0xb596 :
-                   row < body / 2 ? 0x8c71 : 0x52aa;
-            shine = row < 0 ? 0xc618 : 0x738e;
-        } else if (theme == KNOB_NEON) {
-            half = body - (dy > body / 2 ? dy - body / 2 : 0);
-            bevel = row < 0 ? 0x3eff : 0x7815;
-            face = dy < body / 2 ? 0x0008 : 0x1950;
-            shine = row < 0 ? 0x294f : 0x5017;
-        } else if (theme == KNOB_SEGMENTED) {
-            half = body - (dy > body * 2 / 3 ? (dy - body * 2 / 3) * 2 : 0);
-            bevel = row < 0 ? 0x94b2 : 0x18c3;
-            face = dy < body / 2 ? C_BLACK : 0x2945;
-            shine = row < 0 ? 0x630c : 0x1082;
-        } else {
-            bevel = row < 0 ? 0x6b6d : 0x0841;
-            face = row < -body / 2 ? 0x39e7 : row < 0 ? 0x2104 : 0x1082;
-            shine = row < 0 ? 0x4a69 : 0x2104;
-        }
-        cv_rect(center - half, cy + row, 2 * half + 1, 1, bevel);
-        if (half > 3) {
-            cv_rect(center - half + 1, cy + row, 2 * half - 1, 1, shine);
-            cv_rect(center - half + 3, cy + row, 2 * half - 5, 1, face);
-        }
-        if (theme == KNOB_STUDIO && !(row & 1) && half > 5)
-            cv_rect(center - half + 4, cy + row, 2 * half - 7, 1, shine);
-        if (theme == KNOB_CLASSIC && half > 4 && !(row & 2)) {
-            cv_rect(center - half + 1, cy + row, 2, 1, C_BLACK);
-            cv_rect(center + half - 2, cy + row, 2, 1, 0x6b4d);
-        }
-    }
-    if (digital) {
-        int inset = body - 3;
-        uint16_t frame = theme == KNOB_NEON ? 0x0351 : 0x946a;
-        cv_rect(center - inset, cy - body / 2, 2 * inset + 1, body + 1, frame);
-        cv_rect(center - inset + 1, cy - body / 2 + 1, 2 * inset - 1, body - 1, C_BLACK);
-        cv_rect(center - inset + 2, cy - body / 2 + 1, 2 * inset - 3, 1,
-                theme == KNOB_NEON ? 0x43de : 0xff4c);
-        cv_rect(center - inset + 2, cy + body / 2 - 1, 2 * inset - 3, 1,
-                theme == KNOB_NEON ? 0xc01b : 0x39c5);
+    draw_dial_face(center, cy, (unsigned)body, theme);
+    if (theme == KNOB_SEGMENTED) {
+        int inset = body - 1;
+        cv_rect(center - inset, cy - 5, 2 * inset + 1, 11, 0x4a93);
+        cv_rect(center - inset + 1, cy - 4, 2 * inset - 1, 9, 0x0001);
     }
 
     unsigned origin = bipolar ? 12u : 0u;
     unsigned low = step < origin ? step : origin;
     unsigned high = step > origin ? step : origin;
-    unsigned spacing = theme == KNOB_SEGMENTED ? 3u : theme == KNOB_STUDIO ? 2u : 1u;
+    unsigned spacing = theme == KNOB_SEGMENTED ? 3u : 1u;
     for (unsigned tick = 0; tick <= 24u; tick += spacing) {
         int px = center + arc[tick][0] * radius / 127;
         int py = cy + arc[tick][1] * radius / 127;
-        uint16_t ink = tick >= low && tick <= high ? color : 0x39e7;
+        uint16_t ink = tick >= low && tick <= high ? 0x27ff : theme == KNOB_STUDIO && !(tick & 3u) ? 0xb5b7 : 0x3189;
         if (theme == KNOB_NEON && tick >= low && tick <= high)
-            ink = tick < 16u ? 0x4fff : 0xf81f;
+            ink = tick < 13u ? 0x4fff : tick < 17u ? 0x969f : 0xf81f;
         if (bipolar && tick == origin) ink = 0xadb5;
-        if (theme == KNOB_SEGMENTED) {
-            cv_rect(px - 1, py, 3, 3, ink);
-            cv_rect(px, py - 1, 1, 1, tick >= low && tick <= high ? C_WHITE : 0x2945);
+        if (theme == KNOB_CLASSIC && tick) {
+            int lx = center + arc[tick - 1u][0] * radius / 127;
+            int ly = cy + arc[tick - 1u][1] * radius / 127;
+            cv_line(lx, ly, px, py, tick > low && tick <= high ? 0x27ff : 0x2947);
+            if (!(tick & 3u)) cv_rect(px, py, 1, 1, ink);
+        } else if (theme == KNOB_SEGMENTED) {
+            int ix = center + arc[tick][0] * (radius - 4) / 127;
+            int iy = cy + arc[tick][1] * (radius - 4) / 127;
+            cv_line(px, py, ix, iy, ink);
+            cv_line(px + 1, py, ix + 1, iy, ink);
+            if (expanded) cv_line(px, py + 1, ix, iy + 1, ink);
         } else {
             int inward = radius - (theme == KNOB_STUDIO || theme == KNOB_NEON ? 4 : 3);
             cv_line(px, py, center + arc[tick][0] * inward / 127,
                     cy + arc[tick][1] * inward / 127, ink);
+            if (theme == KNOB_NEON && expanded)
+                cv_line(px + 1, py, center + 1 + arc[tick][0] * inward / 127,
+                        cy + arc[tick][1] * inward / 127, ink);
         }
     }
     if (!digital)
         cv_line(center + arc[step][0] * (body - 5) / 127, cy + arc[step][1] * (body - 5) / 127,
-                center + arc[step][0] * body / 127, cy + arc[step][1] * body / 127, color);
+                center + arc[step][0] * body / 127, cy + arc[step][1] * body / 127, theme == KNOB_STUDIO ? 0x0030 : C_WHITE);
     cv_rect(center + arc[step][0] * radius / 127, cy + arc[step][1] * radius / 127, 2, 2, C_WHITE);
     int value_x = external && !expanded ? x + 58 - width : center - width / 2;
     int value_y = cy - (int)value_font->h / 2;
@@ -5140,13 +5134,13 @@ static unsigned home_glyph(unsigned ch)
     return ch == '-' ? 36u : ch == '+' ? 37u : ch == '.' ? 38u : ch == '/' ? 39u : 40u;
 }
 
-static void draw_signature_name(const char *name, uint16_t ink, unsigned limit, int y, unsigned height)
+static void draw_signature_name(const char *name, uint16_t ink, unsigned limit, int left_edge, int y, unsigned height, int shadow)
 {
     unsigned width = 0;
     for (const char *p = name; *p; ++p)
         width += *p == ' ' ? 5u : home_glyphs[home_glyph((unsigned char)*p)].width + 1u;
     unsigned scale = width <= limit ? 256u : limit * 256u / width;
-    for (unsigned pass = 0; pass < 2u; ++pass) {
+    for (unsigned pass = shadow ? 0u : 1u; pass < 2u; ++pass) {
         unsigned x = 0;
         for (const char *p = name; *p; ++p) {
             if (*p == ' ') { x += 5u; continue; }
@@ -5161,7 +5155,7 @@ static void draw_signature_name(const char *name, uint16_t ink, unsigned limit, 
                     int left = (int)((x + start) * scale >> 8);
                     int right = (int)((x + end) * scale >> 8);
                     if (right > left)
-                        cv_rect(6 + left + !pass * 2, y + (int)(row * height / 22u) + !pass * 3, right - left, 1,
+                        cv_rect(left_edge + left + !pass * 2, y + (int)(row * height / 22u) + !pass * 3, right - left, 1,
                                 pass ? ink : BLACK_CHROMA);
                 }
             }
@@ -5219,11 +5213,14 @@ static void draw_home_sequences(void)
     if (redraw_header) {
         cv_begin(240, 44, header);
         decimal(number, bpm);
-        cv_text(3, -3, &FONT_L, "LOOPER", C_WHITE);
-        unsigned tempo_width = (unsigned)text_w(&FONT_L, number);
+        draw_signature_name("LOOPER", C_WHITE, 77, 3, 3, 16, 0);
+        unsigned tempo_width = 0;
+        for (const char *digit = number; *digit; ++digit)
+            tempo_width += home_glyphs[home_glyph((unsigned char)*digit)].width + 1u;
+        if (tempo_width > 44u) tempo_width = 44u;
         int tempo_x = 237 - (int)tempo_width;
         cv_text(tempo_x - text_w(&FONT_B, "BPM") - 3, 9, &FONT_B, "BPM", 0xad55);
-        cv_text(tempo_x, -3, &FONT_L, number, C_WHITE);
+        draw_signature_name(number, C_WHITE, tempo_width, tempo_x, 3, 16, 0);
         cv_text(104, 1, &FONT_T, "USB", status & 1u ? C_WHITE : 0x9cd3);
         cv_text(104, 13, &FONT_T, "IN", status & 2u ? 0x8ff3 : 0x9cd3);
         cv_text(125, 13, &FONT_T, "OUT", status & 4u ? 0x8ff3 : 0x9cd3);
@@ -5240,7 +5237,7 @@ static void draw_home_sequences(void)
         cv_text(3, 27, hint_font, hint, C_WHITE);
         {
             const uint16_t battery_ink = battery_status == 4 ? 0x47e8 : battery_status < 0 ? 0x9cf3 : 0xfd20;
-            int x = 7 + text_w(&FONT_L, "LOOPER");
+            int x = 84;
             cv_rect(x, 4, 10, 19, battery_ink);
             cv_rect(x + 2, 2, 6, 2, battery_ink);
             cv_rect(x + 1, 5, 8, 17, header);
@@ -5340,7 +5337,7 @@ static void draw_home_sequences(void)
                 int x = origin + col * 12 + (int)(timing * 12u / 16u);
                 int y = 22 - (int)(((word & NOTES) % 12u) * 19u / 11u);
                 int width = held_note_width(gate, index, base, span * timing / 16u) * 12 / 14;
-                uint16_t ink = t == 2u ? 0xff30 : color;
+                uint16_t ink = t == 2u ? 0xfc65 : t == 3u ? 0xffc5 : color;
                 unsigned id = 1u + row * STEPS + index;
                 for (unsigned v = 0; v < count; ++v)
                     if (active[v] == id) { ink = C_WHITE; break; }
@@ -5358,7 +5355,7 @@ static void draw_home_sequences(void)
         for (const char *p = full_name; *p && n < 8u; ++p)
             if (size <= 8u || *p != ' ') name[n++] = *p;
         name[n] = 0;
-        draw_signature_name(name, name_ink[t], 124, 3, 16);
+        draw_signature_name(name, name_ink[t], 124, 6, 3, 16, 1);
         if (run) {
             for (int dash = 0; dash < 24; dash += 7)
                 cv_rect(playhead, dash, 1, 4, beat_flash ? C_WHITE : 0x7bef);
