@@ -1,5 +1,7 @@
 # SLAP-5 next build
 
+v0.1.57 is the current hardware-testing checkpoint. [Qualification and outstanding physical checks](evidence/qualification-0.1.57.md). Prioritize same-callback serial FX, voice and nested Timer 5/UAC attribution and preserve verified projects.
+
 See the [v0.1.56 internal checkpoint](evidence/performance-internal-0.1.56.md) for the verified candidate, reproducible comparisons and the native measurements needed to guide the next split.
 
 ## v0.1.55 performance checkpoint

@@ -2,6 +2,10 @@
 
 [Standing engineering laws](https://github.com/CodingSlapfu/SLAP-5/issues/10)
 
+## v0.1.57 hardware-testing checkpoint
+
+Application `981ad4d16fdfdbba578d282256556d270147d2cc`; FM-1_75000157. [Direct installer](https://codingslapfu.github.io/SLAP-5/flash-testing-0.1.57.html) · [Matching Studio](https://codingslapfu.github.io/SLAP-5/testing-0.1.57/studio.html) · [Qualification](evidence/qualification-0.1.57.md) · [Verified backup and staged promotion](PROMOTE-0.1.57.md).
+
 ## Internal performance checkpoint
 
 Compiled source `aad93d454eefc15920b8d39beb91fc6316e6b550`. [Evidence, backup and next profiling work](evidence/performance-internal-0.1.56.md). v0.1.55 remains the hardware-testing installer.
