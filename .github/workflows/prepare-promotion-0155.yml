@@ -1,0 +1,86 @@
+name: Prepare v0.1.55 public deployment without promoting
+on:
+  push:
+    branches: [slap-5-environment-recovery]
+    paths: ['.github/workflows/prepare-promotion-0155.yml']
+permissions:
+  actions: read
+  contents: write
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE: 75d5e5654edc7fff7fcb3857510c14bdb1ce3196
+      TEST_RUN: '46099825021'
+      SITE_RUN: '46099824879'
+      NATIVE_RUN: '46099825024'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require and verify all three exact-source artifacts
+        run: |
+          set -euo pipefail
+          for id in "$TEST_RUN" "$SITE_RUN" "$NATIVE_RUN"; do
+            test "$(gh run view "$id" --json headSha --jq .headSha)" = "$SOURCE"
+            gh run watch "$id" --interval 10 --exit-status
+          done
+          gh run download "$SITE_RUN" --name SLAP-5-v0.1.55-current-only-site-unpublished --dir "$RUNNER_TEMP/site"
+          gh run download "$NATIVE_RUN" --name SLAP-5-0.1.55-engineering-checkpoint-unpublished --dir "$RUNNER_TEMP/firmware"
+          (cd "$RUNNER_TEMP/firmware" && sha256sum -c SHA256SUMS-0.1.55)
+          cmp "$RUNNER_TEMP/site/SLAP-5-0.1.55.fwsc" "$RUNNER_TEMP/firmware/SLAP-5-0.1.55.fwsc"
+      - name: Archive deployed testing versions and stage public Pages tree
+        run: |
+          set -euo pipefail
+          git fetch origin refs/heads/gh-pages
+          rollback=$(git rev-parse FETCH_HEAD)
+          git worktree add --detach "$RUNNER_TEMP/promotion" "$rollback"
+          cd "$RUNNER_TEMP/promotion"
+          cmp SLAP-5-0.1.55.fwsc "$RUNNER_TEMP/site/SLAP-5-0.1.55.fwsc"
+          curl -fsSL https://codingslapfu.github.io/SLAP-5/SLAP-5-0.1.55.fwsc -o "$RUNNER_TEMP/live.fwsc"
+          cmp "$RUNNER_TEMP/live.fwsc" SLAP-5-0.1.55.fwsc
+          mkdir -p "$RUNNER_TEMP/history"
+          history="$RUNNER_TEMP/history/SLAP-5-pre-0.1.55-Pages.tar.gz"
+          git archive --format=tar.gz --prefix=SLAP-5-Pages/ "$rollback" > "$history"
+          tar -xOf "$history" SLAP-5-Pages/SLAP-5-0.1.54.fwsc > "$RUNNER_TEMP/historical.fwsc"
+          printf '%s  %s\n' 8cc23648f6efe1252e96951cdf58731af7de28e26a6ce80bc819bf7e69f258a9 "$RUNNER_TEMP/historical.fwsc" | sha256sum -c -
+          (cd "$RUNNER_TEMP/history" && sha256sum SLAP-5-pre-0.1.55-Pages.tar.gz > SHA256SUMS && sha256sum -c SHA256SUMS)
+          git tag archive-pre-0.1.55-pages "$rollback"
+          git push origin refs/tags/archive-pre-0.1.55-pages
+          git rm -r -- .
+          cp -a "$RUNNER_TEMP/site/." .
+          touch .nojekyll
+          python3 - <<'PY'
+          from pathlib import Path
+          home = Path('index.html')
+          text = home.read_text(encoding='utf-8')
+          assert '<h1>SLAP-5 v0.1.55 hardware testing</h1>' in text
+          text = text.replace('<h1>SLAP-5 v0.1.55 hardware testing</h1>', '<h1>SLAP-5 v0.1.55</h1>')
+          text = text.replace('<p>Experimental FM-1 build. Physical JUNGLE stress qualification is pending.</p>', '')
+          archive = 'https://github.com/CodingSlapfu/SLAP-5/archive/refs/tags/archive-pre-0.1.55-pages.tar.gz'
+          text = text.replace('>Recovery archive</a>', '>Recovery archive</a> · <a href="' + archive + '">Previous site and installers</a>')
+          home.write_text(text, encoding='utf-8')
+          PY
+          cp "$RUNNER_TEMP/firmware/SHA256SUMS-0.1.55" .
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import {validateRelease, verifyPackage} from './flash-release.mjs';
+          const release = validateRelease(JSON.parse(fs.readFileSync('release.json')));
+          await verifyPackage(release, fs.readFileSync(release.file));
+          JS
+          test "$(find . -name '*.fwsc' | wc -l)" -eq 1
+          git add -A
+          git -c user.name=github-actions -c user.email=github-actions@users.noreply.github.com commit -m 'Stage qualified v0.1.55 software for explicit owner promotion'
+          git push origin HEAD:refs/heads/promote-v0.1.55
+          {
+            echo "Source: $SOURCE"
+            echo "Expected live Pages parent and rollback: $rollback"
+            echo "Prepared deployment: $(git rev-parse HEAD)"
+            cat SHA256SUMS-0.1.55
+            cat "$RUNNER_TEMP/history/SHA256SUMS"
+          } | tee "$RUNNER_TEMP/history/promotion-evidence.txt" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SLAP-5-0.1.55-promotion-evidence
+          path: ${{ runner.temp }}/history/
+          if-no-files-found: error
