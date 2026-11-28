@@ -1,5 +1,9 @@
 # SLAP-5 environment recovery
 
+## v0.1.55 hardware testing
+
+Application `75d5e5654edc7fff7fcb3857510c14bdb1ce3196`, identity `FM-1_75000155`. [Direct installer](https://codingslapfu.github.io/SLAP-5/flash-testing-0.1.55.html) · [Studio](https://codingslapfu.github.io/SLAP-5/testing-0.1.55/studio.html) · [Qualification](evidence/qualification-0.1.55.md) · [Staged promotion](PROMOTE-0.1.55.md). Physical acceptance is pending.
+
 ## v0.1.54 hardware-testing checkpoint
 
 Source `1239f4a2b0bdf16b7415c5849a09d5e22fd16786`, identity `FM-1_75000154`. [Direct installer](https://codingslapfu.github.io/SLAP-5/flash-testing-0.1.54.html) · [Matching Studio](https://codingslapfu.github.io/SLAP-5/testing-0.1.54/studio.html) · [Qualification and remaining work](evidence/qualification-0.1.54.md) · [Staged public promotion and rollback](PROMOTE-0.1.54.md). The public release remains active pending explicit owner acceptance.
