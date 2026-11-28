@@ -1,4 +1,4 @@
-name: SLAP-5 v0.1.57 premium dials and consolidated qualification
+name: SLAP-5 v0.1.57 premium dials, HOME and consolidated qualification
 on:
   push:
     branches: [slap-5-environment-recovery]

@@ -5743,7 +5743,7 @@ static void draw_panel(void)
                 cv_rect(4, 4, 2, 27, focused ? c : 0x2945);
                 cv_rect(12, 33, 216, 1, 0x18c3);
                 uint16_t ink = C_WHITE;
-                draw_signature_name(labels[row], focused ? c : ink, 142, 5, 22);
+                draw_signature_name(labels[row], focused ? c : ink, 142, 6, 5, 22, 1);
                 const char *value = values[row];
                 const felucca_font_t *font = text_w(&FONT_B, value) <= 94 ? &FONT_B : &FONT_XS;
                 cv_text(229 - text_w(font, value), 10, font, value, focused ? C_WHITE : 0xbdf7);

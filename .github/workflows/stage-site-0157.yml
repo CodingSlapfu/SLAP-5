@@ -17,7 +17,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
         with:
-          ref: 2a29f748e8ec8d4a917055c66ff0013705f76f32
+          ref: ${{ github.sha }}
           path: firmware-source
       - uses: actions/setup-node@v4
         with:
@@ -25,7 +25,7 @@ jobs:
       - name: Download the exact-source firmware and captures
         run: |
           for attempt in $(seq 1 40); do
-            run="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/qualification-0157.yml/runs?head_sha=2a29f748e8ec8d4a917055c66ff0013705f76f32" --jq '.workflow_runs[0].id // empty')"
+            run="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/qualification-0157.yml/runs?head_sha=$GITHUB_SHA" --jq '.workflow_runs[0].id // empty')"
             if [ -n "$run" ]; then
               state="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq '.status + ":" + (.conclusion // "")')"
               case "$state" in
