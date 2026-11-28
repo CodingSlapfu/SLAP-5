@@ -3,7 +3,7 @@
 import { advancedSynth, decodeNote, drumNotes, encodeNote, eventLanes, fxLimit, fxPanels, legacyDrumKits, modernSynth, patternLength, validateProject, withPatternLength, within } from './project.mjs';
 
 const $ = id => document.getElementById(id);
-const colors = ['#1ce2ff', '#ab70ff', '#ff59b0', '#ffb43a', '#3ef289'];
+const colors = ['#00b4ff', '#9b30ff', '#ff6400', '#ffdc00', '#00ff2e'];
 const ctx2d = $('roll').getContext('2d');
 const piano = ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'];
 const drums = ['Kick', 'Snare', 'Closed Hat', 'Rim', 'Clap', 'Crash', 'Sub Kick', 'Alt Snare', 'Open Hat', 'Pedal Hat', 'Low Tom', 'Mid Tom', 'High Tom', 'Ride', 'Shaker', 'Perc FX'];
@@ -241,7 +241,7 @@ function send(command, fields = {}) {
 }
 
 const projectKey = 'slap-5-project';
-function sync() {
+function sync({ filtersOnly = false } = {}) {
   try {
     localStorage.setItem(projectKey, JSON.stringify(project));
   } catch {
@@ -251,11 +251,12 @@ function sync() {
     arrangement.scenes[sceneIndex].project = structuredClone(project);
     saveSong();
   }
-  send('project', { project });
+  if (filtersOnly) send('performance-filters', { mixer: project.mixer });
+  else send('project', { project });
   draw();
 }
 
-function edit(change) {
+function edit(change, options) {
   if (take || songPlaying || generation) return;
   const next = structuredClone(project);
   change(next);
@@ -264,7 +265,7 @@ function edit(change) {
   if (stateBefore.length > 100) stateBefore.shift();
   stateAfter = [];
   project = next;
-  sync();
+  sync(options);
 }
 
 const selected = () => project.tracks[track];
@@ -305,6 +306,8 @@ function drawMixer() {
   const mixer = project.mixer ?? defaultMixer();
   $('mix-level').checked = mixer.autoLevel;
   $('mix-auto').checked = mixer.autoMix;
+  $('mix-filter').value = mixer.allFilter ?? 0;
+  $('mix-filter').disabled = songPlaying;
   const channels = project.tracks.map((part, index) => {
     const channel = document.createElement('div');
     channel.className = 'mixer-channel settings';
@@ -316,7 +319,7 @@ function drawMixer() {
     meter.max = 160;
     meter.setAttribute('aria-label', `${title.textContent} activity`);
     channel.append(title, meter);
-    const control = (name, type, value, update, limit = [0, 100]) => {
+    const control = (name, type, value, update, limit = [0, 100], options) => {
       const label = document.createElement('label');
       const input = document.createElement('input');
       input.type = type;
@@ -327,7 +330,7 @@ function drawMixer() {
       input.disabled = songPlaying;
       input.addEventListener('change', () => {
         const next = type === 'checkbox' ? input.checked : input.valueAsNumber;
-        if (type === 'checkbox' || within(next, ...limit)) edit(p => update(p, next));
+        if (type === 'checkbox' || within(next, ...limit)) edit(p => update(p, next), options);
       });
       label.append(name, input);
       channel.append(label);
@@ -349,10 +352,19 @@ function drawMixer() {
     if (index < 4) control('Duck', 'number', mixer.duck[index], (p, value) => {
       (p.mixer ??= defaultMixer()).duck[index] = value;
     });
+    control('Track filter', 'number', mixer.trackFilter?.[index] ?? 0, (p, value) => {
+      const state = p.mixer ??= defaultMixer();
+      (state.trackFilter ??= [0, 0, 0, 0, 0])[index] = value;
+    }, [-100, 100], { filtersOnly: true });
     return channel;
   });
   $('mixer-channels').replaceChildren(...channels);
 }
+$('mix-filter').onchange = () => {
+  const value = $('mix-filter').valueAsNumber;
+  if (project && within(value, -100, 100))
+    edit(p => { (p.mixer ??= defaultMixer()).allFilter = value; }, { filtersOnly: true });
+};
 for (const [id, field] of [['mix-level', 'autoLevel'], ['mix-auto', 'autoMix']])
   $(id).onchange = () => { if (project) edit(p => { (p.mixer ??= defaultMixer())[field] = $(id).checked; }); };
 $('studio-mixer').ontoggle = () => { if (worklet) send('meters', { enabled: $('studio-mixer').open }); if (project && $('studio-mixer').open) drawMixer(); };
@@ -498,7 +510,7 @@ function draw() {
   $('gate').disabled = !word || !!note.duration;
   $('clear').disabled = !word;
   const g = ctx2d;
-  g.font = '12px "SLAP Block", system-ui';
+  g.font = '12px "SLAP Nexus", system-ui';
   g.textBaseline = 'middle';
   for (let r = 0; r < rows; r++) {
     const pitch = pitchAt(r), y = top + height * r;
