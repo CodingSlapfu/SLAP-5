@@ -1,4 +1,4 @@
-name: SLAP-5 internal v0.1.56 FX spans, synth coefficients and Timer 5
+name: SLAP-5 internal v0.1.56 FX spans, synth coefficients, Timer 5 and packed drums
 on:
   push:
     branches: [slap-5-environment-recovery]

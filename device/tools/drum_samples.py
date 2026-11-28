@@ -121,15 +121,17 @@ def main():
     for kit in range(len(VOICINGS)):
         for hit in range(16):
             frames = list(samples(kit, hit))
-            table.append((len(data), len(frames)))
+            if len(data) >= 1 << 19 or len(frames) >= 1 << 13:
+                raise ValueError("drum sample descriptor exceeds its packed field")
+            table.append(len(data) | len(frames) << 19)
             data.extend(encode(frames))
     with output.open("w") as out:
         out.write("static const uint8_t drum_sample_data[] = {\n")
         for at in range(0, len(data), 24):
             out.write("    " + ", ".join(str(n) for n in data[at:at + 24]) + ",\n")
-        out.write("};\nstatic const DrumSample drums_sample_index[] = {\n")
-        for offset, length in table:
-            out.write(f"    {{{offset}u, {length}u}},\n")
+        out.write("};\nstatic const uint32_t drums_sample_index[] = {\n")
+        for descriptor in table:
+            out.write(f"    0x{descriptor:08x}u,\n")
         out.write("};\n")
     print(f"{len(table)} synthesized drum one-shots, {len(data)} compressed bytes")
 

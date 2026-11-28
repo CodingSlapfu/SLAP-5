@@ -3,10 +3,7 @@
 #pragma once
 #include <stdint.h>
 
-typedef struct {
-    uint32_t offset;
-    uint16_t frames;
-} DrumSample;
+enum { DRUM_SAMPLE_OFFSET_BITS = 19 };
 
 typedef struct {
     uint16_t id, cursor;
@@ -45,15 +42,18 @@ static inline __attribute__((always_inline)) int drum_sample_next(DrumSampleVoic
     };
     static const int8_t adjust[8] = {-1,-1,-1,-1,2,4,6,8};
     if (!v->quarter) {
-        const DrumSample *sample = &drums_sample_index[v->id];
-        if (v->cursor >= sample->frames) {
+        const uint32_t sample = drums_sample_index[v->id];
+        if (v->cursor >= (sample >> DRUM_SAMPLE_OFFSET_BITS)) {
             *finished = 1;
             return 0;
         }
         // Both nibbles come from the same XIP byte. Keep it in the voice
         // across the four interpolated samples and across callback boundaries.
         unsigned high = v->cursor & 1u;
-        if (!high) v->packed_byte = drum_sample_data[sample->offset + (v->cursor >> 1)];
+        if (!high) {
+            const unsigned offset = sample & ((1u << DRUM_SAMPLE_OFFSET_BITS) - 1u);
+            v->packed_byte = drum_sample_data[offset + (v->cursor >> 1)];
+        }
         unsigned code = high ? v->packed_byte >> 4 : v->packed_byte & 15u;
         ++v->cursor;
         unsigned magnitude = code & 7u;
