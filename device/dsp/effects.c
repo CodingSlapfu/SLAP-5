@@ -741,10 +741,7 @@ int slap_fx_trace(unsigned track, unsigned point)
     return traces[track][(trace_head + point + 1u) % SLAP_FX_PLOT];
 }
 
-#ifndef PLAT_HOST
-__attribute__((section(".c1_text.slap_fx"), noinline))
-#endif
-float slap_fx_sample(unsigned track, float dry)
+static inline __attribute__((always_inline)) float track_sample(unsigned track, float dry)
 {
     Fx *f = &fx[track];
     float output = process_sample(track, dry, echo_line[track], TRACK_DELAY,
@@ -760,6 +757,22 @@ float slap_fx_sample(unsigned track, float dry)
     }
     f->previous_sample = output;
     return output;
+}
+
+#ifndef PLAT_HOST
+__attribute__((section(".c1_text.slap_fx"), noinline))
+#endif
+float slap_fx_sample(unsigned track, float dry)
+{
+    return track_sample(track, dry);
+}
+
+void slap_fx_span(unsigned track, float *bus, unsigned frames, float wet)
+{
+    for (unsigned i = 0; i < frames; ++i) {
+        float dry = bus[i];
+        bus[i] = dry + wet * (track_sample(track, dry) - dry);
+    }
 }
 
 unsigned slap_fx_brake_speed(unsigned track)

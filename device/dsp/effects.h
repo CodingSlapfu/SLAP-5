@@ -26,6 +26,7 @@ int slap_fx_config_valid(unsigned page, uint32_t word);
 void slap_fx_restore(unsigned track, unsigned page, uint32_t word);
 unsigned slap_fx_active_mask(void);
 float slap_fx_sample(unsigned track, float dry);
+void slap_fx_span(unsigned track, float *bus, unsigned frames, float wet);
 unsigned slap_fx_mix_active(void);
 unsigned slap_fx_brake_speed(unsigned track);
 void slap_fx_mix_sample(float *left, float *right);

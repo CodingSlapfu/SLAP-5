@@ -3062,7 +3062,7 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
     const unsigned speaker = speaker_mode;
     static float speaker_dc_l, speaker_dc_r;
     unsigned batch_start = 0, batch_end = 0, sleeping_mix = 0;
-    unsigned mix_tracks[TRACKS], mix_count = 0;
+    unsigned mix_tracks[TRACKS], mix_count = 0, scalar_fx = effect_mask;
     unsigned reclaim = dsp_pressure;
     uint32_t callback_budget = (24000000u / RATE) * frames;
 #if FM1B_CPU2 && !defined(PLAT_WEB)
@@ -3196,6 +3196,21 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
 #else
             if (profile) serial[PROFILE_VOICES] += plat_ticks24() - stage_start;
 #endif
+            // All track FX state belongs to Core 0 here. The voice span
+            // ends before an internal transport tick can reset the slicer.
+            // Ducking still reads its original dry trigger, and diagnostic
+            // and host fault runs retain their per-sample path.
+            scalar_fx = effect_mask;
+            if (!count_in && !duck_enabled && !profile && !measure_fx && batch_end - i >= 16u
+#if FM1B_CPU2 && defined(PLAT_HOST) && !defined(PLAT_WEB)
+                && !fx_mask
+#endif
+            ) {
+                for (unsigned t = 0; t < TRACKS; ++t)
+                    if (effect_mask & (1u << t))
+                        slap_fx_span(t, voice_bus[t], batch_end - i, wet[t]);
+                scalar_fx = 0;
+            }
         }
         float l = 0.0f, r = 0.0f;
         float duck = 0.0f;
@@ -3211,7 +3226,7 @@ void app_render(int32_t *lr, uint32_t frames, uint32_t master_q12)
         for (unsigned slot = 0; slot < mix_count; ++slot) {
             unsigned t = mix_tracks[slot];
             float sample = voice_bus[t][i - batch_start];
-            if (effect_mask & (1u << t)) {
+            if (scalar_fx & (1u << t)) {
                 float processed;
 #if FM1B_CPU2 && defined(PLAT_HOST) && !defined(PLAT_WEB)
                 if (i < fx_batch_end) processed = fx_bus[t][i - batch_start];
