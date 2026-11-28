@@ -1,0 +1,99 @@
+name: Stage single-version SLAP-5 v0.1.57 site
+on:
+  push:
+    branches: [slap-5-environment-recovery]
+    paths: ['.github/workflows/stage-site-0157.yml', 'site/stage-testing-0157.py']
+permissions:
+  actions: read
+  contents: read
+jobs:
+  stage:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SLAP_WEB_RELEASE: '0.1.57'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          ref: 2a29f748e8ec8d4a917055c66ff0013705f76f32
+          path: firmware-source
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Download the exact-source firmware and captures
+        run: |
+          for attempt in $(seq 1 40); do
+            run="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/qualification-0157.yml/runs?head_sha=2a29f748e8ec8d4a917055c66ff0013705f76f32" --jq '.workflow_runs[0].id // empty')"
+            if [ -n "$run" ]; then
+              state="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq '.status + ":" + (.conclusion // "")')"
+              case "$state" in
+                completed:success) break ;;
+                completed:*) echo "Native qualification $run ended with $state"; exit 1 ;;
+              esac
+            fi
+            sleep 8
+          done
+          test "${state:-}" = completed:success
+          gh run download "$run" --name SLAP-5-0.1.57-engineering-checkpoint-unpublished --dir "$RUNNER_TEMP/verified"
+          (cd "$RUNNER_TEMP/verified" && sha256sum -c SHA256SUMS-0.1.57)
+      - name: Build matching Studio and stage current pages
+        run: |
+          python3 -m venv "$RUNNER_TEMP/python"
+          source "$RUNNER_TEMP/python/bin/activate"
+          pip install Pillow==11.3.0 fonttools==4.59.2
+          git clone --depth 1 --branch 3.1.64 https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
+          "$RUNNER_TEMP/emsdk/emsdk" install 3.1.64
+          "$RUNNER_TEMP/emsdk/emsdk" activate 3.1.64
+          source "$RUNNER_TEMP/emsdk/emsdk_env.sh"
+          (cd firmware-source && site/build.sh "$RUNNER_TEMP/studio")
+          python3 site/stage-testing-0157.py "$RUNNER_TEMP/studio" "$RUNNER_TEMP/verified" "$RUNNER_TEMP/current"
+          test "$(find "$RUNNER_TEMP/current" -name '*.fwsc' | wc -l)" = 1
+          test ! -e "$RUNNER_TEMP/current/flash-testing.html"
+      - name: Verify desktop, mobile, installer manifest and Studio
+        run: |
+          npm install --no-save --package-lock=false playwright@1.51.1
+          npx playwright install chromium
+          python3 -m http.server 8764 --bind 127.0.0.1 --directory "$RUNNER_TEMP/current" &
+          server=$!
+          trap 'kill "$server"' EXIT
+          for i in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:8764/ >/dev/null; then break; fi
+            sleep 1
+          done
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import { chromium } from 'playwright';
+          import { pathToFileURL } from 'node:url';
+          const base = 'http://127.0.0.1:8764';
+          const script = pathToFileURL(process.env.RUNNER_TEMP + '/current/flash-release.mjs');
+          const {validateRelease, verifyPackage} = await import(script);
+          const release = validateRelease(await (await fetch(base + '/release.json')).json());
+          await verifyPackage(release, new Uint8Array(await (await fetch(base + '/' + release.file)).arrayBuffer()));
+          assert.equal((await fetch(base + '/flash-testing.html')).status, 404);
+          const browser = await chromium.launch();
+          for (const width of [390, 1280]) {
+            const page = await browser.newPage({viewport: {width, height: 800}});
+            const errors = [];
+            page.on('pageerror', error => errors.push(error.message));
+            for (const path of ['/', '/flash.html', '/studio.html', '/emulator/']) {
+              assert.ok((await page.goto(base + path)).ok(), path);
+              if (path === '/' || path === '/flash.html')
+                assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), path);
+              const urls = await page.locator('img').evaluateAll(nodes => nodes.map(image => image.src));
+              for (const url of urls) assert.ok((await fetch(url)).ok, url);
+            }
+            assert.deepEqual(errors, []);
+            await page.close();
+          }
+          await browser.close();
+          JS
+          node firmware-source/site/tests/studio.cjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SLAP-5-v0.1.57-current-only-site-unpublished
+          path: ${{ runner.temp }}/current
+          if-no-files-found: error
+
+
