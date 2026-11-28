@@ -18,7 +18,7 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/slap-python"
           source "$RUNNER_TEMP/slap-python/bin/activate"
           pip install Pillow==11.3.0 fonttools==4.59.2
-          for sha in 75d5e5654edc7fff7fcb3857510c14bdb1ce3196 "75d5e5654edc7fff7fcb3857510c14bdb1ce3196"; do
+          for sha in 1239f4a2b0bdf16b7415c5849a09d5e22fd16786 75d5e5654edc7fff7fcb3857510c14bdb1ce3196 8df93c972adc14a63809f300fc3846f85f51887e; do
             git worktree add --detach "$RUNNER_TEMP/$sha" "$sha"
             (
               cd "$RUNNER_TEMP/$sha"
@@ -71,7 +71,8 @@ jobs:
           root = Path(os.environ["SLAP_BENCH_ROOT"])
           variants = {
               "verified-v55": "75d5e5654edc7fff7fcb3857510c14bdb1ce3196",
-              "branch": "75d5e5654edc7fff7fcb3857510c14bdb1ce3196",
+              "verified-v54": "1239f4a2b0bdf16b7415c5849a09d5e22fd16786",
+              "branch": "8df93c972adc14a63809f300fc3846f85f51887e",
           }
           dense = runpy.run_path('device/tests/dense-recording.py')
           def fixture(bpm, mode):
